@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Not part of the shipping tool — a throwaway example to eyeball the
 //! terminal renderer against synthetic low-memory data, since a healthy
 //! sandbox container won't naturally produce WARNING/ERROR/CRITICAL

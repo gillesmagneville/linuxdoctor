@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 use crate::core::engine::Report;
 
 /// Serializes a Report to pretty JSON. Formatting only — no diagnostics.

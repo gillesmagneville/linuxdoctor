@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 use serde::Serialize;
 
 /// A confidence percentage plus the reason for it. Confidence must never

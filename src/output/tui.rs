@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Interactive terminal UI. Consumes the same `Report` that `terminal.rs`
 //! and `json.rs` consume — only formats what the engine already produced,
 //! per ARCHITECTURE.md "Output formatters never perform diagnostics".

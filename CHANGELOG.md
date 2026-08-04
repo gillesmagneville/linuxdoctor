@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Changelog
 
 Toutes les modifications notables de ce projet sont documentées dans ce fichier.

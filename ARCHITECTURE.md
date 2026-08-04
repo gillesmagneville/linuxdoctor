@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # LinuxDoctor Architecture
 
 This document is the canonical technical contract for LinuxDoctor. Where

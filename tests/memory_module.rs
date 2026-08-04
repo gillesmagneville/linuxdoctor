@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration-level test for the memory module: fixture text in,
 //! `Finding`s out, through the real parse + analyze pipeline. The only
 //! piece intentionally not exercised here is the live `fs::read_to_string`

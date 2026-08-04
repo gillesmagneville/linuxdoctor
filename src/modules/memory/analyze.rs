@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
 

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Contribuer à LinuxDoctor
 
 Merci de l'intérêt porté à ce projet ! Ce document explique comment
@@ -84,4 +86,4 @@ simplement une issue.
 ## Licence
 
 En contribuant, vous acceptez que vos contributions soient publiées sous la
-même licence que le projet (GPL-3.0).
+même licence que le projet (GPL-3.0-only).

@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
 set -euo pipefail
 
 # ============================================================
@@ -185,7 +186,7 @@ rm -f "$PROJECT_DIR"/*.rpm
 if (cd "$PROJECT_DIR" && fpm -s dir -t rpm \
   -n "$PACKAGE_NAME" \
   -v "$NEW_VERSION" \
-  --license "GPL-3.0-or-later" \
+  --license "GPL-3.0-only" \
   --maintainer "$MAINTAINER" \
   --description "$DESCRIPTION" \
   --url "$URL" \

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Not part of the shipping tool. Renders the TUI headlessly via
 //! ratatui's `TestBackend` and prints the resulting screen buffer as
 //! plain text, so the layout can be eyeballed without a real terminal.

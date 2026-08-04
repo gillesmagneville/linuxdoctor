@@ -1,8 +1,107 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # LinuxDoctor
 
-Fast, explainable Linux health diagnostics. See `PROJECT_CONTEXT.md` for vision and
+Fast, explainable and read-only Linux diagnostics. See `PROJECT_CONTEXT.md` for vision and
 principles, `ARCHITECTURE.md` for the technical contract (types, module trait,
 severity/confidence scales, layout).
+
+## Why LinuxDoctor?
+
+Linux already provides outstanding diagnostic tools.
+
+Utilities such as `top`, `vmstat`, `iostat`, `journalctl`, `ss`, `lscpu`,
+`lsblk` and `smartctl` expose almost every aspect of the operating system.
+
+The challenge is rarely collecting information.
+
+The challenge is understanding **which information actually matters**.
+
+Diagnosing a Linux issue often requires manually correlating data from many
+different commands, filtering out irrelevant observations, identifying the
+signals that deserve attention, and deciding what to investigate next.
+
+LinuxDoctor was created to bridge that gap.
+
+It does not replace existing tools.
+
+Instead, it builds upon them to produce meaningful, explainable diagnostics.
+
+Rather than simply displaying metrics, LinuxDoctor follows a simple workflow:
+
+```text
+Evidence
+    ↓
+Diagnosis
+    ↓
+Recommendation
+```
+
+Every finding answers three questions:
+
+- **What was observed?**
+- **Why does it matter?**
+- **What should I do next?**
+
+The objective is not only to report system health, but to help administrators
+understand their Linux systems.
+
+## Core Principles
+
+LinuxDoctor is guided by a few simple principles.
+
+### Explain, don't just report
+
+Most system utilities display facts.
+
+LinuxDoctor explains their meaning.
+
+Whenever possible, every finding includes:
+
+- evidence
+- diagnosis
+- confidence
+- recommendation
+
+### Read-only
+
+LinuxDoctor never modifies the operating system.
+
+It does not edit configuration files, restart services or change kernel
+parameters.
+
+Running LinuxDoctor should always be safe on production systems.
+
+### Evidence-based
+
+Every conclusion must be supported by measurable observations.
+
+LinuxDoctor never relies on hidden heuristics or opaque scoring systems.
+
+### Fast
+
+Diagnostics should complete in a few seconds.
+
+Slow or expensive analyses are optional.
+
+### Modular
+
+Every subsystem is implemented as an independent module.
+
+Adding a new diagnostic should require writing only a new module, without
+modifying the diagnostic engine.
+
+### Local-first
+
+LinuxDoctor works entirely offline.
+
+No telemetry.
+
+No analytics.
+
+No cloud services.
+
+Your system information never leaves your machine.
 
 ## Status
 

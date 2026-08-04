@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 use linuxdoctor::core::context::Context;
 use linuxdoctor::models::Severity;
 use linuxdoctor::modules::cpu::analyze::analyze;

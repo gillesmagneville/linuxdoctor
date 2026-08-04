@@ -6,13 +6,36 @@ severity/confidence scales, layout).
 
 ## Status
 
-v1 scaffold. One module ships end-to-end: **Memory** (`vm.swappiness`, swap
-pressure, critical low-memory detection). The core, `Module` trait, engine, and
-three output modes (terminal, JSON, interactive TUI) are built and tested —
-adding the next module (CPU is the natural next candidate) means only writing
-`collect.rs` + `analyze.rs` under `src/modules/cpu/`, then registering it in
-`src/modules/mod.rs::all_modules()`. Nothing else needs to change — all three
-output modes automatically pick it up.
+v1 scaffold, two modules shipping end-to-end:
+
+* **Memory** — `vm.swappiness`, swap pressure, critical low-memory detection.
+* **CPU** — core count / model, load-average pressure, sustained overload
+  (1/5/15-minute load windows all exceeding available CPUs).
+
+The core, `Module` trait, engine, and three output modes (terminal, JSON,
+interactive TUI) are built and tested. Adding the next module (Storage is a
+reasonable candidate next) means only writing `collect.rs` + `analyze.rs` under
+`src/modules/<name>/`, then adding one line to `all_modules()` in
+`src/modules/mod.rs`. Nothing else changes — all three output modes pick it up
+automatically.
+
+## Getting set up
+
+```bash
+mkdir -p ~/Projects
+unzip linuxdoctor.zip -d ~/Projects/linuxdoctor
+cd ~/Projects/linuxdoctor
+cargo build
+cargo test
+```
+
+If you're versioning this with git, the `.gitignore` already excludes `target/`:
+
+```bash
+git init
+git add .
+git commit -m "Initial scaffold: core engine, memory + cpu modules, terminal/json/tui output"
+```
 
 ## Quickstart
 
@@ -25,12 +48,14 @@ cargo build --release
 ```
 
 In the TUI: ↑/↓ (or j/k) to select a module, PgUp/PgDn to scroll a long finding,
-q or Esc to quit.
+q or Esc to quit. The TUI needs a real terminal (it won't run over a piped
+stdout or in an environment with no TTY) — `linuxdoctor audit` always works
+regardless.
 
 ## Tests
 
 ```bash
-cargo test               # 19 unit tests + 2 integration tests
+cargo test               # 31 unit tests + 4 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -54,15 +79,31 @@ will pick up current versions without any code changes.
 
 ```
 src/
-├── main.rs / cli.rs      # bin entry point + argument parsing
-├── lib.rs                # library root (also used by examples/ and tests/)
-├── core/                 # Context, Module-running engine, error types
-├── models/                # Severity, Confidence, Category, Finding
+├── main.rs                # bin entry point
+├── cli.rs                 # argument parsing (audit / tui)
+├── lib.rs                 # library root (also used by examples/ and tests/)
+│
+├── core/
+│   ├── context.rs         # Context — reads /proc, /sys, /etc/os-release once
+│   ├── engine.rs           # runs modules, isolates per-module failures
+│   └── error.rs
+│
+├── models/
+│   ├── severity.rs        # Severity (4 levels — see ARCHITECTURE.md)
+│   ├── confidence.rs       # Confidence (%, reason)
+│   ├── category.rs          # Category
+│   └── finding.rs            # Finding + FindingBuilder
+│
 ├── modules/
-│   └── memory/            # collect.rs (I/O) + analyze.rs (pure logic) + tests
-└── output/                 # terminal.rs, json.rs, tui.rs — formatting only
+│   ├── mod.rs              # the Module trait + all_modules()
+│   ├── memory/              # collect.rs (I/O) + analyze.rs (pure logic) + tests
+│   └── cpu/                  # same shape as memory/
+│
+└── output/
+    ├── terminal.rs          # text + ANSI colors
+    ├── json.rs                # JSON
+    └── tui.rs                  # interactive UI (ratatui)
 
-tests/                      # fixture-driven integration tests
-examples/                   # demo_severity.rs, demo_tui_snapshot.rs — not part
-                             # of the shipping tool
+tests/       # fixture-driven integration tests, one file per module
+examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```

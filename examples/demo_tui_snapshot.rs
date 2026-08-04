@@ -5,8 +5,9 @@
 
 use linuxdoctor::core::context::Context;
 use linuxdoctor::core::engine::{ModuleRunResult, Report};
-use linuxdoctor::models::{Category, Confidence, Finding, Severity};
-use linuxdoctor::modules::memory::analyze::analyze;
+use linuxdoctor::modules::cpu::analyze::analyze as analyze_cpu;
+use linuxdoctor::modules::cpu::collect::CpuRawData;
+use linuxdoctor::modules::memory::analyze::analyze as analyze_memory;
 use linuxdoctor::modules::memory::collect::MemoryRawData;
 use linuxdoctor::output::tui::{draw, TuiApp};
 
@@ -31,20 +32,18 @@ fn main() {
         swap_free_kb: 0,
         swappiness: 10,
     };
-    let memory_findings = analyze(&critical_mem_data, &ctx);
+    let memory_findings = analyze_memory(&critical_mem_data, &ctx);
 
-    let cpu_finding = Finding::builder(
-        "CPU001",
-        "High Load Average",
-        Category::Cpu,
-        Severity::Warning,
-        Confidence::strong_indication(80),
-    )
-    .evidence("load_1m", "9.4")
-    .evidence("cpu_count", "8")
-    .explanation("1-minute load average is well above the core count, suggesting CPU contention.")
-    .recommendation("Check for runaway processes with `top` or `htop`.")
-    .build();
+    // Real CPU module, fed a synthetic sustained-overload fixture instead
+    // of this healthy sandbox's actual idle load — same real analyze()
+    // logic that ships in the tool, just exercised against a worse case.
+    let overloaded_cpu_data = CpuRawData {
+        load_1m: 18.4,
+        load_5m: 16.1,
+        load_15m: 14.7,
+        model_name: Some("Intel(R) Xeon(R) Processor @ 2.10GHz".to_string()),
+    };
+    let cpu_findings = analyze_cpu(&overloaded_cpu_data, &ctx);
 
     let report = Report {
         context: ctx,
@@ -57,7 +56,7 @@ fn main() {
             },
             ModuleRunResult {
                 module_id: "cpu",
-                findings: vec![cpu_finding],
+                findings: cpu_findings,
                 error: None,
                 skipped: false,
             },

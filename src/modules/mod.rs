@@ -1,3 +1,4 @@
+pub mod cpu;
 pub mod memory;
 
 use crate::core::context::Context;
@@ -25,5 +26,5 @@ pub trait Module: Send + Sync {
 /// All modules that ship in v1. Extend this as new modules are added — the
 /// engine never needs to change.
 pub fn all_modules() -> Vec<Box<dyn Module>> {
-    vec![Box::new(memory::MemoryModule)]
+    vec![Box::new(memory::MemoryModule), Box::new(cpu::CpuModule)]
 }

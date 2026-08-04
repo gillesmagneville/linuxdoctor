@@ -23,6 +23,12 @@ pub enum ModuleError {
         #[source]
         source: std::io::Error,
     },
+    #[error("could not run command '{command}': {source}")]
+    Command {
+        command: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("could not parse {what}: {reason}")]
     Parse { what: String, reason: String },
 }

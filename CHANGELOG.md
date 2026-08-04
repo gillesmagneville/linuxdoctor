@@ -9,6 +9,15 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- Module **storage** : usage espace disque (`df -kPT`) et usage inodes
+  (`df -iPT`), un finding par système de fichiers réel (les
+  pseudo-systèmes de fichiers — tmpfs, proc, overlay, etc. — sont exclus),
+  4 paliers de sévérité (< 80 % / 80-89 % / 90-94 % / ≥ 95 %).
+- `ModuleError::Command`, pour les modules qui exécutent une commande
+  externe plutôt que de lire un fichier.
+
 ## [0.1.0] - 2026-08-04
 
 ### Ajouté

@@ -3,6 +3,8 @@ name = "linuxdoctor"
 version = "0.1.0"
 edition = "2021"
 description = "Fast, explainable Linux health diagnostics"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/gillesmagneville/linuxdoctor"
 
 [dependencies]
 thiserror = "1"

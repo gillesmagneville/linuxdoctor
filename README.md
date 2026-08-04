@@ -29,13 +29,40 @@ cargo build
 cargo test
 ```
 
-If you're versioning this with git, the `.gitignore` already excludes `target/`:
+If you're versioning this with git, the `.gitignore` already excludes `target/`
+and generated packages (`*.deb`, `*.rpm`):
 
 ```bash
 git init
 git add .
 git commit -m "Initial scaffold: core engine, memory + cpu modules, terminal/json/tui output"
 ```
+
+## Packaging
+
+Two scripts build native packages via [fpm](https://fpm.readthedocs.io/) —
+`build-deb.sh` (Debian/Ubuntu) and `build-rpm.sh` (Fedora/RHEL/Rocky/AlmaLinux/
+openSUSE). Both follow the same flow: pick a version bump (interactively or
+via a flag), compile in release mode, stage the binary + docs, then package.
+`VERSION` and `Cargo.toml` are only updated after a fully successful build —
+a failed compile or a failed `fpm` step leaves the repo untouched.
+
+```bash
+./build-deb.sh --patch   # or --minor / --major / --no-version-change
+./build-rpm.sh --patch
+./build-deb.sh --clean   # remove build artifacts and generated .deb files
+```
+
+Before first use, edit `MAINTAINER` and `URL` at the top of each script —
+they're placeholders. Both scripts check for their required tools (`fpm`,
+`cargo`, and `dpkg-deb` or `rpmbuild` respectively) and tell you what's
+missing and how to install it if something's not found.
+
+**On dependencies (`requirements.txt`):** this doesn't apply here the way it
+does for a Python project like planche-contact — Rust has no separate
+runtime dependency list to install. `Cargo.lock` already pins every
+dependency's exact version and is committed to the repo; that's the
+equivalent artifact. Nothing else to add.
 
 ## Quickstart
 
@@ -78,31 +105,44 @@ will pick up current versions without any code changes.
 ## Layout
 
 ```
-src/
-├── main.rs                # bin entry point
-├── cli.rs                 # argument parsing (audit / tui)
-├── lib.rs                 # library root (also used by examples/ and tests/)
+linuxdoctor/
+├── .gitignore
+├── VERSION                  # single source of truth for the version number
+├── CHANGELOG.md              # Keep a Changelog format
+├── CONTRIBUTING.md            # how to report bugs, add a module, code style
+├── build-deb.sh                 # .deb packaging (fpm)
+├── build-rpm.sh                  # .rpm packaging (fpm)
+├── Cargo.toml
+├── Cargo.lock
+├── README.md
+├── PROJECT_CONTEXT.md
+├── ARCHITECTURE.md
 │
-├── core/
-│   ├── context.rs         # Context — reads /proc, /sys, /etc/os-release once
-│   ├── engine.rs           # runs modules, isolates per-module failures
-│   └── error.rs
-│
-├── models/
-│   ├── severity.rs        # Severity (4 levels — see ARCHITECTURE.md)
-│   ├── confidence.rs       # Confidence (%, reason)
-│   ├── category.rs          # Category
-│   └── finding.rs            # Finding + FindingBuilder
-│
-├── modules/
-│   ├── mod.rs              # the Module trait + all_modules()
-│   ├── memory/              # collect.rs (I/O) + analyze.rs (pure logic) + tests
-│   └── cpu/                  # same shape as memory/
-│
-└── output/
-    ├── terminal.rs          # text + ANSI colors
-    ├── json.rs                # JSON
-    └── tui.rs                  # interactive UI (ratatui)
+└── src/
+    ├── main.rs                # bin entry point
+    ├── cli.rs                 # argument parsing (audit / tui)
+    ├── lib.rs                 # library root (also used by examples/ and tests/)
+    │
+    ├── core/
+    │   ├── context.rs         # Context — reads /proc, /sys, /etc/os-release once
+    │   ├── engine.rs           # runs modules, isolates per-module failures
+    │   └── error.rs
+    │
+    ├── models/
+    │   ├── severity.rs        # Severity (4 levels — see ARCHITECTURE.md)
+    │   ├── confidence.rs       # Confidence (%, reason)
+    │   ├── category.rs          # Category
+    │   └── finding.rs            # Finding + FindingBuilder
+    │
+    ├── modules/
+    │   ├── mod.rs              # the Module trait + all_modules()
+    │   ├── memory/              # collect.rs (I/O) + analyze.rs (pure logic) + tests
+    │   └── cpu/                  # same shape as memory/
+    │
+    └── output/
+        ├── terminal.rs          # text + ANSI colors
+        ├── json.rs                # JSON
+        └── tui.rs                  # interactive UI (ratatui)
 
 tests/       # fixture-driven integration tests, one file per module
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool

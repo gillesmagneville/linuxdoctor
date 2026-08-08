@@ -8,7 +8,7 @@ severity/confidence scales, layout).
 
 ## Status
 
-v1 scaffold, five modules shipping end-to-end:
+v1 scaffold, six modules shipping end-to-end:
 
 * **Memory** — usage overview (used vs reclaimable cache vs available,
   answering "why does `free` show so little free RAM"), `vm.swappiness`,
@@ -44,6 +44,11 @@ v1 scaffold, five modules shipping end-to-end:
 * **Systemd** — overall system state, one finding per failed unit. Skips
   cleanly on systems where systemd isn't PID 1 (checks
   `/run/systemd/system`, not just whether `systemctl` is installed).
+* **Network** — per-interface overview and error/drop rates (with a
+  minimum-sample-size guard so a handful of startup drops on a fresh
+  interface can't produce a misleading percentage), default gateway,
+  DNS configuration. Zero subprocess calls — `/proc/net/dev`,
+  `/proc/net/route`, `/sys/class/net/*`, `/etc/resolv.conf` only.
 
 The core, `Module` trait, engine, and three output modes (terminal, JSON,
 interactive TUI) are built and tested. Adding the next module means only
@@ -83,7 +88,7 @@ and generated packages (`*.deb`, `*.rpm`):
 ```bash
 git init
 git add .
-git commit -m "Initial scaffold: core engine, 5 modules (memory/cpu/numa/storage/systemd), terminal/json/tui output"
+git commit -m "Initial scaffold: core engine, 6 modules (memory/cpu/numa/storage/systemd/network), terminal/json/tui output"
 ```
 
 ## Packaging
@@ -121,7 +126,9 @@ actually PID 1). One truly optional external tool: `smartctl` (from
 module still works normally — `STOR003` just reports that SMART couldn't
 be checked, rather than silently having no disk-health data with no
 explanation. SMART queries also typically need root (raw device access);
-run as root/sudo for full per-device detail.
+run as root/sudo for full per-device detail. Network needs nothing extra
+at all — `/proc/net/*`, `/sys/class/net/*`, and `/etc/resolv.conf` cover
+it with zero subprocess calls.
 
 ## Quickstart
 
@@ -143,7 +150,7 @@ environment with no TTY) — `linuxdoctor audit` always works regardless.
 ## Tests
 
 ```bash
-cargo test               # 130 unit tests + 16 integration tests
+cargo test               # 147 unit tests + 19 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -201,7 +208,8 @@ linuxdoctor/
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
     │   ├── numa/                  # per-node topology, cross-node imbalance
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
-    │   └── systemd/                  # system state, failed units
+    │   ├── systemd/                  # system state, failed units
+    │   └── network/                    # interfaces, gateway, DNS (zero subprocess calls)
     │
     └── output/
         ├── terminal.rs          # text + ANSI colors

@@ -2,6 +2,7 @@
 
 pub mod cpu;
 pub mod memory;
+pub mod network;
 pub mod numa;
 pub mod storage;
 pub mod systemd;
@@ -37,5 +38,6 @@ pub fn all_modules() -> Vec<Box<dyn Module>> {
         Box::new(numa::NumaModule),
         Box::new(storage::StorageModule),
         Box::new(systemd::SystemdModule),
+        Box::new(network::NetworkModule),
     ]
 }

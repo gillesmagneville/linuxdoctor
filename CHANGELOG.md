@@ -11,6 +11,17 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- Module **network** : aperçu par interface, taux d'erreurs/pertes gradué
+  (avec seuil d'échantillon minimum — en dessous de 100 paquets, un taux
+  n'est pas statistiquement significatif, donc rapporté en Info plutôt que
+  de risquer une fausse alerte), passerelle par défaut, configuration DNS.
+  Aucune commande externe : tout vient de `/proc/net/dev`,
+  `/proc/net/route` (avec décodage des adresses IPv4 hexadécimales
+  little-endian du noyau), `/sys/class/net/*` et `/etc/resolv.conf`.
+  `NET001`/`NET002` sont groupés par interface pour le sous-menu TUI.
+
+### Ajouté
+
 - Module **storage** : santé SMART par périphérique physique, dans un
   sous-menu dédié — distinct des instances par point de montage
   (`STOR001`/`STOR002`), puisque SMART se lit par device (`/dev/sda`),

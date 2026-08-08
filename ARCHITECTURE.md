@@ -77,7 +77,8 @@ linuxdoctor/
 │   │   ├── cpu/
 │   │   ├── numa/
 │   │   ├── storage/
-│   │   └── systemd/
+│   │   ├── systemd/
+│   │   └── network/
 │   │       # each module folder has the same shape:
 │   │       │   mod.rs        # implements Module, wires collect()+analyze()
 │   │       │   collect.rs    # thin I/O: reads /proc, /sys, or shells out
@@ -96,7 +97,9 @@ linuxdoctor/
     ├── cpu_module.rs
     ├── numa_module.rs
     ├── storage_module.rs
-    └── systemd_module.rs
+    ├── systemd_module.rs
+    └── network_module.rs
+    # (one per module, same fixture-driven pattern)
 ```
 
 As more modules are added, if `collect.rs` logic starts repeating across modules
@@ -217,12 +220,15 @@ only ever return `Finding`s; only the Output Engine decides how they're displaye
 Collectors retrieve information and do not interpret it. In v1 each module owns its
 own thin collection function (e.g. `modules::memory::collect::collect()`), reading
 from `/proc` and `/sys` directly wherever possible, and shelling out only when there's
-no direct kernel interface for the fact needed. Currently used: `df` (Storage — space
-and inode usage), `systemctl` (Systemd — system state, failed units), `smartctl`
-(Storage — per-device SMART health, JSON output). `lsblk`, `journalctl`, `ip`,
-`ethtool` remain plausible future collectors for modules not yet built, not things
-already wired in. Shared collection logic gets promoted to `src/collectors/` once
-duplicated by a second module.
+no direct kernel interface for the fact needed. Network is a clean example of the
+former: `/proc/net/dev`, `/proc/net/route`, `/sys/class/net/*`, and `/etc/resolv.conf`
+cover its needs with zero subprocess calls. Currently shelling out: `df` (Storage —
+space and inode usage), `systemctl` (Systemd — system state, failed units), `smartctl`
+(Storage — per-device SMART health, JSON output). `lsblk`, `journalctl`, `ethtool`
+remain plausible future collectors for modules not yet built (or, for `ethtool`,
+already pointed to in a *recommendation* string without the tool itself calling it) —
+not things already wired in. Shared collection logic gets promoted to
+`src/collectors/` once duplicated by a second module.
 
 ---
 
@@ -269,7 +275,8 @@ its top level. This is what lets the TUI decide which modules get a submenu with
 any hardcoded knowledge of which check IDs happen to be per-instance for which
 module — it's driven entirely by this field, set by whichever module produces the
 finding (e.g. CPU's per-socket `CPU004`, Storage's per-filesystem `STOR001`/`STOR002`
-and per-device `STOR004`, NUMA's per-node `NUMA001`, Systemd's per-unit `SYSD002`).
+and per-device `STOR004`, NUMA's per-node `NUMA001`, Systemd's per-unit `SYSD002`,
+Network's per-interface `NET001`/`NET002`).
 
 Example:
 

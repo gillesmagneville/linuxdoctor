@@ -105,7 +105,7 @@ fn interface_errors_finding(iface: &NetworkInterface) -> Finding {
     let tx_drop_pct = rate(iface.tx_dropped, iface.tx_packets);
     let worst = rx_err_pct.max(rx_drop_pct).max(tx_err_pct).max(tx_drop_pct);
 
-    let (severity, confidence) = if worst >= 1.0 {
+    let (mut severity, mut confidence) = if worst >= 1.0 {
         (Severity::Error, Confidence::strong_indication(85))
     } else if worst >= 0.1 {
         (Severity::Warning, Confidence::strong_indication(76))
@@ -113,9 +113,44 @@ fn interface_errors_finding(iface: &NetworkInterface) -> Finding {
         (Severity::Info, Confidence::direct_observation())
     };
 
+    // SR-IOV VFs share this physical NIC. On some driver/NIC
+    // combinations, traffic the hardware steers to a VF's own queue gets
+    // counted in the PF's rx_dropped without indicating an actual link,
+    // cabling, or duplex problem -- a well-documented category of false
+    // positive for this exact counter. We can't tell from these counters
+    // alone whether that's what's happening here, so rather than silently
+    // suppress the finding (which could hide a real coincidental problem)
+    // or leave it as confidently alarming as the non-SR-IOV case, this
+    // downgrades severity by one tier and lowers confidence -- the raw
+    // numbers are still directly observed, but what they *mean* is
+    // genuinely less certain with VFs active.
+    let sriov_active = matches!(iface.sriov_vfs, Some(n) if n > 0);
+    if sriov_active && severity > Severity::Info {
+        severity = match severity {
+            Severity::Error => Severity::Warning,
+            Severity::Warning => Severity::Info,
+            other => other,
+        };
+        confidence = Confidence::weak_indication(65);
+    }
+
+    let sriov_note = match iface.sriov_vfs {
+        Some(n) if n > 0 => format!(
+            " This interface has {n} active SR-IOV VF{s} — on some NIC/driver \
+             combinations, traffic steered to a VF's own queue is counted in \
+             the physical function's rx_dropped without indicating a real \
+             link problem, so this number is less conclusive here than it \
+             would be without VFs. Check the VF interfaces' own stats (`ip \
+             -s link show <vf-iface>`) to see whether their traffic volume \
+             lines up with the drops.",
+            s = if n == 1 { "" } else { "s" },
+        ),
+        _ => String::new(),
+    };
+
     let explanation = if severity == Severity::Info {
         format!(
-            "{}: error/drop rates are all comfortably low (worst: {worst:.2}%).",
+            "{}: error/drop rates are all comfortably low (worst: {worst:.2}%).{sriov_note}",
             iface.name
         )
     } else {
@@ -124,7 +159,7 @@ fn interface_errors_finding(iface: &NetworkInterface) -> Finding {
              errors {tx_err_pct:.2}%, TX drops {tx_drop_pct:.2}% of packets. \
              Sustained rates like this commonly point to a cabling, \
              driver, duplex-mismatch, or switch-port problem rather than \
-             normal network conditions.",
+             normal network conditions.{sriov_note}",
             iface.name
         )
     };
@@ -143,16 +178,29 @@ fn interface_errors_finding(iface: &NetworkInterface) -> Finding {
     .evidence("tx_packets", iface.tx_packets.to_string())
     .evidence("tx_errors", iface.tx_errors.to_string())
     .evidence("tx_dropped", iface.tx_dropped.to_string())
-    .evidence("worst_rate_percent", format!("{worst:.2}"))
-    .explanation(explanation);
+    .evidence("worst_rate_percent", format!("{worst:.2}"));
+
+    if let Some(n) = iface.sriov_vfs {
+        builder = builder.evidence("sriov_vfs", n.to_string());
+    }
+
+    builder = builder.explanation(explanation);
 
     if severity > Severity::Info {
-        builder = builder.recommendation(
+        let recommendation = if sriov_active {
+            "Compare against the VF interfaces' own traffic (`ip -s link \
+             show <vf-iface>`) before assuming a cabling/driver problem — \
+             with SR-IOV active, elevated PF rx_dropped is often explained \
+             by VF-steered traffic rather than a real link issue. If the \
+             VF traffic doesn't account for it, then check `ethtool \
+             <iface>` and the cable/switch port as usual."
+        } else {
             "Check `ethtool <iface>` for link/duplex negotiation issues, \
              inspect the cable/switch port, and watch `ip -s link show \
              <iface>` over time to see whether the rate is still climbing \
-             or was a one-off.",
-        );
+             or was a one-off."
+        };
+        builder = builder.recommendation(recommendation);
     }
 
     builder.build()
@@ -272,6 +320,7 @@ mod tests {
             mtu: Some(1500),
             speed_mbps: Some(1000),
             carrier: Some(true),
+            sriov_vfs: None,
             rx_bytes: 1_000_000,
             rx_packets,
             rx_errors: 0,
@@ -425,5 +474,56 @@ mod tests {
         for f in analyze(&data, &ctx()) {
             assert!(f.confidence.percent >= 60);
         }
+    }
+
+    #[test]
+    fn sriov_active_downgrades_error_to_warning() {
+        let mut sriov_iface = iface("enp6s0", 150_102, 37_175); // ~24.8% drop rate
+        sriov_iface.sriov_vfs = Some(2);
+        let data = NetworkRawData {
+            interfaces: vec![sriov_iface],
+            route: route(true),
+            dns_servers: vec!["8.8.8.8".to_string()],
+        };
+        let findings = analyze(&data, &ctx());
+        let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
+        assert_eq!(net002.severity, Severity::Warning); // downgraded from Error
+        assert!(net002.explanation.contains("SR-IOV"));
+        assert!(net002.confidence.percent < 76); // lower than the non-SR-IOV Warning tier
+        assert!(net002
+            .recommendation
+            .as_ref()
+            .unwrap()
+            .contains("VF interfaces"));
+    }
+
+    #[test]
+    fn sriov_inactive_keeps_full_severity_and_confidence() {
+        // Same drop rate as above, but no VFs -- must NOT be downgraded.
+        let mut plain_iface = iface("enp6s0", 150_102, 37_175);
+        plain_iface.sriov_vfs = Some(0); // SR-IOV-capable, but no VFs provisioned
+        let data = NetworkRawData {
+            interfaces: vec![plain_iface],
+            route: route(true),
+            dns_servers: vec!["8.8.8.8".to_string()],
+        };
+        let findings = analyze(&data, &ctx());
+        let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
+        assert_eq!(net002.severity, Severity::Error);
+        assert!(!net002.explanation.contains("SR-IOV"));
+    }
+
+    #[test]
+    fn sriov_not_capable_is_same_as_absent() {
+        let mut plain_iface = iface("enp6s0", 150_102, 37_175);
+        plain_iface.sriov_vfs = None; // not an SR-IOV-capable device at all
+        let data = NetworkRawData {
+            interfaces: vec![plain_iface],
+            route: route(true),
+            dns_servers: vec!["8.8.8.8".to_string()],
+        };
+        let findings = analyze(&data, &ctx());
+        let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
+        assert_eq!(net002.severity, Severity::Error);
     }
 }

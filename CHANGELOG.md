@@ -9,6 +9,21 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Corrigé
+
+- Module **network** : `NET002` traitait le taux de perte RX/TX comme un
+  signal fiable sans tenir compte du SR-IOV. Sur une interface avec des
+  VFs actives, le trafic dirigé par le matériel vers une VF peut être
+  compté dans le `rx_dropped` de la fonction physique sans indiquer un
+  vrai problème de câble/duplex — phénomène documenté (rapporté y compris
+  par un ingénieur Intel sur i40e). Détection via
+  `/sys/class/net/<iface>/device/sriov_numvfs` (interface sysfs standard
+  du noyau, pas de pattern-matching sur le nom de l'interface) : si des
+  VFs sont actives, la sévérité descend d'un palier et la confiance
+  passe explicitement en "weak indication", avec le contexte dans
+  l'explication et une recommandation adaptée (comparer avec le trafic
+  des interfaces VF elles-mêmes plutôt que soupçonner le câble en premier).
+
 ### Ajouté
 
 - Module **network** : aperçu par interface, taux d'erreurs/pertes gradué

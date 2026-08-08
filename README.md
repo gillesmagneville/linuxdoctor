@@ -49,6 +49,10 @@ v1 scaffold, six modules shipping end-to-end:
   interface can't produce a misleading percentage), default gateway,
   DNS configuration. Zero subprocess calls — `/proc/net/dev`,
   `/proc/net/route`, `/sys/class/net/*`, `/etc/resolv.conf` only.
+  Detects active SR-IOV VFs (`sriov_numvfs`) and downgrades the
+  error/drop-rate severity and confidence accordingly — on some NIC/
+  driver combinations, VF-steered traffic inflates the physical
+  function's `rx_dropped` without indicating a real link problem.
 
 The core, `Module` trait, engine, and three output modes (terminal, JSON,
 interactive TUI) are built and tested. Adding the next module means only
@@ -150,7 +154,7 @@ environment with no TTY) — `linuxdoctor audit` always works regardless.
 ## Tests
 
 ```bash
-cargo test               # 147 unit tests + 19 integration tests
+cargo test               # 150 unit tests + 20 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

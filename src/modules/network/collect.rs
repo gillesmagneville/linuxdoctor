@@ -15,6 +15,15 @@ pub struct NetworkInterface {
     /// or virtual interfaces — not a collection failure).
     pub speed_mbps: Option<i64>,
     pub carrier: Option<bool>,
+    /// Number of active SR-IOV Virtual Functions on this interface, from
+    /// `/sys/class/net/<iface>/device/sriov_numvfs` — `None` means the
+    /// device isn't SR-IOV-capable at all (this file only exists on PCI
+    /// devices that support it). `Some(0)` means SR-IOV-capable but no
+    /// VFs currently provisioned. See analyze.rs for why this matters:
+    /// on some NIC/driver combinations, traffic steered to a VF's own
+    /// queue gets counted in the physical function's `rx_dropped`
+    /// without indicating an actual link/cabling problem.
+    pub sriov_vfs: Option<u32>,
     pub rx_bytes: u64,
     pub rx_packets: u64,
     pub rx_errors: u64,
@@ -99,6 +108,9 @@ pub fn collect() -> Result<NetworkRawData, ModuleError> {
                 "0" => Some(false),
                 _ => None,
             });
+        let sriov_vfs = fs::read_to_string(format!("{sys_path}/device/sriov_numvfs"))
+            .ok()
+            .and_then(|s| s.trim().parse().ok());
 
         let s = stats.get(&name).cloned().unwrap_or_default();
 
@@ -109,6 +121,7 @@ pub fn collect() -> Result<NetworkRawData, ModuleError> {
             mtu,
             speed_mbps,
             carrier,
+            sriov_vfs,
             rx_bytes: s.rx_bytes,
             rx_packets: s.rx_packets,
             rx_errors: s.rx_errors,

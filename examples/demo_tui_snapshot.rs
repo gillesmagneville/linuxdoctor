@@ -8,9 +8,11 @@
 use linuxdoctor::core::context::Context;
 use linuxdoctor::core::engine::{ModuleRunResult, Report};
 use linuxdoctor::modules::cpu::analyze::analyze as analyze_cpu;
-use linuxdoctor::modules::cpu::collect::CpuRawData;
+use linuxdoctor::modules::cpu::collect::{CpuRawData, CpuSocket};
 use linuxdoctor::modules::memory::analyze::analyze as analyze_memory;
 use linuxdoctor::modules::memory::collect::MemoryRawData;
+use linuxdoctor::modules::storage::analyze::analyze as analyze_storage;
+use linuxdoctor::modules::storage::collect::{DiskHealth, StorageRawData};
 use linuxdoctor::output::tui::{draw, TuiApp};
 
 use ratatui::backend::TestBackend;
@@ -29,23 +31,92 @@ fn main() {
 
     let critical_mem_data = MemoryRawData {
         mem_total_kb: 16_384_000,
+        mem_free_kb: 150_000,
         mem_available_kb: 200_000,
+        cached_kb: 50_000,
+        shmem_kb: 300_000,
+        dirty_kb: 20_000,
         swap_total_kb: 4_194_300,
         swap_free_kb: 0,
         swappiness: 10,
+        dirty_ratio: 20,
+        dirty_background_ratio: 10,
     };
     let memory_findings = analyze_memory(&critical_mem_data, &ctx);
 
-    // Real CPU module, fed a synthetic sustained-overload fixture instead
-    // of this healthy sandbox's actual idle load — same real analyze()
-    // logic that ships in the tool, just exercised against a worse case.
+    // Real CPU module, fed a synthetic dual-socket + isolated-CPU fixture
+    // instead of this sandbox's actual single-CPU idle load — same real
+    // analyze() logic that ships in the tool, exercised against a richer
+    // topology to show off the per-socket and isolated-CPU findings.
     let overloaded_cpu_data = CpuRawData {
         load_1m: 18.4,
         load_5m: 16.1,
         load_15m: 14.7,
-        model_name: Some("Intel(R) Xeon(R) Processor @ 2.10GHz".to_string()),
+        sockets: vec![
+            CpuSocket {
+                physical_id: 0,
+                model_name: Some("Intel(R) Xeon(R) Processor @ 2.10GHz".to_string()),
+                cores: 8,
+                threads: 16,
+                logical_cpus: (0..16).collect(),
+            },
+            CpuSocket {
+                physical_id: 1,
+                model_name: Some("Intel(R) Xeon(R) Processor @ 2.10GHz".to_string()),
+                cores: 8,
+                threads: 16,
+                logical_cpus: (16..32).collect(),
+            },
+        ],
+        isolcpus: vec![0, 1, 16, 17],
+        nohz_full: vec![],
+        cgroup_isolated: vec![],
+        system_slice_excluded: vec![],
+        offline_cpus: vec![],
     };
     let cpu_findings = analyze_cpu(&overloaded_cpu_data, &ctx);
+
+    // Real Storage module: one filesystem plus two synthetic disks (one
+    // healthy, one failing) to show that filesystem-instances and
+    // device-instances coexist correctly in the same submenu.
+    let storage_data = StorageRawData {
+        filesystems: vec![],
+        inodes: vec![],
+        smartctl_available: true,
+        disks_checked: 2,
+        disk_health: vec![
+            DiskHealth {
+                device: "/dev/sda".to_string(),
+                model: Some("Samsung SSD 870 EVO 1TB".to_string()),
+                device_type: Some("sat".to_string()),
+                smart_passed: Some(true),
+                temperature_celsius: Some(34),
+                power_on_hours: Some(8760),
+                reallocated_sectors: Some(0),
+                pending_sectors: Some(0),
+                uncorrectable_sectors: Some(0),
+                nvme_critical_warning: None,
+                nvme_percentage_used: None,
+                nvme_media_errors: None,
+            },
+            DiskHealth {
+                device: "/dev/sdb".to_string(),
+                model: Some("WDC WD40EFRX-68N32N0".to_string()),
+                device_type: Some("sat".to_string()),
+                smart_passed: Some(true), // overall status still "passes"...
+                temperature_celsius: Some(48),
+                power_on_hours: Some(45000),
+                reallocated_sectors: Some(87), // ...but attributes tell a different story
+                pending_sectors: Some(12),
+                uncorrectable_sectors: Some(3),
+                nvme_critical_warning: None,
+                nvme_percentage_used: None,
+                nvme_media_errors: None,
+            },
+        ],
+        running_as_root: true,
+    };
+    let storage_findings = analyze_storage(&storage_data, &ctx);
 
     let report = Report {
         context: ctx,
@@ -63,9 +134,9 @@ fn main() {
                 skipped: false,
             },
             ModuleRunResult {
-                module_id: "smart",
-                findings: vec![],
-                error: Some("smartctl not found in PATH".to_string()),
+                module_id: "storage",
+                findings: storage_findings,
+                error: None,
                 skipped: false,
             },
         ],
@@ -76,10 +147,33 @@ fn main() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(|f| draw(f, &mut app)).unwrap();
 
+    println!("--- memory selected (no submenu -- flat view, same as before this feature) ---\n");
     print_buffer(&terminal);
 
-    println!("\n--- pressing Down to select 'cpu' ---\n");
+    println!("\n--- PgDn to 'cpu' (2 sockets -- module view shows only the global overview + a hint) ---\n");
     app.next();
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    print_buffer(&terminal);
+
+    println!("\n--- Enter to drill in: socket 0's detail only ---\n");
+    app.drill_in();
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    print_buffer(&terminal);
+
+    println!("\n--- PgDn within the submenu: socket 1's detail (isolated CPUs, distinct from socket 0) ---\n");
+    app.page_next();
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    print_buffer(&terminal);
+
+    println!("\n--- Esc back, PgDn to 'storage', Enter: submenu lists both disks ---\n");
+    app.back_out();
+    app.next();
+    app.drill_in();
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    print_buffer(&terminal);
+
+    println!("\n--- PgDn to /dev/sdb: overall status still passes, but attributes flag real concern ---\n");
+    app.page_next();
     terminal.draw(|f| draw(f, &mut app)).unwrap();
     print_buffer(&terminal);
 }

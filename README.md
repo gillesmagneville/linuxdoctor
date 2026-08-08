@@ -8,19 +8,64 @@ severity/confidence scales, layout).
 
 ## Status
 
-v1 scaffold, three modules shipping end-to-end:
+v1 scaffold, five modules shipping end-to-end:
 
-* **Memory** — `vm.swappiness`, swap pressure, critical low-memory detection.
-* **CPU** — core count / model, load-average pressure, sustained overload
-  (1/5/15-minute load windows all exceeding available CPUs).
+* **Memory** — usage overview (used vs reclaimable cache vs available,
+  answering "why does `free` show so little free RAM"), `vm.swappiness`,
+  swap pressure (cross-referenced against swappiness), critical
+  low-memory detection, dirty-page/writeback pressure (compared against
+  this system's actual configured `vm.dirty_ratio` /
+  `vm.dirty_background_ratio`, not assumed defaults), and shared memory
+  (tmpfs/shm) usage — each concerning finding paired with a concrete
+  resolution.
+* **CPU** — per-socket topology (cores, threads, model), load-average
+  pressure, sustained overload, and — per socket — how many of its logical
+  CPUs are available versus isolated. Isolation is checked via three
+  distinct kernel-visible mechanisms (`isolcpus=`, `nohz_full=`, and
+  cgroup v2 isolated cpuset partitions — the last one being how a VM/
+  container orchestrator like Kubernetes' CPU Manager typically reserves
+  cores at runtime), always reported even when none are found, so the
+  absence of isolation is never ambiguous with "wasn't checked". Plus
+  machine-wide reporting of offline CPUs (relevant on VMs where the
+  hypervisor provisions more possible vCPUs than it activates). Correctly
+  handles multi-socket machines: `/proc/cpuinfo` is grouped by physical
+  socket rather than collapsed into one aggregate.
 * **Storage** — disk space and inode usage per real filesystem (pseudo
-  filesystems like tmpfs/proc/overlay are excluded), 4 severity tiers.
+  filesystems like tmpfs/proc/overlay/AppImage FUSE mounts are excluded),
+  4 severity tiers, plus per-device SMART health (`smartctl` JSON output —
+  ATA "big four" attributes and NVMe health log) in its own submenu,
+  separate from the filesystem instances.
+* **NUMA** — per-node CPU/memory breakdown; automatic cross-node
+  comparison on two axes — memory *usage* balance (`NUMA002`) and
+  *structural* topology symmetry (`NUMA003`: CPU count, memory capacity,
+  memory-less/CPU-less nodes) — each always reported on multi-node systems
+  with a concrete recommendation when asymmetry is found. Skips cleanly on
+  systems without NUMA support.
+* **Systemd** — overall system state, one finding per failed unit. Skips
+  cleanly on systems where systemd isn't PID 1 (checks
+  `/run/systemd/system`, not just whether `systemctl` is installed).
 
 The core, `Module` trait, engine, and three output modes (terminal, JSON,
 interactive TUI) are built and tested. Adding the next module means only
 writing `collect.rs` + `analyze.rs` under `src/modules/<name>/`, then adding
 one line to `all_modules()` in `src/modules/mod.rs`. Nothing else changes —
 all three output modes pick it up automatically.
+
+**Scope note on CPU isolation:** hypervisor-level vCPU pinning (`virsh
+vcpupin`, libvirt `<cputune>`) is a host-side concept with no kernel
+interface exposing it to a guest — it genuinely can't be read from inside
+the system LinuxDoctor audits, by this or any other in-guest tool. What
+CPU005 reports is every kernel-visible isolation mechanism this tool
+checks: `isolcpus=`, `nohz_full=`, cgroup v2 isolated cpuset partitions
+(the mechanism a VM/container orchestrator like Kubernetes' CPU Manager
+typically uses), and `system.slice` being restricted via `AllowedCPUs=`
+(a common libvirt-hook technique: `systemctl set-property --runtime
+system.slice AllowedCPUs=<cpus>` on VM start, reserving the complement for
+`machine.slice`, reversed on VM stop). CPU005 is always reported, even
+when nothing is isolated, specifically so its absence never reads as "the
+tool didn't check" — if none of these four show anything but cores are
+still expected to be reserved, that reservation is almost certainly
+happening at the host level.
 
 ## Getting set up
 
@@ -38,7 +83,7 @@ and generated packages (`*.deb`, `*.rpm`):
 ```bash
 git init
 git add .
-git commit -m "Initial scaffold: core engine, memory + cpu modules, terminal/json/tui output"
+git commit -m "Initial scaffold: core engine, 5 modules (memory/cpu/numa/storage/systemd), terminal/json/tui output"
 ```
 
 ## Packaging
@@ -67,6 +112,17 @@ runtime dependency list to install. `Cargo.lock` already pins every
 dependency's exact version and is committed to the repo; that's the
 equivalent artifact. Nothing else to add.
 
+## Runtime dependencies
+
+Everything ships in the single binary except `df` (Storage — always
+present on Linux) and `systemctl` (Systemd — only queried when systemd is
+actually PID 1). One truly optional external tool: `smartctl` (from
+`smartmontools`) for per-device disk health. Without it, the Storage
+module still works normally — `STOR003` just reports that SMART couldn't
+be checked, rather than silently having no disk-health data with no
+explanation. SMART queries also typically need root (raw device access);
+run as root/sudo for full per-device detail.
+
 ## Quickstart
 
 ```bash
@@ -77,15 +133,17 @@ cargo build --release
 ./target/release/linuxdoctor tui              # interactive terminal UI
 ```
 
-In the TUI: ↑/↓ (or j/k) to select a module, PgUp/PgDn to scroll a long finding,
-q or Esc to quit. The TUI needs a real terminal (it won't run over a piped
-stdout or in an environment with no TTY) — `linuxdoctor audit` always works
-regardless.
+In the TUI: PgUp/PgDn to select a module (or, once drilled in, an item
+within its submenu), ↑/↓ (or j/k) to scroll a long finding, Enter to open
+a module's submenu when one is available (2+ items — a small "›" marks
+which modules have one), Esc to back out of a submenu, q or Esc to quit.
+The TUI needs a real terminal (it won't run over a piped stdout or in an
+environment with no TTY) — `linuxdoctor audit` always works regardless.
 
 ## Tests
 
 ```bash
-cargo test               # 44 unit tests + 6 integration tests
+cargo test               # 130 unit tests + 16 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -140,8 +198,10 @@ linuxdoctor/
     ├── modules/
     │   ├── mod.rs              # the Module trait + all_modules()
     │   ├── memory/              # collect.rs (I/O) + analyze.rs (pure logic) + tests
-    │   ├── cpu/                  # same shape as memory/
-    │   └── storage/                # same shape, one finding per real filesystem
+    │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
+    │   ├── numa/                  # per-node topology, cross-node imbalance
+    │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
+    │   └── systemd/                  # system state, failed units
     │
     └── output/
         ├── terminal.rs          # text + ANSI colors

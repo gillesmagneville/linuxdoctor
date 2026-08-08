@@ -2,7 +2,9 @@
 
 pub mod cpu;
 pub mod memory;
+pub mod numa;
 pub mod storage;
+pub mod systemd;
 
 use crate::core::context::Context;
 use crate::core::error::ModuleError;
@@ -32,6 +34,8 @@ pub fn all_modules() -> Vec<Box<dyn Module>> {
     vec![
         Box::new(memory::MemoryModule),
         Box::new(cpu::CpuModule),
+        Box::new(numa::NumaModule),
         Box::new(storage::StorageModule),
+        Box::new(systemd::SystemdModule),
     ]
 }

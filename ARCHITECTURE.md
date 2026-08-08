@@ -72,19 +72,31 @@ linuxdoctor/
 │   │   └── finding.rs        # canonical Finding struct
 │   │
 │   ├── modules/
-│   │   ├── mod.rs            # the Module trait
-│   │   └── memory/
-│   │       ├── mod.rs
-│   │       ├── collect.rs    # thin I/O: reads /proc, parses to RawData
+│   │   ├── mod.rs            # the Module trait + all_modules()
+│   │   ├── memory/
+│   │   ├── cpu/
+│   │   ├── numa/
+│   │   ├── storage/
+│   │   └── systemd/
+│   │       # each module folder has the same shape:
+│   │       │   mod.rs        # implements Module, wires collect()+analyze()
+│   │       │   collect.rs    # thin I/O: reads /proc, /sys, or shells out
+│   │       │                 # (df, systemctl, smartctl), parses to RawData
 │   │       └── analyze.rs    # pure functions: RawData -> Vec<Finding>
 │   │
 │   └── output/
 │       ├── mod.rs
-│       ├── terminal.rs
-│       └── json.rs
+│       ├── terminal.rs       # text + ANSI colors
+│       ├── json.rs           # JSON
+│       └── tui.rs            # interactive UI (ratatui) — see "Output Engine"
 │
 └── tests/
-    └── memory_module.rs       # integration test against fixture data
+    # one fixture-driven integration test file per module, e.g.
+    ├── memory_module.rs
+    ├── cpu_module.rs
+    ├── numa_module.rs
+    ├── storage_module.rs
+    └── systemd_module.rs
 ```
 
 As more modules are added, if `collect.rs` logic starts repeating across modules
@@ -117,7 +129,7 @@ For each module:
  ↓
 Aggregate Findings into a Report
  ↓
-Output Formatter (terminal | json)
+Output Formatter (terminal | json | tui)
  ↓
 Exit code reflects highest severity found
 ```
@@ -185,7 +197,7 @@ pub trait Module: Send + Sync {
 
     /// Whether this module applies to the current system.
     /// Default: always available.
-    fn is_available(&self, ctx: &Context) -> bool { true }
+    fn is_available(&self, _ctx: &Context) -> bool { true }
 
     /// Collect + analyze in one call. Implementations should keep the
     /// collection step (I/O) and analysis step (pure logic) as separate,
@@ -204,9 +216,13 @@ only ever return `Finding`s; only the Output Engine decides how they're displaye
 
 Collectors retrieve information and do not interpret it. In v1 each module owns its
 own thin collection function (e.g. `modules::memory::collect::collect()`), reading
-from `/proc`, `/sys`, or shelling out to external tools (`lsblk`, `smartctl`,
-`journalctl`, `ip`, `ethtool`) as needed. Shared collection logic gets promoted to
-`src/collectors/` once duplicated by a second module.
+from `/proc` and `/sys` directly wherever possible, and shelling out only when there's
+no direct kernel interface for the fact needed. Currently used: `df` (Storage — space
+and inode usage), `systemctl` (Systemd — system state, failed units), `smartctl`
+(Storage — per-device SMART health, JSON output). `lsblk`, `journalctl`, `ip`,
+`ethtool` remain plausible future collectors for modules not yet built, not things
+already wired in. Shared collection logic gets promoted to `src/collectors/` once
+duplicated by a second module.
 
 ---
 
@@ -239,13 +255,26 @@ pub struct Finding {
     pub evidence: Vec<(String, String)>,   // key/value observed facts
     pub explanation: String,
     pub recommendation: Option<String>,
+    pub instance: Option<String>,          // see below
 }
 ```
+
+`instance` names the specific sub-item a finding is about — a socket ("socket 0"), a
+filesystem ("/"), a NUMA node ("node0"), a failed unit ("nginx.service"), a disk
+("/dev/sda") — when a module's finding applies to one specific thing rather than the
+module as a whole. Findings sharing the same `instance` string are grouped together
+by output modes that support drilling into detail (the TUI's submenus — see "Output
+Engine" below). `None` means the finding is global to the module and always shown at
+its top level. This is what lets the TUI decide which modules get a submenu without
+any hardcoded knowledge of which check IDs happen to be per-instance for which
+module — it's driven entirely by this field, set by whichever module produces the
+finding (e.g. CPU's per-socket `CPU004`, Storage's per-filesystem `STOR001`/`STOR002`
+and per-device `STOR004`, NUMA's per-node `NUMA001`, Systemd's per-unit `SYSD002`).
 
 Example:
 
 ```
-MEM002 — High Swap Activity
+MEM002 — Swap Activity
 WARNING · Confidence: 85% (strong indication)
 
 Evidence
@@ -261,6 +290,16 @@ Recommendation
   Identify high-memory processes (ps, smem) and consider whether
   more RAM or lower memory usage is needed.
 ```
+
+A per-instance example, for contrast:
+
+```
+STOR001 — Filesystem Usage — /data
+instance: "/data"
+```
+
+Both `STOR001` and `STOR002` (space and inode usage) for the same mount point use the
+identical `instance` string, so they group into the same submenu entry.
 
 ---
 
@@ -310,7 +349,7 @@ pub struct Confidence {
 
 # Output Engine
 
-Supported now: Terminal, JSON.
+Supported now: Terminal, JSON, interactive TUI.
 Future: HTML, Markdown.
 
 Output formatters only render `Finding`s — they never compute severity, confidence,
@@ -321,33 +360,62 @@ or evidence themselves.
 Compact per-module status line, followed by full detail for anything above INFO:
 
 ```
-✓ CPU
-✓ Memory
-⚠ Storage
-✓ Network
-✗ SMART (unavailable)
+✓ memory
+⚠ cpu
+✓ numa
+✗ storage
+- systemd (skipped)
 ```
 
 ## JSON Renderer
 
+Serializes the full `Report` — `context` once, then `results` grouped by module
+(`module_id`, that module's `findings`, and `error`/`skipped` for modules that didn't
+run cleanly):
+
 ```json
 {
-  "hostname": "web01",
-  "kernel_version": "6.8.0-31-generic",
-  "findings": [
+  "context": { "hostname": "web01", "kernel_version": "6.8.0-31-generic", "...": "..." },
+  "results": [
     {
-      "id": "MEM002",
-      "category": "memory",
-      "severity": "warning",
-      "confidence": { "percent": 85, "reason": "strong indication" },
-      "title": "High Swap Activity",
-      "evidence": [["swap_used_kb", "4200000"], ["mem_available_pct", "4.1"]],
-      "explanation": "...",
-      "recommendation": "..."
+      "module_id": "memory",
+      "findings": [
+        {
+          "id": "MEM002",
+          "title": "Swap Activity",
+          "category": "memory",
+          "severity": "warning",
+          "confidence": { "percent": 85, "reason": "strong indication" },
+          "evidence": [["swap_used_kb", "4200000"], ["mem_available_pct", "4.1"]],
+          "explanation": "...",
+          "recommendation": "...",
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false
+    },
+    {
+      "module_id": "systemd",
+      "findings": [],
+      "error": null,
+      "skipped": true
     }
   ]
 }
 ```
+
+## Interactive TUI
+
+The third output mode, built on `ratatui`. Consumes the same `Report` as the other
+two — no diagnostic logic lives here either. Its one piece of extra behavior:
+modules whose findings include 2+ distinct `Finding.instance` values get a real,
+navigable submenu (`Enter` to drill in, `Esc` to back out, `PgUp`/`PgDn` to move
+through whichever list — modules or, once drilled in, that module's instances —
+is currently focused; `↑`/`↓` scroll the detail pane). Below 2 instances, a module's
+findings are shown flat, exactly as Terminal/JSON always do. See `src/output/tui.rs`
+for the implementation and `Finding.instance` above for the mechanism this is built
+on.
 
 ---
 

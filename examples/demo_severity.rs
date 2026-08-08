@@ -24,10 +24,16 @@ fn main() {
 
     let critical_data = MemoryRawData {
         mem_total_kb: 16_384_000,
+        mem_free_kb: 150_000,
         mem_available_kb: 200_000, // ~1.2% available
+        cached_kb: 50_000,
+        shmem_kb: 300_000,
+        dirty_kb: 20_000,
         swap_total_kb: 4_194_300,
         swap_free_kb: 0, // swap exhausted
         swappiness: 10,
+        dirty_ratio: 20,
+        dirty_background_ratio: 10,
     };
 
     let findings = analyze(&critical_data, &ctx);

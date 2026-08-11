@@ -78,11 +78,13 @@ linuxdoctor/
 │   │   ├── numa/
 │   │   ├── storage/
 │   │   ├── systemd/
-│   │   └── network/
+│   │   ├── ntp/
+│   │   ├── network/
+│   │   └── kernel/
 │   │       # each module folder has the same shape:
 │   │       │   mod.rs        # implements Module, wires collect()+analyze()
 │   │       │   collect.rs    # thin I/O: reads /proc, /sys, or shells out
-│   │       │                 # (df, systemctl, smartctl), parses to RawData
+│   │       │                 # (df, systemctl, smartctl, dmesg, timedatectl), parses to RawData
 │   │       └── analyze.rs    # pure functions: RawData -> Vec<Finding>
 │   │
 │   └── output/
@@ -98,7 +100,9 @@ linuxdoctor/
     ├── numa_module.rs
     ├── storage_module.rs
     ├── systemd_module.rs
-    └── network_module.rs
+    ├── ntp_module.rs
+    ├── network_module.rs
+    └── kernel_module.rs
     # (one per module, same fixture-driven pattern)
 ```
 
@@ -224,11 +228,13 @@ no direct kernel interface for the fact needed. Network is a clean example of th
 former: `/proc/net/dev`, `/proc/net/route`, `/sys/class/net/*`, and `/etc/resolv.conf`
 cover its needs with zero subprocess calls. Currently shelling out: `df` (Storage —
 space and inode usage), `systemctl` (Systemd — system state, failed units), `smartctl`
-(Storage — per-device SMART health, JSON output). `lsblk`, `journalctl`, `ethtool`
-remain plausible future collectors for modules not yet built (or, for `ethtool`,
-already pointed to in a *recommendation* string without the tool itself calling it) —
-not things already wired in. Shared collection logic gets promoted to
-`src/collectors/` once duplicated by a second module.
+(Storage — per-device SMART health, JSON output), `dmesg` (Kernel — OOM-kill history,
+best-effort since it's commonly root-restricted), `timedatectl` (NTP — clock sync
+status; part of systemd core, so gated by the same availability check as Systemd).
+`lsblk`, `journalctl`, `ethtool` remain plausible future collectors for modules not
+yet built (or, for `ethtool`, already pointed to in a *recommendation* string without
+the tool itself calling it) — not things already wired in. Shared collection logic
+gets promoted to `src/collectors/` once duplicated by a second module.
 
 ---
 

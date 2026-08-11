@@ -8,7 +8,7 @@ severity/confidence scales, layout).
 
 ## Status
 
-v1 scaffold, six modules shipping end-to-end:
+v1 scaffold, eight modules shipping end-to-end:
 
 * **Memory** — usage overview (used vs reclaimable cache vs available,
   answering "why does `free` show so little free RAM"), `vm.swappiness`,
@@ -44,6 +44,13 @@ v1 scaffold, six modules shipping end-to-end:
 * **Systemd** — overall system state, one finding per failed unit. Skips
   cleanly on systems where systemd isn't PID 1 (checks
   `/run/systemd/system`, not just whether `systemctl` is installed).
+* **NTP** — clock synchronization status (`timedatectl show`'s
+  `NTPSynchronized`, sourced from the kernel's own sync flag, so it's
+  authoritative regardless of which daemon manages sync — though with a
+  documented false-negative caveat for some chrony/ntpd configs, reflected
+  in a deliberately capped confidence) and RTC time mode. Same
+  `/run/systemd/system` availability check as Systemd, since `timedatectl`
+  is part of systemd core.
 * **Network** — per-interface overview and error/drop rates (with a
   minimum-sample-size guard so a handful of startup drops on a fresh
   interface can't produce a misleading percentage), default gateway,
@@ -53,6 +60,16 @@ v1 scaffold, six modules shipping end-to-end:
   error/drop-rate severity and confidence accordingly — on some NIC/
   driver combinations, VF-steered traffic inflates the physical
   function's `rx_dropped` without indicating a real link problem.
+* **Kernel** — taint status (all 20 bits, transcribed from the kernel's
+  own documentation, not guessed) and OOM-kill history via `dmesg`
+  (degrades cleanly when unreadable — `kernel.dmesg_restrict` commonly
+  limits it to root); plus build info (`/proc/version`, with a
+  paren-depth-aware parser so nested compiler-version parens don't get
+  truncated), reboot-required detection (Debian/Ubuntu's
+  `/var/run/reboot-required` — absence on other distros is reported as
+  "not confirmed", not "clean", since the file is distro-specific),
+  ASLR status, and a small set of notable boot parameters
+  (`mitigations=off` and similar).
 
 The core, `Module` trait, engine, and three output modes (terminal, JSON,
 interactive TUI) are built and tested. Adding the next module means only
@@ -92,7 +109,7 @@ and generated packages (`*.deb`, `*.rpm`):
 ```bash
 git init
 git add .
-git commit -m "Initial scaffold: core engine, 6 modules (memory/cpu/numa/storage/systemd/network), terminal/json/tui output"
+git commit -m "Initial scaffold: core engine, 8 modules (memory/cpu/numa/storage/systemd/ntp/network/kernel), terminal/json/tui output"
 ```
 
 ## Packaging
@@ -154,7 +171,7 @@ environment with no TTY) — `linuxdoctor audit` always works regardless.
 ## Tests
 
 ```bash
-cargo test               # 150 unit tests + 20 integration tests
+cargo test               # 191 unit tests + 26 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -213,7 +230,9 @@ linuxdoctor/
     │   ├── numa/                  # per-node topology, cross-node imbalance
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
     │   ├── systemd/                  # system state, failed units
-    │   └── network/                    # interfaces, gateway, DNS (zero subprocess calls)
+    │   ├── ntp/                        # clock sync, RTC mode
+    │   ├── network/                    # interfaces, gateway, DNS (zero subprocess calls)
+    │   └── kernel/                       # taint status, OOM history (dmesg)
     │
     └── output/
         ├── terminal.rs          # text + ANSI colors

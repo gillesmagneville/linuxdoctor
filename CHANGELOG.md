@@ -9,6 +9,65 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- Module **ntp** : statut de synchronisation d'horloge et mode de
+  l'horloge matérielle (RTC), via `timedatectl show`.
+  - `NTP001` (statut de synchro) : lit `NTPSynchronized=`, qui vient du
+    flag `STA_UNSYNC` du **noyau** lui-même (`adjtimex(3)`) — autoritaire
+    quel que soit le démon en charge (systemd-timesyncd, chrony, ntpd),
+    puisqu'ils mettent tous à jour le même état noyau. Confiance
+    délibérément réduite (`strong_indication`, pas
+    `direct_observation`) quand ce champ indique un problème : un ticket
+    de support Red Hat confirme que c'est un faux négatif connu avec
+    certaines configs chrony/ntpd (chrony sans `rtcsync`, ntpd avec
+    `-x`) qui ne mettent pas à jour ce flag noyau — vérifié avant de
+    coder, pas supposé.
+  - `NTP002` (mode RTC) : `LocalRTC=` — RTC en heure locale n'est pas
+    en soi un problème (réglage courant en dual-boot Windows), donc
+    reste en Info, présenté comme contexte à confirmer plutôt que comme
+    un verdict.
+  - Même mécanisme de disponibilité que le module systemd
+    (`/run/systemd/system`) — `timedatectl` fait partie du cœur de
+    systemd, donc dépend de la même condition.
+
+### Ajouté
+
+- Module **kernel** enrichi : quatre nouveaux checks, toujours présents.
+  - `KERN003` (infos de build) : parse `/proc/version` — utilisateur/hôte
+    de build, compilateur, tag de build. Piège évité : les chaînes de
+    compilateur contiennent souvent leurs propres parenthèses imbriquées
+    (`gcc (Ubuntu 13.2.0-...) 13.2.0`), donc le parseur compte la
+    profondeur plutôt que de chercher naïvement la première parenthèse
+    fermante — vérifié à la fois sur ce sandbox (noyau Firecracker
+    personnalisé) et sur un exemple `/proc/version` de style Ubuntu.
+  - `KERN004` (reboot requis) : `/var/run/reboot-required`
+    (convention Debian/Ubuntu). Sur les autres familles de distributions,
+    l'absence du marqueur est rapportée honnêtement comme "non
+    confirmé", pas comme "aucun redémarrage nécessaire" — ce fichier
+    n'existe pas du tout ailleurs.
+  - `KERN005` (statut ASLR) : `kernel.randomize_va_space` — désactivé
+    (0) remonte en Warning, partiel (1) ou complet (2) reste Info.
+  - `KERN006` (paramètres de boot notables) : scan ciblé de
+    `/proc/cmdline` pour `mitigations=off` (Warning — désactive les
+    mitigations Spectre/Meltdown), `nomodeset`, mode single/emergency.
+    Pas un linter exhaustif de la ligne de commande, juste quelques
+    signaux bien choisis.
+
+### Ajouté
+
+- Module **kernel** : statut de taint (`/proc/sys/kernel/tainted`, les 20
+  bits transcrits depuis la documentation officielle du noyau —
+  https://docs.kernel.org/admin-guide/tainted-kernels.html — pas
+  supposés) et historique des kills OOM (via `dmesg`, se dégrade
+  proprement si l'accès est refusé — `kernel.dmesg_restrict` limite
+  souvent ça à root). `KERN001` combine tous les bits actifs en un seul
+  finding (ce sont des conditions hétérogènes, pas une liste
+  d'instances similaires comme des sockets ou des systèmes de fichiers).
+  Sévérité au pire signal actif (ex. une Machine Check Exception ou un
+  soft lockup priment sur un simple module propriétaire chargé, qui est
+  courant et anodin).
+
 ### Corrigé
 
 - Module **network** : `NET002` traitait le taux de perte RX/TX comme un

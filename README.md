@@ -6,6 +6,20 @@ Fast, explainable Linux health diagnostics. See `PROJECT_CONTEXT.md` for vision 
 principles, `ARCHITECTURE.md` for the technical contract (types, module trait,
 severity/confidence scales, layout).
 
+## Recommended usage
+
+For interactive use, **`linuxdoctor tui` is strongly recommended**. It provides a
+navigable terminal interface that keeps the modules and their findings organized,
+so you can move through the results without having to search through a long stream
+of terminal output.
+
+The plain `linuxdoctor` command also works, but its output is printed sequentially
+in the terminal. With a large diagnostic report, this can produce a very long
+output and may require scrolling a long way back to find information displayed
+earlier.
+
+![LinuxDoctor TUI](docs/linuxdoctor-tui.svg)
+
 ## Status
 
 v1 scaffold, nine modules shipping end-to-end:

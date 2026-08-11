@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="655" viewBox="0 0 1200 655">
+<rect width="1200" height="655" fill="#250d20"/>
+<rect x="7" y="8" width="1186" height="31" fill="#250d20" stroke="#e8dfe5"/>
+<text x="13" y="29" fill="#fff" font-family="monospace" font-size="15" font-weight="bold">LinuxDoctor</text><text x="105" y="29" fill="#ddd" font-family="monospace" font-size="14">— gilles-desktop  |  kernel 7.0.0-29-generic · Ubuntu 26.04 LTS · 32 CPUs · 253463 MB RAM</text>
+<rect x="7" y="48" width="328" height="558" fill="#250d20" stroke="#e8dfe5"/><rect x="339" y="48" width="854" height="558" fill="#250d20" stroke="#e8dfe5"/>
+<text x="10" y="62" fill="#fff" font-family="monospace" font-size="13">Modules</text>
+<text x="12" y="80" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="80" fill="#fff" font-family="monospace" font-size="14">memory</text>
+<text x="12" y="100" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="100" fill="#fff" font-family="monospace" font-size="14">cpu ›</text>
+<text x="12" y="120" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="120" fill="#fff" font-family="monospace" font-size="14">numa ›</text>
+<text x="12" y="140" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="140" fill="#fff" font-family="monospace" font-size="14">storage</text>
+<text x="12" y="160" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="160" fill="#fff" font-family="monospace" font-size="14">systemd ›</text>
+<text x="12" y="180" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="180" fill="#fff" font-family="monospace" font-size="14">ntp</text>
+<text x="12" y="200" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="200" fill="#fff" font-family="monospace" font-size="14">network ›</text>
+<text x="12" y="220" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="220" fill="#fff" font-family="monospace" font-size="14">kernel ›</text>
+<text x="12" y="240" fill="#d8e900" font-family="monospace" font-size="14">✓</text><text x="27" y="240" fill="#fff" font-family="monospace" font-size="14">virtualization ›</text>
+<text x="345" y="63" fill="#fff" font-family="monospace" font-size="13">memory</text>
+<text x="345" y="82" fill="#fff" font-family="monospace" font-size="14" font-weight="bold">MEM004 — Memory Usage Overview</text>
+<text x="345" y="102" fill="#d8e900" font-family="monospace" font-size="13">INFO</text><text x="395" y="102" fill="#fff" font-family="monospace" font-size="13">· Confidence: 100% (direct observation)</text>
+<text x="345" y="127" fill="#fff" font-family="monospace" font-size="13" text-decoration="underline">Evidence</text>
+<text x="355" y="146" fill="#fff" font-family="monospace" font-size="13">total_kb: 259546484</text><text x="355" y="163" fill="#fff" font-family="monospace" font-size="13">used_kb: 121772884</text><text x="355" y="180" fill="#fff" font-family="monospace" font-size="13">free_kb: 108234764</text><text x="355" y="197" fill="#fff" font-family="monospace" font-size="13">available_kb: 137773600</text><text x="355" y="214" fill="#fff" font-family="monospace" font-size="13">cached_kb: 30246040</text><text x="355" y="231" fill="#fff" font-family="monospace" font-size="13">used_percent: 46.9</text>
+<text x="345" y="265" fill="#fff" font-family="monospace" font-size="13">Of 247.5 GB total memory, 116.1 GB (46.9%) is actually in use. Only 103.2 GB shows as strictly free, but 28.8 GB is reclaimable page cache.</text>
+<line x1="345" y1="295" x2="645" y2="295" stroke="#ddd"/>
+<text x="345" y="323" fill="#fff" font-family="monospace" font-size="14" font-weight="bold">MEM001 — Kernel Swappiness Setting</text><text x="345" y="343" fill="#d8e900" font-family="monospace" font-size="13">INFO</text><text x="395" y="343" fill="#fff" font-family="monospace" font-size="13">· Confidence: 100% (direct observation)</text>
+<text x="345" y="367" fill="#fff" font-family="monospace" font-size="13" text-decoration="underline">Evidence</text><text x="355" y="386" fill="#fff" font-family="monospace" font-size="13">vm.swappiness: 10</text><text x="355" y="403" fill="#fff" font-family="monospace" font-size="13">kernel_default: 60</text>
+<line x1="345" y1="427" x2="645" y2="427" stroke="#ddd"/>
+<text x="345" y="455" fill="#fff" font-family="monospace" font-size="14" font-weight="bold">MEM005 — Dirty Page / Writeback Pressure</text><text x="345" y="475" fill="#d8e900" font-family="monospace" font-size="13">INFO</text><text x="395" y="475" fill="#fff" font-family="monospace" font-size="13">· Confidence: 100% (direct observation)</text>
+<text x="345" y="499" fill="#fff" font-family="monospace" font-size="13" text-decoration="underline">Evidence</text><text x="355" y="518" fill="#fff" font-family="monospace" font-size="13">dirty_kb: 12572</text><text x="355" y="535" fill="#fff" font-family="monospace" font-size="13">dirty_percent: 0.00</text><text x="355" y="552" fill="#fff" font-family="monospace" font-size="13">dirty_background_ratio: 10</text><text x="355" y="569" fill="#fff" font-family="monospace" font-size="13">dirty_ratio: 20</text>
+<text x="10" y="624" fill="#aaa" font-family="monospace" font-size="13">PgUp/PgDn select module  ·  ↑/↓ scroll  ·  q quit</text>
+</svg>

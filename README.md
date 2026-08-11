@@ -51,11 +51,17 @@ v1 scaffold, nine modules shipping end-to-end:
   in a deliberately capped confidence) and RTC time mode. Same
   `/run/systemd/system` availability check as Systemd, since `timedatectl`
   is part of systemd core.
-* **Virtualization** — detects VM/container/nested environments via
-  `systemd-detect-virt`, which (unlike `systemctl`/`timedatectl`) works
-  without systemd as PID 1 — no availability gate needed. Falls back to
-  the CPUID hypervisor flag in `/proc/cpuinfo` when the tool isn't
-  installed. Always Info — being virtualized isn't inherently good or bad.
+* **Virtualization** — two distinct concerns, not conflated. *Guest-side*
+  self-detection (`VIRT001`) via `systemd-detect-virt`, which (unlike
+  `systemctl`/`timedatectl`) works without systemd as PID 1 — no
+  availability gate needed; falls back to the CPUID hypervisor flag in
+  `/proc/cpuinfo` when the tool isn't installed. *Host-side* inventory
+  when this machine hosts VMs (`VIRT002`/`VIRT003`, via `virsh`/libvirt)
+  or containers (`VIRT004`/`VIRT005`, via `docker` or `podman`) — each
+  with a three-state availability check (tool absent / tool present but
+  backend unreachable / available), one finding per VM or container in
+  its own submenu, live resource usage for running ones. Always Info —
+  none of this is inherently good or bad, it's inventory.
 * **Network** — per-interface overview and error/drop rates (with a
   minimum-sample-size guard so a handful of startup drops on a fresh
   interface can't produce a misleading percentage), default gateway,
@@ -147,14 +153,17 @@ equivalent artifact. Nothing else to add.
 
 Everything ships in the single binary except `df` (Storage — always
 present on Linux) and `systemctl` (Systemd — only queried when systemd is
-actually PID 1). One truly optional external tool: `smartctl` (from
-`smartmontools`) for per-device disk health. Without it, the Storage
-module still works normally — `STOR003` just reports that SMART couldn't
-be checked, rather than silently having no disk-health data with no
-explanation. SMART queries also typically need root (raw device access);
-run as root/sudo for full per-device detail. Network needs nothing extra
-at all — `/proc/net/*`, `/sys/class/net/*`, and `/etc/resolv.conf` cover
-it with zero subprocess calls.
+actually PID 1). Fully optional external tools, each degrading cleanly
+with an explicit explanation rather than silence when absent: `smartctl`
+(from `smartmontools`) for per-device disk health — `STOR003` just reports
+that SMART couldn't be checked; `dmesg` for OOM-kill history — commonly
+root-restricted; `virsh` (from `libvirt-clients`) for VM inventory, and
+`docker`/`podman` for container inventory — both report a specific reason
+(not installed vs. installed but its daemon/hypervisor is unreachable)
+when unavailable. SMART queries and some `virsh`/`docker` operations
+typically need root; run as root/sudo for full detail everywhere.
+Network needs nothing extra at all — `/proc/net/*`, `/sys/class/net/*`,
+and `/etc/resolv.conf` cover it with zero subprocess calls.
 
 ## Quickstart
 
@@ -176,7 +185,7 @@ environment with no TTY) — `linuxdoctor audit` always works regardless.
 ## Tests
 
 ```bash
-cargo test               # 203 unit tests + 28 integration tests
+cargo test               # 212 unit tests + 29 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

@@ -11,6 +11,42 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- Module **virtualization** enrichi : inventaire côté hôte, en plus de la
+  détection côté invité (`VIRT001`, inchangée). Distinction importante :
+  `VIRT001` répond "dans quoi cette machine tourne-t-elle", ces nouveaux
+  checks répondent "qu'est-ce que cette machine héberge".
+  - `VIRT002`/`VIRT003` (VMs, via `virsh`) : résumé toujours présent
+    (`VIRT002`) + un finding par VM (`VIRT003`, dans un sous-menu dédié).
+    État à trois niveaux, pas un simple booléen : `virsh` absent, `virsh`
+    présent mais hyperviseur injoignable (aucun `libvirtd`, ou pas de
+    permission — comportement vérifié empiriquement : `virsh list --all`
+    sort en code 1 avec `"failed to connect to the hypervisor"`), ou
+    disponible. Par VM : état, vCPUs, mémoire max configurée, mémoire
+    réellement utilisée (seulement si en fonctionnement — sinon
+    `virsh dominfo` reflète la cible du "balloon", pas un usage réel).
+  - `VIRT004`/`VIRT005` (conteneurs, via `docker` puis `podman` en repli)
+    : même structure résumé + détail par conteneur. Utilise `.State`
+    (mot simple : `running`/`exited`) plutôt que `.Status` (texte humain)
+    pour déterminer l'état, avec consommation CPU/mémoire en direct
+    (`docker stats --no-stream`) pour les conteneurs en fonctionnement.
+  - **Vérifié contre de vrais outils, pas seulement des fixtures** :
+    `virsh` et `docker` installés dans ce sandbox pour de vrai
+    (`libvirt-clients`, `docker.io` via apt), `dockerd` lancé
+    manuellement, une image minimale construite depuis un busybox
+    statique (import sans réseau, le pull Docker Hub étant bloqué par la
+    liste blanche réseau), deux vrais conteneurs créés (un en
+    fonctionnement, un arrêté). Le binaire `linuxdoctor` compilé a
+    tourné contre ce vrai démon et remonté les vraies statistiques de
+    ressources en direct. Le cas "outil installé mais démon injoignable"
+    a aussi été confirmé en réel pour `virsh` et `docker`, avec les
+    messages d'erreur exacts capturés.
+  - Coût mesuré : +75-110ms sur ce sandbox (plusieurs appels
+    `virsh`/`docker`/`podman`, dont des tentatives de connexion à un
+    socket absent) — largement dans la cible <2s, mais un coût réel à
+    connaître sur un hôte où le module tourne fréquemment.
+
+### Ajouté
+
 - Module **virtualization** : détection de la technologie de
   virtualisation via `systemd-detect-virt`. Différence importante par
   rapport aux modules systemd/ntp : cet outil **fonctionne sans que

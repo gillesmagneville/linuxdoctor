@@ -21,6 +21,75 @@ pub struct VirtualizationRawData {
     /// systemd-detect-virt (confirms *some* hardware virtualization is
     /// present, but not which one, and says nothing about containers).
     pub cpuinfo_hypervisor_flag: bool,
+
+    /// Host-side inventory: VMs this machine hosts via libvirt (KVM/QEMU/
+    /// Xen), if it's a hypervisor host at all. Distinct concern from the
+    /// fields above, which describe what this machine runs *inside of*,
+    /// not what it hosts.
+    pub vm_inventory: ToolInventory<VmInfo>,
+    /// Host-side inventory: containers this machine runs via Docker or
+    /// Podman, if either is present.
+    pub container_inventory: ToolInventory<ContainerInfo>,
+}
+
+/// Three-state result for a host-side inventory check: the querying tool
+/// may be missing entirely, present but unable to reach its backend (no
+/// daemon running, no permission), or working — each needs a distinctly
+/// worded explanation, not just a bool.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolInventory<T> {
+    pub runtime: Option<String>,
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+    pub items: Vec<T>,
+}
+
+impl<T> ToolInventory<T> {
+    fn unavailable(runtime: Option<&str>, reason: impl Into<String>) -> Self {
+        Self {
+            runtime: runtime.map(str::to_string),
+            available: false,
+            unavailable_reason: Some(reason.into()),
+            items: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VmInfo {
+    pub name: String,
+    /// From `virsh dominfo`'s `State:` field — "running", "shut off",
+    /// "paused", "in shutdown", "crashed", "pmsuspended", etc.
+    pub state: String,
+    pub vcpus: Option<u32>,
+    pub max_memory_kb: Option<u64>,
+    /// Only populated when `state == "running"` — for a stopped VM,
+    /// libvirt's "Used memory" reflects the balloon target, not real
+    /// usage, so reporting it there would be misleading.
+    pub used_memory_kb: Option<u64>,
+    pub cpu_time_seconds: Option<f64>,
+    pub autostart: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContainerInfo {
+    pub name: String,
+    /// Docker/Podman's own single-word state: "running", "exited",
+    /// "paused", "created", etc. (the `{{.State}}` format field).
+    pub state: String,
+    /// The human-readable status string ("Up 3 hours", "Exited (0) 2
+    /// days ago") — kept alongside `state` since it carries detail
+    /// (exit code, duration) `state` alone doesn't.
+    pub status: String,
+    pub image: String,
+    /// Live snapshot from `docker/podman stats --no-stream`, only
+    /// present for running containers. Kept as the tool's own formatted
+    /// strings ("0.00%", "276KiB / 3.904GiB") rather than parsed into
+    /// numbers — this is informational context, not something compared
+    /// against a threshold.
+    pub cpu_percent: Option<String>,
+    pub mem_usage: Option<String>,
+    pub mem_percent: Option<String>,
 }
 
 /// Thin I/O wrapper: `systemd-detect-virt` doesn't need systemd as PID 1
@@ -43,11 +112,16 @@ pub fn collect() -> Result<VirtualizationRawData, ModuleError> {
     let cpuinfo_text = fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
     let cpuinfo_hypervisor_flag = detect_hypervisor_flag(&cpuinfo_text);
 
+    let vm_inventory = collect_vm_inventory();
+    let container_inventory = collect_container_inventory();
+
     Ok(VirtualizationRawData {
         tool_available,
         vm_type,
         container_type,
         cpuinfo_hypervisor_flag,
+        vm_inventory,
+        container_inventory,
     })
 }
 
@@ -106,6 +180,224 @@ pub fn friendly_name(id: &str) -> String {
     .to_string()
 }
 
+/// Host-side VM inventory via `virsh` (libvirt — covers KVM/QEMU and Xen).
+/// Three distinct "nothing to report" cases, each worded differently in
+/// the resulting finding: `virsh` not installed at all; `virsh` installed
+/// but unable to reach a hypervisor (no libvirtd running, or no
+/// permission — confirmed empirically in this sandbox: `virsh list
+/// --all` exits 1 with "failed to connect to the hypervisor" when there's
+/// no daemon); or genuinely zero VMs defined.
+fn collect_vm_inventory() -> ToolInventory<VmInfo> {
+    let version_ok = Command::new("virsh")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !version_ok {
+        return ToolInventory::unavailable(None, "virsh is not installed");
+    }
+
+    let list_output = match Command::new("virsh").args(["list", "--all", "--name"]).output() {
+        Ok(o) => o,
+        Err(e) => return ToolInventory::unavailable(Some("virsh"), e.to_string()),
+    };
+    if !list_output.status.success() {
+        let stderr = String::from_utf8_lossy(&list_output.stderr).trim().to_string();
+        let reason = if stderr.is_empty() {
+            "could not connect to a hypervisor (no libvirtd running, or no permission)"
+                .to_string()
+        } else {
+            stderr
+        };
+        return ToolInventory::unavailable(Some("virsh"), reason);
+    }
+
+    let names = parse_vm_names(&String::from_utf8_lossy(&list_output.stdout));
+
+    let mut vms = Vec::new();
+    for name in &names {
+        if let Ok(info_output) = Command::new("virsh").args(["dominfo", name]).output() {
+            if info_output.status.success() {
+                let text = String::from_utf8_lossy(&info_output.stdout);
+                vms.push(parse_dominfo(name, &text));
+            }
+        }
+    }
+
+    ToolInventory {
+        runtime: Some("virsh".to_string()),
+        available: true,
+        unavailable_reason: None,
+        items: vms,
+    }
+}
+
+/// Parse `virsh list --all --name`: one VM name per line.
+pub fn parse_vm_names(text: &str) -> Vec<String> {
+    text.lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Parse `virsh dominfo <name>`: simple `Key:    Value` lines. Pure
+/// function, tested against fixture text.
+pub fn parse_dominfo(name: &str, text: &str) -> VmInfo {
+    let fields: std::collections::HashMap<&str, &str> = text
+        .lines()
+        .filter_map(|l| l.split_once(':'))
+        .map(|(k, v)| (k.trim(), v.trim()))
+        .collect();
+
+    let state = fields.get("State").unwrap_or(&"unknown").to_string();
+    let vcpus = fields.get("CPU(s)").and_then(|v| v.parse().ok());
+    let max_memory_kb = fields.get("Max memory").and_then(|v| parse_kib_value(v));
+    let used_memory_kb = if state == "running" {
+        fields.get("Used memory").and_then(|v| parse_kib_value(v))
+    } else {
+        None
+    };
+    let cpu_time_seconds = fields
+        .get("CPU time")
+        .and_then(|v| v.trim_end_matches('s').parse().ok());
+    let autostart = fields.get("Autostart").map(|v| *v == "enable");
+
+    VmInfo {
+        name: name.to_string(),
+        state,
+        vcpus,
+        max_memory_kb,
+        used_memory_kb,
+        cpu_time_seconds,
+        autostart,
+    }
+}
+
+/// Parse a libvirt "<number> KiB" value, e.g. "2097152 KiB" -> 2097152.
+fn parse_kib_value(s: &str) -> Option<u64> {
+    s.split_whitespace().next()?.parse().ok()
+}
+
+/// Host-side container inventory. Tries `docker` first, then `podman` —
+/// Podman's CLI is deliberately Docker-compatible, so the same format
+/// strings work against either. Treated as mutually exclusive
+/// alternatives for v1: the first one found that's actually reachable
+/// wins, rather than merging listings from both.
+fn collect_container_inventory() -> ToolInventory<ContainerInfo> {
+    for runtime in ["docker", "podman"] {
+        let version_ok = Command::new(runtime)
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !version_ok {
+            continue; // this runtime isn't installed, try the next one
+        }
+
+        let ps_output = match Command::new(runtime)
+            .args([
+                "ps",
+                "-a",
+                "--format",
+                "{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}",
+            ])
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => return ToolInventory::unavailable(Some(runtime), e.to_string()),
+        };
+        if !ps_output.status.success() {
+            let stderr = String::from_utf8_lossy(&ps_output.stderr).trim().to_string();
+            let reason = if stderr.is_empty() {
+                format!("{runtime} daemon unreachable")
+            } else {
+                stderr
+            };
+            return ToolInventory::unavailable(Some(runtime), reason);
+        }
+
+        let mut containers = parse_container_ps(&String::from_utf8_lossy(&ps_output.stdout));
+
+        // Best-effort: live resource stats only for running containers.
+        // A failure here shouldn't discard the inventory we already have.
+        if let Ok(stats_output) = Command::new(runtime)
+            .args([
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}",
+            ])
+            .output()
+        {
+            if stats_output.status.success() {
+                let stats = parse_container_stats(&String::from_utf8_lossy(&stats_output.stdout));
+                for c in &mut containers {
+                    if let Some((cpu, mem, mem_pct)) = stats.get(&c.name) {
+                        c.cpu_percent = Some(cpu.clone());
+                        c.mem_usage = Some(mem.clone());
+                        c.mem_percent = Some(mem_pct.clone());
+                    }
+                }
+            }
+        }
+
+        return ToolInventory {
+            runtime: Some(runtime.to_string()),
+            available: true,
+            unavailable_reason: None,
+            items: containers,
+        };
+    }
+
+    ToolInventory::unavailable(None, "neither docker nor podman is installed")
+}
+
+/// Parse `docker/podman ps -a --format` output using the tab-delimited
+/// template above. Field order/format verified against a real Docker
+/// daemon and real containers, not assumed: `.State` is a clean
+/// single-word value ("running", "exited"), distinct from the more
+/// detailed human-readable `.Status` ("Up 3 hours", "Exited (0) 2 days
+/// ago"). Pure function, tested against that captured fixture text.
+pub fn parse_container_ps(text: &str) -> Vec<ContainerInfo> {
+    text.lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 4 {
+                return None;
+            }
+            Some(ContainerInfo {
+                name: parts[0].to_string(),
+                state: parts[1].to_string(),
+                status: parts[2].to_string(),
+                image: parts[3].to_string(),
+                cpu_percent: None,
+                mem_usage: None,
+                mem_percent: None,
+            })
+        })
+        .collect()
+}
+
+/// Parse `docker/podman stats --no-stream --format` output (same
+/// tab-delimited approach). Only running containers appear here — stats
+/// are meaningless for stopped ones, and the tools already omit them.
+pub fn parse_container_stats(
+    text: &str,
+) -> std::collections::HashMap<String, (String, String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 4 {
+                return None;
+            }
+            Some((
+                parts[0].to_string(),
+                (parts[1].to_string(), parts[2].to_string(), parts[3].to_string()),
+            ))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +429,100 @@ mod tests {
     #[test]
     fn friendly_name_falls_back_to_raw_id_for_unknown() {
         assert_eq!(friendly_name("acrn"), "acrn");
+    }
+
+    #[test]
+    fn parses_vm_names_list() {
+        let names = parse_vm_names("web1\ndb1\n\n  \n");
+        assert_eq!(names, vec!["web1".to_string(), "db1".to_string()]);
+    }
+
+    // Real `virsh dominfo` field shape (Key:    Value lines) -- the
+    // specific numbers are illustrative, but the format itself is the
+    // long-standing, documented libvirt CLI output shape.
+    const FIXTURE_DOMINFO_RUNNING: &str = "\
+Id:             3
+Name:           web1
+UUID:           12345678-1234-1234-1234-123456789abc
+OS Type:        hvm
+State:          running
+CPU(s):         4
+CPU time:       12345.6s
+Max memory:     4194304 KiB
+Used memory:    4194304 KiB
+Persistent:     yes
+Autostart:      enable
+Managed save:   no
+";
+
+    const FIXTURE_DOMINFO_STOPPED: &str = "\
+Name:           db1
+State:          shut off
+CPU(s):         2
+Max memory:     2097152 KiB
+Used memory:    2097152 KiB
+Persistent:     yes
+Autostart:      disable
+";
+
+    #[test]
+    fn parses_dominfo_for_running_vm() {
+        let vm = parse_dominfo("web1", FIXTURE_DOMINFO_RUNNING);
+        assert_eq!(vm.state, "running");
+        assert_eq!(vm.vcpus, Some(4));
+        assert_eq!(vm.max_memory_kb, Some(4_194_304));
+        // Used memory IS reported when running.
+        assert_eq!(vm.used_memory_kb, Some(4_194_304));
+        assert_eq!(vm.cpu_time_seconds, Some(12345.6));
+        assert_eq!(vm.autostart, Some(true));
+    }
+
+    #[test]
+    fn stopped_vm_does_not_report_used_memory() {
+        // libvirt's "Used memory" reflects the balloon target when
+        // stopped, not real usage -- reporting it would be misleading.
+        let vm = parse_dominfo("db1", FIXTURE_DOMINFO_STOPPED);
+        assert_eq!(vm.state, "shut off");
+        assert_eq!(vm.used_memory_kb, None);
+        assert_eq!(vm.max_memory_kb, Some(2_097_152));
+        assert_eq!(vm.autostart, Some(false));
+    }
+
+    // Captured from a real Docker daemon in this sandbox (dockerd started
+    // manually, minimal busybox-based image imported without network
+    // access, real running + real stopped containers) -- not synthetic.
+    const FIXTURE_DOCKER_PS: &str =
+        "test-running\trunning\tUp 1 second\tminitest:latest\ntest-stopped\texited\tExited (0) 1 second ago\tminitest:latest\n";
+
+    const FIXTURE_DOCKER_STATS: &str = "test-running\t0.00%\t276KiB / 3.904GiB\t0.01%\n";
+
+    #[test]
+    fn parses_real_captured_docker_ps_output() {
+        let containers = parse_container_ps(FIXTURE_DOCKER_PS);
+        assert_eq!(containers.len(), 2);
+        let running = containers.iter().find(|c| c.name == "test-running").unwrap();
+        assert_eq!(running.state, "running");
+        assert_eq!(running.status, "Up 1 second");
+        assert_eq!(running.image, "minitest:latest");
+        let stopped = containers.iter().find(|c| c.name == "test-stopped").unwrap();
+        assert_eq!(stopped.state, "exited");
+        assert!(stopped.status.starts_with("Exited (0)"));
+    }
+
+    #[test]
+    fn parses_real_captured_docker_stats_output() {
+        let stats = parse_container_stats(FIXTURE_DOCKER_STATS);
+        let (cpu, mem, mem_pct) = stats.get("test-running").unwrap();
+        assert_eq!(cpu, "0.00%");
+        assert_eq!(mem, "276KiB / 3.904GiB");
+        assert_eq!(mem_pct, "0.01%");
+        // Stopped containers never appear in `stats` output at all.
+        assert!(!stats.contains_key("test-stopped"));
+    }
+
+    #[test]
+    fn container_ps_skips_malformed_lines() {
+        let containers = parse_container_ps("not enough fields\nname\trunning\tUp\timage\n");
+        assert_eq!(containers.len(), 1);
     }
 }

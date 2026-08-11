@@ -11,6 +11,29 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- Module **virtualization** : détection de la technologie de
+  virtualisation via `systemd-detect-virt`. Différence importante par
+  rapport aux modules systemd/ntp : cet outil **fonctionne sans que
+  systemd soit PID 1** (il sonde DMI/CPUID/marqueurs d'environnement
+  directement, pas de bus D-Bus vers PID 1) — vérifié empiriquement sur
+  ce sandbox avant de coder, donc pas de restriction `is_available()`.
+  Piège de code de sortie à noter : l'outil sort en code **non-zéro**
+  précisément quand rien n'est détecté (`none`) — vérifié dans sa propre
+  documentation — donc la sortie standard est capturée indépendamment du
+  code de sortie, sinon chaque machine bare-metal remonterait une
+  fausse erreur de collecte.
+  - `VIRT001` (toujours présent, Info — être virtualisé n'est ni bon ni
+    mauvais en soi) distingue les quatre cas : bare metal, VM seule,
+    conteneur seul, ou imbriqué (conteneur sur VM). Repli sur le flag
+    CPUID `hypervisor` de `/proc/cpuinfo` si l'outil n'est pas installé
+    (signal plus faible : confirme une virtualisation matérielle sans
+    dire laquelle).
+  - Vérifié en conditions réelles sur ce sandbox : `docker` sur `kvm`
+    (imbrication réelle, pas un fixture) — correctement identifié et
+    expliqué.
+
+### Ajouté
+
 - Module **ntp** : statut de synchronisation d'horloge et mode de
   l'horloge matérielle (RTC), via `timedatectl show`.
   - `NTP001` (statut de synchro) : lit `NTPSynchronized=`, qui vient du

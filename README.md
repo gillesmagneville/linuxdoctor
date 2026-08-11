@@ -8,7 +8,7 @@ severity/confidence scales, layout).
 
 ## Status
 
-v1 scaffold, eight modules shipping end-to-end:
+v1 scaffold, nine modules shipping end-to-end:
 
 * **Memory** — usage overview (used vs reclaimable cache vs available,
   answering "why does `free` show so little free RAM"), `vm.swappiness`,
@@ -51,6 +51,11 @@ v1 scaffold, eight modules shipping end-to-end:
   in a deliberately capped confidence) and RTC time mode. Same
   `/run/systemd/system` availability check as Systemd, since `timedatectl`
   is part of systemd core.
+* **Virtualization** — detects VM/container/nested environments via
+  `systemd-detect-virt`, which (unlike `systemctl`/`timedatectl`) works
+  without systemd as PID 1 — no availability gate needed. Falls back to
+  the CPUID hypervisor flag in `/proc/cpuinfo` when the tool isn't
+  installed. Always Info — being virtualized isn't inherently good or bad.
 * **Network** — per-interface overview and error/drop rates (with a
   minimum-sample-size guard so a handful of startup drops on a fresh
   interface can't produce a misleading percentage), default gateway,
@@ -109,7 +114,7 @@ and generated packages (`*.deb`, `*.rpm`):
 ```bash
 git init
 git add .
-git commit -m "Initial scaffold: core engine, 8 modules (memory/cpu/numa/storage/systemd/ntp/network/kernel), terminal/json/tui output"
+git commit -m "Initial scaffold: core engine, 9 modules (memory/cpu/numa/storage/systemd/ntp/network/kernel/virtualization), terminal/json/tui output"
 ```
 
 ## Packaging
@@ -171,7 +176,7 @@ environment with no TTY) — `linuxdoctor audit` always works regardless.
 ## Tests
 
 ```bash
-cargo test               # 191 unit tests + 26 integration tests
+cargo test               # 203 unit tests + 28 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -232,7 +237,8 @@ linuxdoctor/
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode
     │   ├── network/                    # interfaces, gateway, DNS (zero subprocess calls)
-    │   └── kernel/                       # taint status, OOM history (dmesg)
+    │   ├── kernel/                       # taint status, OOM history (dmesg)
+    │   └── virtualization/                 # systemd-detect-virt, no PID1 gate
     │
     └── output/
         ├── terminal.rs          # text + ANSI colors

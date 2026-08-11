@@ -8,6 +8,7 @@ pub mod ntp;
 pub mod numa;
 pub mod storage;
 pub mod systemd;
+pub mod virtualization;
 
 use crate::core::context::Context;
 use crate::core::error::ModuleError;
@@ -43,5 +44,6 @@ pub fn all_modules() -> Vec<Box<dyn Module>> {
         Box::new(ntp::NtpModule),
         Box::new(network::NetworkModule),
         Box::new(kernel::KernelModule),
+        Box::new(virtualization::VirtualizationModule),
     ]
 }

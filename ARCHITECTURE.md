@@ -80,11 +80,13 @@ linuxdoctor/
 │   │   ├── systemd/
 │   │   ├── ntp/
 │   │   ├── network/
-│   │   └── kernel/
+│   │   ├── kernel/
+│   │   └── virtualization/
 │   │       # each module folder has the same shape:
 │   │       │   mod.rs        # implements Module, wires collect()+analyze()
 │   │       │   collect.rs    # thin I/O: reads /proc, /sys, or shells out
-│   │       │                 # (df, systemctl, smartctl, dmesg, timedatectl), parses to RawData
+│   │       │                 # (df, systemctl, smartctl, dmesg, timedatectl,
+│   │       │                 #  systemd-detect-virt), parses to RawData
 │   │       └── analyze.rs    # pure functions: RawData -> Vec<Finding>
 │   │
 │   └── output/
@@ -102,7 +104,8 @@ linuxdoctor/
     ├── systemd_module.rs
     ├── ntp_module.rs
     ├── network_module.rs
-    └── kernel_module.rs
+    ├── kernel_module.rs
+    └── virtualization_module.rs
     # (one per module, same fixture-driven pattern)
 ```
 
@@ -230,8 +233,12 @@ cover its needs with zero subprocess calls. Currently shelling out: `df` (Storag
 space and inode usage), `systemctl` (Systemd — system state, failed units), `smartctl`
 (Storage — per-device SMART health, JSON output), `dmesg` (Kernel — OOM-kill history,
 best-effort since it's commonly root-restricted), `timedatectl` (NTP — clock sync
-status; part of systemd core, so gated by the same availability check as Systemd).
-`lsblk`, `journalctl`, `ethtool` remain plausible future collectors for modules not
+status; part of systemd core, so gated by the same availability check as Systemd),
+`systemd-detect-virt` (Virtualization — notably does *not* need systemd as PID 1,
+unlike `systemctl`/`timedatectl`, since it probes DMI/CPUID directly rather than
+talking to PID 1 over D-Bus — verified empirically, not assumed, so this module has
+no availability gate). `lsblk`, `journalctl`, `ethtool` remain plausible future
+collectors for modules not
 yet built (or, for `ethtool`, already pointed to in a *recommendation* string without
 the tool itself calling it) — not things already wired in. Shared collection logic
 gets promoted to `src/collectors/` once duplicated by a second module.

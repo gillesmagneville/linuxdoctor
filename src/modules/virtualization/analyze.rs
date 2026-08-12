@@ -3,7 +3,7 @@
 use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
 
-use super::collect::{friendly_name, ContainerInfo, VirtualizationRawData, VmInfo};
+use super::collect::{friendly_name, ContainerInfo, VirtualizationRawData, VmDisk, VmInfo};
 
 /// Pure function: RawData -> Findings. No I/O — see ARCHITECTURE.md
 /// "Testing Strategy".
@@ -128,6 +128,62 @@ fn vm_summary_finding(data: &VirtualizationRawData) -> Finding {
 /// VIRT003 — one finding per VM. Purely descriptive: resource
 /// consumption here reflects what the admin already provisioned, not a
 /// threshold to alert on.
+/// Group consecutive vCPUs sharing the same host affinity into one
+/// readable clause, e.g. "vCPUs 0-1: host 0-3; vCPUs 2-3: host 4-7"
+/// rather than one line per vCPU.
+fn format_vcpu_pinning(pinning: &[(u32, String)]) -> Option<String> {
+    if pinning.is_empty() {
+        return None;
+    }
+    let mut groups: Vec<(Vec<u32>, String)> = Vec::new();
+    for (vcpu, affinity) in pinning {
+        if let Some(last) = groups.last_mut() {
+            if last.1 == *affinity {
+                last.0.push(*vcpu);
+                continue;
+            }
+        }
+        groups.push((vec![*vcpu], affinity.clone()));
+    }
+    let parts: Vec<String> = groups
+        .iter()
+        .map(|(vcpus, affinity)| {
+            let label = match (vcpus.first(), vcpus.last()) {
+                (Some(first), Some(last)) if first != last => format!("vCPUs {first}-{last}"),
+                (Some(first), _) => format!("vCPU {first}"),
+                _ => "vCPU".to_string(),
+            };
+            format!("{label}: host {affinity}")
+        })
+        .collect();
+    Some(parts.join("; "))
+}
+
+/// Summarize per-disk capacity/allocation, e.g. "vda (22.5 GB allocated
+/// of 50.0 GB capacity)" — allocation is the figure that actually
+/// matters for thin-provisioned formats like qcow2, where it's normally
+/// well under capacity.
+fn format_disks(disks: &[VmDisk]) -> Option<String> {
+    if disks.is_empty() {
+        return None;
+    }
+    let to_gb = |b: u64| b as f64 / 1024.0 / 1024.0 / 1024.0;
+    let parts: Vec<String> = disks
+        .iter()
+        .map(|d| match (d.capacity_bytes, d.allocation_bytes) {
+            (Some(cap), Some(alloc)) => format!(
+                "{} ({:.1} GB allocated of {:.1} GB capacity)",
+                d.target,
+                to_gb(alloc),
+                to_gb(cap),
+            ),
+            (Some(cap), None) => format!("{} ({:.1} GB capacity)", d.target, to_gb(cap)),
+            _ => d.target.clone(),
+        })
+        .collect();
+    Some(parts.join(", "))
+}
+
 fn vm_detail_finding(vm: &VmInfo) -> Finding {
     let to_gb = |kb: u64| kb as f64 / 1024.0 / 1024.0;
 
@@ -150,9 +206,19 @@ fn vm_detail_finding(vm: &VmInfo) -> Finding {
     } else {
         ""
     };
+    let pinning_summary = format_vcpu_pinning(&vm.vcpu_pinning);
+    let pinning_note = pinning_summary
+        .as_ref()
+        .map(|p| format!(" CPU pinning — {p}."))
+        .unwrap_or_default();
+    let disks_summary = format_disks(&vm.disks);
+    let disks_note = disks_summary
+        .as_ref()
+        .map(|d| format!(" Storage: {d}."))
+        .unwrap_or_default();
 
     let explanation = format!(
-        "{}: {}{vcpu_note}{max_mem_note}.{used_mem_note}{autostart_note}",
+        "{}: {}{vcpu_note}{max_mem_note}.{used_mem_note}{autostart_note}{pinning_note}{disks_note}",
         vm.name, vm.state,
     );
 
@@ -180,6 +246,24 @@ fn vm_detail_finding(vm: &VmInfo) -> Finding {
     }
     if let Some(a) = vm.autostart {
         builder = builder.evidence("autostart", a.to_string());
+    }
+    if let Some(p) = &pinning_summary {
+        builder = builder.evidence("vcpu_pinning", p.clone());
+    }
+    for disk in &vm.disks {
+        builder = builder.evidence(
+            format!("disk:{}", disk.target),
+            disk.source.clone().unwrap_or_else(|| "unknown source".to_string()),
+        );
+        if let Some(cap) = disk.capacity_bytes {
+            builder = builder.evidence(format!("disk:{}:capacity_bytes", disk.target), cap.to_string());
+        }
+        if let Some(alloc) = disk.allocation_bytes {
+            builder = builder.evidence(
+                format!("disk:{}:allocation_bytes", disk.target),
+                alloc.to_string(),
+            );
+        }
     }
 
     builder.explanation(explanation).build()
@@ -375,6 +459,18 @@ mod tests {
             used_memory_kb: Some(4_194_304),
             cpu_time_seconds: Some(12345.6),
             autostart: Some(true),
+            vcpu_pinning: vec![
+                (0, "0-3".to_string()),
+                (1, "0-3".to_string()),
+                (2, "4-7".to_string()),
+                (3, "4-7".to_string()),
+            ],
+            disks: vec![VmDisk {
+                target: "vda".to_string(),
+                source: Some("/var/lib/libvirt/images/web1.qcow2".to_string()),
+                capacity_bytes: Some(53_687_091_200),
+                allocation_bytes: Some(22_548_578_304),
+            }],
         }
     }
 
@@ -394,6 +490,27 @@ mod tests {
         let virt003 = findings.iter().find(|f| f.id == "VIRT003").unwrap();
         assert_eq!(virt003.instance.as_deref(), Some("web1"));
         assert_eq!(virt003.severity, Severity::Info);
+    }
+
+    #[test]
+    fn vm_detail_surfaces_pinning_and_disk_info() {
+        let mut d = data("none", "none");
+        d.vm_inventory = ToolInventory {
+            runtime: Some("virsh".to_string()),
+            available: true,
+            unavailable_reason: None,
+            items: vec![running_vm()],
+        };
+        let findings = analyze(&d, &ctx());
+        let virt003 = findings.iter().find(|f| f.id == "VIRT003").unwrap();
+        assert!(virt003.explanation.contains("vCPUs 0-1: host 0-3"));
+        assert!(virt003.explanation.contains("vCPUs 2-3: host 4-7"));
+        assert!(virt003.explanation.contains("vda"));
+        assert!(virt003.explanation.contains("21.0 GB allocated"));
+        assert!(virt003
+            .evidence
+            .iter()
+            .any(|(k, _)| k == "disk:vda"));
     }
 
     #[test]

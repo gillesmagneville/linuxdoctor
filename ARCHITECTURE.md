@@ -60,6 +60,9 @@ linuxdoctor/
 │   │
 │   ├── core/
 │   │   ├── mod.rs
+│   │   ├── command.rs         # Command builder forcing LC_ALL=C/LANG=C —
+│   │   │                      # every collector that shells out and parses
+│   │   │                      # CLI text output uses this, not std::process::Command
 │   │   ├── context.rs        # shared, read-only system facts
 │   │   ├── engine.rs         # orchestration, failure isolation
 │   │   └── error.rs
@@ -227,7 +230,12 @@ only ever return `Finding`s; only the Output Engine decides how they're displaye
 Collectors retrieve information and do not interpret it. In v1 each module owns its
 own thin collection function (e.g. `modules::memory::collect::collect()`), reading
 from `/proc` and `/sys` directly wherever possible, and shelling out only when there's
-no direct kernel interface for the fact needed. Network is a clean example of the
+no direct kernel interface for the fact needed. Every subprocess call uses
+`core::command::command()`, never `std::process::Command` directly — it forces
+`LC_ALL=C`/`LANG=C` so a translated CLI tool (confirmed real-world case: `virsh
+dominfo` on a French-locale desktop translates its field labels via gettext, silently
+breaking a parser hardcoded to the English "State:" string) can't produce a
+locale-dependent parsing failure. Network is a clean example of the
 former: `/proc/net/dev`, `/proc/net/route`, `/sys/class/net/*`, and `/etc/resolv.conf`
 cover its needs with zero subprocess calls. Currently shelling out: `df` (Storage —
 space and inode usage), `systemctl` (Systemd — system state, failed units), `smartctl`

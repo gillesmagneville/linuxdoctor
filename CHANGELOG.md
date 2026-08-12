@@ -9,6 +9,44 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Corrigé
+
+- **Bug réel signalé par un utilisateur** : sur un système en locale
+  française, `virsh dominfo` remontait un `state: unknown` pour
+  **toutes** les VMs (y compris celles en fonctionnement), et le résumé
+  affichait "0 currently running" malgré des VMs actives. Cause : `virsh`
+  traduit ses libellés de champs via gettext (`State:` devient autre
+  chose selon la locale), et le parseur cherchait la chaîne anglaise
+  exacte. Correctif : nouvel utilitaire partagé
+  `core::command::command()` qui force `LC_ALL=C`/`LANG=C` sur **tous**
+  les appels de sous-processus du projet (pas seulement `virsh`) — ce
+  ne sont pas juste des variables non définies, elles écrasent
+  explicitement l'héritage de l'environnement parent (vérifié : lancer
+  `linuxdoctor` lui-même sous `LC_ALL=fr_FR.UTF-8` produit toujours des
+  messages d'erreur `virsh`/`docker` en anglais). Reproduction exacte du
+  mécanisme non confirmée dans ce sandbox (le paquet `libvirt-l10n`
+  d'Ubuntu minimal n'installe aucun fichier de traduction réel — vérifié
+  en comparant `virsh` sous locale C et sous `fr_FR.UTF-8` généré
+  manuellement), donc traité honnêtement comme "cause la plus probable,
+  corrigée par une pratique défensive standard" plutôt que "cause
+  confirmée à 100%".
+
+### Ajouté
+
+- Module **virtualization** : détail par VM enrichi.
+  - Épinglage vCPU (`virsh vcpupin`, format confirmé via `virsh help` et
+    des captures réelles de la documentation libvirt/Red Hat, pas
+    deviné) — quels CPUs hôtes chaque vCPU peut utiliser, regroupé pour
+    la lisibilité ("vCPUs 0-1: host 0-3; vCPUs 2-3: host 4-7").
+  - Stockage par VM (`virsh domblklist --details` + `domblkinfo`) — par
+    disque : capacité configurée et espace réellement alloué sur
+    l'hôte (la donnée qui compte pour un format "thin-provisionné"
+    comme qcow2). Les lecteurs CD-ROM vides sont exclus. Correction en
+    cours de route : j'avais supposé par erreur un drapeau `--bytes`
+    pour `domblkinfo` par analogie avec `domblkstat` — vérifié via
+    `virsh help domblkinfo` que ce drapeau n'existe pas, corrigé avant
+    de livrer.
+
 ### Ajouté
 
 - Module **virtualization** enrichi : inventaire côté hôte, en plus de la

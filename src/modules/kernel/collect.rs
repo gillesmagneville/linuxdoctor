@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::fs;
-use std::process::Command;
 
+use crate::core::command::command;
 use crate::core::error::ModuleError;
 use crate::models::Severity;
 
@@ -79,7 +79,7 @@ pub fn collect() -> Result<KernelRawData, ModuleError> {
         })?;
     let tainted_raw = parse_tainted(&tainted_text)?;
 
-    let (oom_kill_count, dmesg_error) = match Command::new("dmesg").output() {
+    let (oom_kill_count, dmesg_error) = match command("dmesg").output() {
         Ok(output) if output.status.success() => {
             let text = String::from_utf8_lossy(&output.stdout);
             (Some(count_oom_kills(&text)), None)

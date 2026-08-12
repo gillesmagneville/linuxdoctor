@@ -6,20 +6,6 @@ Fast, explainable Linux health diagnostics. See `PROJECT_CONTEXT.md` for vision 
 principles, `ARCHITECTURE.md` for the technical contract (types, module trait,
 severity/confidence scales, layout).
 
-## Recommended usage
-
-For interactive use, **`linuxdoctor tui` is strongly recommended**. It provides a
-navigable terminal interface that keeps the modules and their findings organized,
-so you can move through the results without having to search through a long stream
-of terminal output.
-
-The plain `linuxdoctor` command also works, but its output is printed sequentially
-in the terminal. With a large diagnostic report, this can produce a very long
-output and may require scrolling a long way back to find information displayed
-earlier.
-
-![LinuxDoctor TUI](docs/linuxdoctor-tui.svg)
-
 ## Status
 
 v1 scaffold, nine modules shipping end-to-end:
@@ -70,8 +56,9 @@ v1 scaffold, nine modules shipping end-to-end:
   `systemctl`/`timedatectl`) works without systemd as PID 1 — no
   availability gate needed; falls back to the CPUID hypervisor flag in
   `/proc/cpuinfo` when the tool isn't installed. *Host-side* inventory
-  when this machine hosts VMs (`VIRT002`/`VIRT003`, via `virsh`/libvirt)
-  or containers (`VIRT004`/`VIRT005`, via `docker` or `podman`) — each
+  when this machine hosts VMs (`VIRT002`/`VIRT003`, via `virsh`/libvirt —
+  including per-VM CPU pinning and per-disk capacity/allocation) or
+  containers (`VIRT004`/`VIRT005`, via `docker` or `podman`) — each
   with a three-state availability check (tool absent / tool present but
   backend unreachable / available), one finding per VM or container in
   its own submenu, live resource usage for running ones. Always Info —
@@ -160,8 +147,8 @@ missing and how to install it if something's not found.
 **On dependencies (`requirements.txt`):** this doesn't apply here the way it
 does for a Python project like planche-contact — Rust has no separate
 runtime dependency list to install. `Cargo.lock` already pins every
- dependency's exact version and is committed to the repo; that's
-the equivalent artifact. Nothing else to add.
+dependency's exact version and is committed to the repo; that's the
+equivalent artifact. Nothing else to add.
 
 ## Runtime dependencies
 
@@ -199,7 +186,7 @@ environment with no TTY) — `linuxdoctor audit` always works regardless.
 ## Tests
 
 ```bash
-cargo test               # 212 unit tests + 29 integration tests
+cargo test               # 220 unit tests + 29 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -241,6 +228,8 @@ linuxdoctor/
     ├── lib.rs                 # library root (also used by examples/ and tests/)
     │
     ├── core/
+    │   ├── command.rs           # Command builder forcing LC_ALL=C — every
+    │   │                        # collector that parses CLI output uses this
     │   ├── context.rs         # Context — reads /proc, /sys, /etc/os-release once
     │   ├── engine.rs           # runs modules, isolates per-module failures
     │   └── error.rs
@@ -274,6 +263,7 @@ examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shippi
 
 ## License
 
-LinuxDoctor is developed by **Gilles MAGNEVILLE**, a self-taught developer who is not a professional software developer, with the help of [Claude.ai](https://claude.ai) (Anthropic).
+GPL-3.0-only. See [LICENSE](LICENSE).
 
-Distributed under the terms of the **GNU General Public License v3.0**.
+LinuxDoctor is developed by Gilles MAGNEVILLE. Gilles is not a professional
+developer — this project has been built with the assistance of Claude.ai.

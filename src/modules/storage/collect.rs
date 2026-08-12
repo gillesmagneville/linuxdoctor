@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::fs;
-use std::process::Command;
 
+use crate::core::command::command;
 use crate::core::error::ModuleError;
 
 /// Raw facts read from the system, before any interpretation. See
@@ -122,7 +122,7 @@ fn is_root() -> bool {
 
 fn run_smartctl(device: &str) -> Option<serde_json::Value> {
     let path = format!("/dev/{device}");
-    let output = Command::new("smartctl")
+    let output = command("smartctl")
         .args(["-a", "--json=c", &path])
         .output()
         .ok()?;
@@ -220,7 +220,7 @@ pub fn collect() -> Result<StorageRawData, ModuleError> {
     let space_output = run_df(&["-kPT"])?;
     let inode_output = run_df(&["-iPT"])?;
 
-    let smartctl_available = Command::new("smartctl")
+    let smartctl_available = command("smartctl")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -258,7 +258,7 @@ pub fn collect() -> Result<StorageRawData, ModuleError> {
 /// partial results beat none, consistent with "Collector failure must
 /// never stop execution" in ARCHITECTURE.md.
 fn run_df(args: &[&str]) -> Result<String, ModuleError> {
-    let output = Command::new("df")
+    let output = command("df")
         .args(args)
         .output()
         .map_err(|source| ModuleError::Command {

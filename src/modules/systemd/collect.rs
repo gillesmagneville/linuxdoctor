@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::path::Path;
-use std::process::Command;
 
+use crate::core::command::command;
 use crate::core::error::ModuleError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +44,7 @@ pub fn collect() -> Result<SystemdRawData, ModuleError> {
 /// states (e.g. "degraded" exits 1) -- the state string on stdout is what
 /// matters here, not the exit code. Only a spawn failure is a real error.
 fn query_system_state() -> Result<String, ModuleError> {
-    let output = Command::new("systemctl")
+    let output = command("systemctl")
         .args(["is-system-running"])
         .output()
         .map_err(|source| ModuleError::Command {
@@ -64,7 +64,7 @@ fn query_system_state() -> Result<String, ModuleError> {
 /// one *does* check the exit status, and surfaces stderr if it's non-zero,
 /// rather than silently reporting a healthy-looking empty list.
 fn query_failed_units() -> Result<Vec<FailedUnit>, ModuleError> {
-    let output = Command::new("systemctl")
+    let output = command("systemctl")
         .args(["--failed", "--no-legend", "--plain", "--no-pager"])
         .output()
         .map_err(|source| ModuleError::Command {

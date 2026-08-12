@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
+use crate::core::command::command;
 use crate::core::error::ModuleError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,7 +38,7 @@ pub fn systemd_available() -> bool {
 /// specifically is treated as somewhat less certain than a typical direct
 /// observation).
 pub fn collect() -> Result<NtpRawData, ModuleError> {
-    let output = Command::new("timedatectl")
+    let output = command("timedatectl")
         .arg("show")
         .output()
         .map_err(|source| ModuleError::Command {

@@ -160,8 +160,8 @@ missing and how to install it if something's not found.
 **On dependencies (`requirements.txt`):** this doesn't apply here the way it
 does for a Python project like planche-contact — Rust has no separate
 runtime dependency list to install. `Cargo.lock` already pins every
-dependency's exact version and is committed to the repo; that's the
-equivalent artifact. Nothing else to add.
+ dependency's exact version and is committed to the repo; that's
+the equivalent artifact. Nothing else to add.
 
 ## Runtime dependencies
 
@@ -271,3 +271,9 @@ linuxdoctor/
 tests/       # fixture-driven integration tests, one file per module
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
+
+## License
+
+LinuxDoctor is developed by **Gilles MAGNEVILLE**, a self-taught developer who is not a professional software developer, with the help of [Claude.ai](https://claude.ai) (Anthropic).
+
+Distributed under the terms of the **GNU General Public License v3.0**.

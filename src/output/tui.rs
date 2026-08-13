@@ -14,31 +14,46 @@
 //! is driven entirely by `Finding.instance`, not by hardcoded knowledge
 //! of which check IDs happen to be per-instance for which modules.
 //!
-//! `draw()` is a pure function of `(Frame, &TuiApp)` with no dependency on
-//! a real terminal, so it's testable via ratatui's `TestBackend` — see the
-//! `demo_tui_snapshot` example, which renders headlessly and prints the
-//! result as text. `run()` is the thin wrapper that wires it to a real
-//! terminal (crossterm, raw mode, alternate screen) and the event loop.
+//! Two independent freshness stories, deliberately not conflated:
+//! - The header's CPU/memory/disk gauges (`live_stats`) refresh on their
+//!   own, roughly once a second, for as long as the TUI is open — cheap
+//!   `/proc` reads plus one `df` call, nothing that touches the slower
+//!   per-module collectors (SMART, virsh, docker...).
+//! - The findings themselves (module list, detail pane) only change when
+//!   the user presses `r`, which re-runs the full module pipeline behind
+//!   the same progress screen shown at startup. Re-running that on every
+//!   tick would be both wasteful and far too slow to feel "live".
+//!
+//! `draw()` is a pure function of `(Frame, &mut TuiApp)` with no
+//! dependency on a real terminal, so it's testable via ratatui's
+//! `TestBackend` — see the `demo_tui_snapshot` example, which renders
+//! headlessly and prints the result as text. `run()` is the thin wrapper
+//! that wires it to a real terminal (crossterm, raw mode, alternate
+//! screen), the initial scan, and the event loop.
 
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::{Backend, CrosstermBackend};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use crate::core::engine::{ModuleRunResult, Report};
+use crate::core::engine::{run_audit_with_progress, ModuleRunResult, Report};
 use crate::models::{Finding, Severity};
+use crate::output::live_stats::{self, CpuStatSample, LiveStats};
 
 /// Minimum number of distinct sub-items before a module gets a real,
 /// navigable submenu. Below this, everything is shown flat instead.
 const MIN_ITEMS_FOR_SUBMENU: usize = 2;
+
+/// How often the header's CPU/memory/disk gauges refresh.
+const LIVE_STATS_TICK: Duration = Duration::from_millis(1000);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
@@ -46,16 +61,19 @@ enum Focus {
     Submenu,
 }
 
-pub struct TuiApp<'a> {
-    report: &'a Report,
+pub struct TuiApp {
+    report: Report,
     module_state: ListState,
     submenu_state: ListState,
     focus: Focus,
     detail_scroll: u16,
+    live_stats: LiveStats,
+    prev_cpu_sample: Option<CpuStatSample>,
+    last_scan: Instant,
 }
 
-impl<'a> TuiApp<'a> {
-    pub fn new(report: &'a Report) -> Self {
+impl TuiApp {
+    pub fn new(report: Report) -> Self {
         let mut module_state = ListState::default();
         if !report.results.is_empty() {
             module_state.select(Some(0));
@@ -66,22 +84,63 @@ impl<'a> TuiApp<'a> {
             submenu_state: ListState::default(),
             focus: Focus::Modules,
             detail_scroll: 0,
+            live_stats: LiveStats::default(),
+            prev_cpu_sample: None,
+            last_scan: Instant::now(),
         }
+    }
+
+    /// Take a fresh reading of the header's CPU/memory/disk gauges. Cheap
+    /// enough to call roughly once a second for as long as the TUI is
+    /// open — see the module doc comment for why this is kept entirely
+    /// separate from re-running the module pipeline.
+    pub fn refresh_live_stats(&mut self) {
+        let (stats, sample) = live_stats::refresh(self.prev_cpu_sample);
+        self.live_stats = stats;
+        self.prev_cpu_sample = sample;
+    }
+
+    /// Swap in a freshly re-scanned `Report` (the `r` keybinding). Keeps
+    /// the same module selected across the refresh when it still exists
+    /// in the new report, and otherwise falls back to the first module —
+    /// re-running the same `--modules` filter means the set of modules
+    /// normally won't change, but this stays correct even if it did.
+    pub fn replace_report(&mut self, new_report: Report) {
+        let selected_id = self.selected_module().map(|r| r.module_id);
+        self.report = new_report;
+
+        let new_index = selected_id.and_then(|id| {
+            self.report.results.iter().position(|r| r.module_id == id)
+        });
+        if self.report.results.is_empty() {
+            self.module_state.select(None);
+        } else {
+            self.module_state.select(Some(new_index.unwrap_or(0)));
+        }
+        self.submenu_state = ListState::default();
+        self.focus = Focus::Modules;
+        self.detail_scroll = 0;
+        self.last_scan = Instant::now();
     }
 
     fn selected_module_index(&self) -> usize {
         self.module_state.selected().unwrap_or(0)
     }
 
-    fn selected_module(&self) -> Option<&'a ModuleRunResult> {
+    fn selected_module(&self) -> Option<&ModuleRunResult> {
         self.report.results.get(self.selected_module_index())
     }
 
     /// Distinct instance names for the currently selected module, in
-    /// first-seen order. Empty if that module has no per-instance
-    /// findings at all.
-    fn submenu_items(&self) -> Vec<&'a str> {
-        self.selected_module().map(submenu_items_for).unwrap_or_default()
+    /// first-seen order, as owned `String`s. Empty if that module has no
+    /// per-instance findings at all. Owned (not borrowed from `report`)
+    /// specifically so callers can hold onto the result while separately
+    /// taking `&mut self.submenu_state` — see ARCHITECTURE.md's note on
+    /// this in the TUI section for why that matters.
+    fn submenu_items(&self) -> Vec<String> {
+        self.selected_module()
+            .map(|r| submenu_items_for(r).into_iter().map(String::from).collect())
+            .unwrap_or_default()
     }
 
     fn has_submenu(&self) -> bool {
@@ -212,6 +271,31 @@ fn severity_color(sev: Severity) -> Color {
     }
 }
 
+/// Green/yellow/red thresholds for the header's live gauges — a quick
+/// at-a-glance signal, not a diagnostic verdict (no evidence, no
+/// confidence score, no recommendation the way a real `Finding` has all
+/// three). The module list's own severity-driven ✓/⚠/✗ symbols remain
+/// the actual diagnostic read; this is just "does something need a
+/// closer look".
+fn stat_color(pct: f64) -> Color {
+    if pct >= 90.0 {
+        Color::Red
+    } else if pct >= 70.0 {
+        Color::Yellow
+    } else {
+        Color::Green
+    }
+}
+
+fn format_age(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s ago")
+    } else {
+        format!("{}m{}s ago", secs / 60, secs % 60)
+    }
+}
+
 fn module_status(result: &ModuleRunResult) -> (&'static str, Color) {
     if result.skipped {
         return ("-", Color::DarkGray);
@@ -233,7 +317,7 @@ pub fn draw(f: &mut Frame, app: &mut TuiApp) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
@@ -256,18 +340,20 @@ pub fn draw(f: &mut Frame, app: &mut TuiApp) {
 fn help_text(app: &TuiApp) -> &'static str {
     match app.focus {
         Focus::Modules if app.has_submenu() => {
-            " PgUp/PgDn select module  \u{00b7}  Enter for detail  \u{00b7}  \u{2191}/\u{2193} scroll  \u{00b7}  q quit"
+            " PgUp/PgDn select module  \u{00b7}  Enter for detail  \u{00b7}  \u{2191}/\u{2193} scroll  \u{00b7}  r refresh  \u{00b7}  q quit"
         }
-        Focus::Modules => " PgUp/PgDn select module  \u{00b7}  \u{2191}/\u{2193} scroll  \u{00b7}  q quit",
+        Focus::Modules => {
+            " PgUp/PgDn select module  \u{00b7}  \u{2191}/\u{2193} scroll  \u{00b7}  r refresh  \u{00b7}  q quit"
+        }
         Focus::Submenu => {
-            " PgUp/PgDn select item  \u{00b7}  Esc back  \u{00b7}  \u{2191}/\u{2193} scroll  \u{00b7}  q quit"
+            " PgUp/PgDn select item  \u{00b7}  Esc back  \u{00b7}  \u{2191}/\u{2193} scroll  \u{00b7}  r refresh  \u{00b7}  q quit"
         }
     }
 }
 
 fn draw_header(f: &mut Frame, app: &TuiApp, area: Rect) {
     let ctx = &app.report.context;
-    let text = vec![Line::from(vec![
+    let line1 = Line::from(vec![
         Span::styled("LinuxDoctor", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(format!(
             " \u{2014} {}  |  kernel {} \u{00b7} {} \u{00b7} {} CPUs \u{00b7} {} MB RAM",
@@ -277,8 +363,57 @@ fn draw_header(f: &mut Frame, app: &TuiApp, area: Rect) {
             ctx.cpu_count,
             ctx.mem_total_kb / 1024,
         )),
-    ])];
-    let header = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
+    ]);
+
+    let mut stats: Vec<Span> = Vec::new();
+    match app.live_stats.cpu_percent {
+        Some(pct) => {
+            stats.push(Span::raw("CPU "));
+            stats.push(Span::styled(
+                format!("{pct:.1}%"),
+                Style::default().fg(stat_color(pct)),
+            ));
+        }
+        None => stats.push(Span::raw("CPU \u{2026}")),
+    }
+    stats.push(Span::raw("   "));
+    match (
+        app.live_stats.mem_percent,
+        app.live_stats.mem_used_gb,
+        app.live_stats.mem_total_gb,
+    ) {
+        (Some(pct), Some(used), Some(total)) => {
+            stats.push(Span::raw("Mem "));
+            stats.push(Span::styled(
+                format!("{pct:.1}%"),
+                Style::default().fg(stat_color(pct)),
+            ));
+            stats.push(Span::raw(format!(" ({used:.1}/{total:.1} GB)")));
+        }
+        _ => stats.push(Span::raw("Mem \u{2026}")),
+    }
+    stats.push(Span::raw("   "));
+    match app.live_stats.disk_percent {
+        Some(pct) => {
+            stats.push(Span::raw("Disk / "));
+            stats.push(Span::styled(
+                format!("{pct:.1}%"),
+                Style::default().fg(stat_color(pct)),
+            ));
+        }
+        None => stats.push(Span::raw("Disk \u{2026}")),
+    }
+    stats.push(Span::styled(
+        format!(
+            "   findings from {} \u{00b7} press 'r' to refresh",
+            format_age(app.last_scan.elapsed())
+        ),
+        Style::default().fg(Color::DarkGray),
+    ));
+    let line2 = Line::from(stats);
+
+    let header =
+        Paragraph::new(vec![line1, line2]).block(Block::default().borders(Borders::ALL));
     f.render_widget(header, area);
 }
 
@@ -316,8 +451,8 @@ fn draw_submenu_list(f: &mut Frame, app: &mut TuiApp, area: Rect) {
     let module_id = app.selected_module().map(|r| r.module_id).unwrap_or("?");
     let items: Vec<ListItem> = app
         .submenu_items()
-        .iter()
-        .map(|name| ListItem::new(Line::from(Span::raw(*name))))
+        .into_iter()
+        .map(|name| ListItem::new(Line::from(name)))
         .collect();
 
     let list = List::new(items)
@@ -372,13 +507,13 @@ fn draw_detail_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
             Focus::Submenu => {
                 let selected_name = items
                     .get(app.selected_submenu_index())
-                    .copied()
-                    .unwrap_or("");
+                    .cloned()
+                    .unwrap_or_default();
                 let lines = render_findings(
                     result
                         .findings
                         .iter()
-                        .filter(|f| f.instance.as_deref() == Some(selected_name)),
+                        .filter(|f| f.instance.as_deref() == Some(selected_name.as_str())),
                 );
                 (
                     format!("{} \u{203a} {selected_name}", result.module_id),
@@ -457,32 +592,103 @@ fn render_findings<'f>(findings: impl Iterator<Item = &'f Finding>) -> Vec<Line<
     lines
 }
 
+/// The startup/refresh loading screen: a centered gauge that fills in as
+/// each module completes, plus the name of whichever module is currently
+/// running. Exists specifically so a scan with a slow module (SMART's
+/// per-device `smartctl` calls, Virtualization's `virsh`/`docker` calls)
+/// never looks like a frozen terminal.
+pub fn draw_progress_screen(f: &mut Frame, index: usize, total: usize, current_module: &str) {
+    let area = f.size();
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(40),
+            Constraint::Length(3),
+            Constraint::Percentage(40),
+        ])
+        .split(area);
+
+    let title = Paragraph::new(Line::from(Span::styled(
+        "LinuxDoctor",
+        Style::default().add_modifier(Modifier::BOLD),
+    )))
+    .alignment(Alignment::Center);
+    f.render_widget(title, vertical[0]);
+
+    let ratio = if total == 0 {
+        0.0
+    } else {
+        (index as f64 / total as f64).clamp(0.0, 1.0)
+    };
+    let label = if total == 0 {
+        "No modules selected".to_string()
+    } else if index >= total {
+        "Finalizing\u{2026}".to_string()
+    } else {
+        format!("Scanning {current_module}\u{2026} ({}/{})", index + 1, total)
+    };
+
+    let gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title("Initializing"))
+        .gauge_style(Style::default().fg(Color::Cyan))
+        .ratio(ratio)
+        .label(label);
+    f.render_widget(gauge, vertical[1]);
+}
+
+/// Runs the module pipeline behind the progress screen, redrawing it as
+/// each module completes. Used both for the initial scan in `run()` and
+/// for the `r` refresh keybinding in the event loop — same screen either
+/// time, since from the user's point of view it's the same operation.
+fn run_scan_with_progress<B: Backend>(
+    terminal: &mut Terminal<B>,
+    selected_ids: Option<&[String]>,
+) -> io::Result<Report> {
+    run_audit_with_progress(selected_ids, |index, total, module_id| {
+        let _ = terminal.draw(|f| draw_progress_screen(f, index, total, module_id));
+    })
+    .map_err(|e| io::Error::other(e.to_string()))
+}
+
 /// Wires `draw()` to a real terminal (crossterm, raw mode, alternate
-/// screen) and runs the event loop until the user quits. Kept separate
+/// screen), runs the initial scan behind the progress screen, then runs
+/// the event loop until the user quits. Returns the final `Report`
+/// (possibly refreshed since the initial scan, via `r`) so the caller can
+/// compute an exit code from it the same way `audit` does. Kept separate
 /// from `draw()` on purpose so the rendering logic stays testable without
 /// a real TTY.
-pub fn run(report: &Report) -> io::Result<()> {
+pub fn run(selected_ids: Option<&[String]>) -> io::Result<Report> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = TuiApp::new(report);
-    let result = event_loop(&mut terminal, &mut app);
+    let outcome = run_scan_with_progress(&mut terminal, selected_ids).and_then(|report| {
+        let mut app = TuiApp::new(report);
+        app.refresh_live_stats(); // populate immediately, not a full tick later
+        event_loop(&mut terminal, &mut app, selected_ids).map(|()| app.report)
+    });
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    result
+    outcome
 }
 
-fn event_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut TuiApp) -> io::Result<()> {
+fn event_loop<B: Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut TuiApp,
+    selected_ids: Option<&[String]>,
+) -> io::Result<()> {
+    let mut last_tick = Instant::now();
+
     loop {
         terminal.draw(|f| draw(f, app))?;
 
-        if event::poll(Duration::from_millis(250))? {
+        let timeout = LIVE_STATS_TICK.saturating_sub(last_tick.elapsed());
+        if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
@@ -497,10 +703,21 @@ fn event_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut TuiApp) -> io::R
                         KeyCode::PageUp => app.page_previous(),
                         KeyCode::Down | KeyCode::Char('j') => app.scroll_down(),
                         KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
+                        KeyCode::Char('r') => {
+                            let new_report = run_scan_with_progress(terminal, selected_ids)?;
+                            app.replace_report(new_report);
+                            app.refresh_live_stats();
+                            last_tick = Instant::now();
+                        }
                         _ => {}
                     }
                 }
             }
+        }
+
+        if last_tick.elapsed() >= LIVE_STATS_TICK {
+            app.refresh_live_stats();
+            last_tick = Instant::now();
         }
     }
     Ok(())
@@ -594,10 +811,40 @@ mod tests {
         }
     }
 
+    /// A second, distinguishable report used to test `replace_report`.
+    fn other_flat_report() -> Report {
+        let finding = Finding::builder(
+            "NET004",
+            "DNS Configuration",
+            Category::Network,
+            Severity::Info,
+            Confidence::direct_observation(),
+        )
+        .explanation("1 nameserver configured.")
+        .build();
+
+        Report {
+            context: ctx(),
+            results: vec![
+                ModuleRunResult {
+                    module_id: "memory",
+                    findings: vec![],
+                    error: None,
+                    skipped: false,
+                },
+                ModuleRunResult {
+                    module_id: "network",
+                    findings: vec![finding],
+                    error: None,
+                    skipped: false,
+                },
+            ],
+        }
+    }
+
     #[test]
     fn draws_without_panicking_and_shows_module_and_finding() {
-        let report = flat_report();
-        let mut app = TuiApp::new(&report);
+        let mut app = TuiApp::new(flat_report());
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
 
@@ -617,9 +864,36 @@ mod tests {
     }
 
     #[test]
+    fn header_shows_live_stats_placeholders_before_first_refresh() {
+        let mut app = TuiApp::new(flat_report());
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("CPU"));
+        assert!(content.contains("Mem"));
+        assert!(content.contains("Disk"));
+        assert!(content.contains("refresh"));
+    }
+
+    #[test]
+    fn header_shows_real_numbers_after_refresh() {
+        let mut app = TuiApp::new(flat_report());
+        app.refresh_live_stats();
+        // Mem/Disk resolve on the very first call; CPU needs a second
+        // sample for a delta, so only assert on the ones that don't.
+        assert!(app.live_stats.mem_percent.is_some());
+    }
+
+    #[test]
     fn navigation_wraps_around() {
-        let report = flat_report();
-        let mut app = TuiApp::new(&report);
+        let mut app = TuiApp::new(flat_report());
         assert_eq!(app.selected_module_index(), 0);
         app.next(); // only one module, should wrap back to 0
         assert_eq!(app.selected_module_index(), 0);
@@ -630,28 +904,24 @@ mod tests {
     #[test]
     fn single_instance_module_has_no_submenu() {
         // flat_report()'s one finding has no .instance() set at all.
-        let report = flat_report();
-        let app = TuiApp::new(&report);
+        let app = TuiApp::new(flat_report());
         assert!(!app.has_submenu());
     }
 
     #[test]
     fn two_instance_module_has_submenu() {
-        let report = report_with_submenu();
-        let app = TuiApp::new(&report);
+        let app = TuiApp::new(report_with_submenu());
         assert!(app.has_submenu());
-        assert_eq!(app.submenu_items(), vec!["socket 0", "socket 1"]);
+        assert_eq!(app.submenu_items(), vec!["socket 0".to_string(), "socket 1".to_string()]);
     }
 
     #[test]
     fn drill_in_only_works_when_submenu_exists() {
-        let report = flat_report();
-        let mut app = TuiApp::new(&report);
+        let mut app = TuiApp::new(flat_report());
         app.drill_in();
         assert_eq!(app.focus, Focus::Modules, "no submenu here, drill_in should no-op");
 
-        let report2 = report_with_submenu();
-        let mut app2 = TuiApp::new(&report2);
+        let mut app2 = TuiApp::new(report_with_submenu());
         app2.drill_in();
         assert_eq!(app2.focus, Focus::Submenu);
         assert_eq!(app2.selected_submenu_index(), 0);
@@ -659,8 +929,7 @@ mod tests {
 
     #[test]
     fn back_out_returns_false_at_top_level() {
-        let report = report_with_submenu();
-        let mut app = TuiApp::new(&report);
+        let mut app = TuiApp::new(report_with_submenu());
         assert!(!app.back_out(), "already at top level, nothing to back out of");
         app.drill_in();
         assert!(app.back_out(), "should back out of the submenu");
@@ -669,8 +938,7 @@ mod tests {
 
     #[test]
     fn page_next_dispatches_to_submenu_once_drilled_in() {
-        let report = report_with_submenu();
-        let mut app = TuiApp::new(&report);
+        let mut app = TuiApp::new(report_with_submenu());
         app.drill_in();
         assert_eq!(app.selected_submenu_index(), 0);
         app.page_next();
@@ -681,8 +949,7 @@ mod tests {
 
     #[test]
     fn module_level_view_shows_only_global_findings_plus_hint() {
-        let report = report_with_submenu();
-        let mut app = TuiApp::new(&report);
+        let mut app = TuiApp::new(report_with_submenu());
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
@@ -703,8 +970,7 @@ mod tests {
 
     #[test]
     fn submenu_view_shows_only_selected_instance_findings() {
-        let report = report_with_submenu();
-        let mut app = TuiApp::new(&report);
+        let mut app = TuiApp::new(report_with_submenu());
         app.drill_in();
         app.submenu_next(); // move to "socket 1"
 
@@ -726,5 +992,65 @@ mod tests {
         assert!(!content.contains("Socket 0 detail"));
         // The global overview also shouldn't repeat inside the submenu view.
         assert!(!content.contains("CPU001"));
+    }
+
+    #[test]
+    fn replace_report_preserves_selection_when_module_still_present() {
+        let mut app = TuiApp::new(other_flat_report());
+        app.next(); // move off "memory" onto "network"
+        assert_eq!(app.selected_module().unwrap().module_id, "network");
+
+        app.replace_report(other_flat_report());
+        assert_eq!(app.selected_module().unwrap().module_id, "network");
+    }
+
+    #[test]
+    fn replace_report_falls_back_to_first_module_when_selection_vanishes() {
+        let mut app = TuiApp::new(other_flat_report());
+        app.next(); // "network"
+        app.replace_report(flat_report()); // only "memory" exists here
+        assert_eq!(app.selected_module().unwrap().module_id, "memory");
+    }
+
+    #[test]
+    fn replace_report_resets_submenu_focus() {
+        let mut app = TuiApp::new(report_with_submenu());
+        app.drill_in();
+        assert_eq!(app.focus, Focus::Submenu);
+        app.replace_report(report_with_submenu());
+        assert_eq!(app.focus, Focus::Modules);
+    }
+
+    #[test]
+    fn progress_screen_draws_without_panicking() {
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_progress_screen(f, 2, 5, "storage"))
+            .unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("storage"));
+        assert!(content.contains("3/5"));
+    }
+
+    #[test]
+    fn progress_screen_handles_completion() {
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw_progress_screen(f, 5, 5, "")).unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("Finalizing"));
     }
 }

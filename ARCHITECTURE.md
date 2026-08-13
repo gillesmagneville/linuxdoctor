@@ -96,7 +96,8 @@ linuxdoctor/
 │       ├── mod.rs
 │       ├── terminal.rs       # text + ANSI colors
 │       ├── json.rs           # JSON
-│       └── tui.rs            # interactive UI (ratatui) — see "Output Engine"
+│       ├── tui.rs            # interactive UI (ratatui) — see "Output Engine"
+│       └── live_stats.rs     # TUI header gauges (CPU/mem/disk %) — see "Output Engine"
 │
 └── tests/
     # one fixture-driven integration test file per module, e.g.
@@ -439,14 +440,32 @@ run cleanly):
 ## Interactive TUI
 
 The third output mode, built on `ratatui`. Consumes the same `Report` as the other
-two — no diagnostic logic lives here either. Its one piece of extra behavior:
-modules whose findings include 2+ distinct `Finding.instance` values get a real,
-navigable submenu (`Enter` to drill in, `Esc` to back out, `PgUp`/`PgDn` to move
-through whichever list — modules or, once drilled in, that module's instances —
-is currently focused; `↑`/`↓` scroll the detail pane). Below 2 instances, a module's
-findings are shown flat, exactly as Terminal/JSON always do. See `src/output/tui.rs`
-for the implementation and `Finding.instance` above for the mechanism this is built
-on.
+two — no diagnostic logic lives here either. Its extra behavior:
+
+- **Submenus.** Modules whose findings include 2+ distinct `Finding.instance` values
+  get a real, navigable submenu (`Enter` to drill in, `Esc` to back out, `PgUp`/`PgDn`
+  to move through whichever list — modules or, once drilled in, that module's
+  instances — is currently focused; `↑`/`↓` scroll the detail pane). Below 2
+  instances, a module's findings are shown flat, exactly as Terminal/JSON always do.
+- **Live header.** A second header line shows CPU/memory/root-disk usage,
+  refreshed roughly once a second for as long as the TUI stays open, via
+  `output::live_stats` — cheap `/proc` reads plus one `df` call, deliberately not
+  routed through the Memory/Storage modules' full collect+analyze pipelines (which
+  include per-device `smartctl` calls far too slow for a once-a-second tick). CPU
+  usage needs two `/proc/stat` samples to compute a delta, so it shows a placeholder
+  until the second tick.
+- **Startup/refresh progress screen.** `TuiApp` owns its `Report` (not a borrow —
+  this is what makes replacing it on refresh possible at all) and is constructed
+  only *after* an initial scan that runs behind a progress gauge
+  (`core::engine::run_audit_with_progress`, which takes an `on_progress(index,
+  total, module_id)` callback the TUI uses to redraw between modules). The `r` key
+  re-runs the same scan behind the same screen and swaps the result in via
+  `TuiApp::replace_report`, preserving the current module selection when it still
+  exists in the new report. This exists specifically so a module with a slow
+  collector (SMART, virsh, docker) never makes the terminal look frozen.
+
+See `src/output/tui.rs` for the implementation and `Finding.instance` above for the
+submenu mechanism this is built on.
 
 ---
 

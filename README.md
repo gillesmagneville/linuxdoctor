@@ -179,9 +179,16 @@ cargo build --release
 In the TUI: PgUp/PgDn to select a module (or, once drilled in, an item
 within its submenu), ↑/↓ (or j/k) to scroll a long finding, Enter to open
 a module's submenu when one is available (2+ items — a small "›" marks
-which modules have one), Esc to back out of a submenu, q or Esc to quit.
-The TUI needs a real terminal (it won't run over a piped stdout or in an
-environment with no TTY) — `linuxdoctor audit` always works regardless.
+which modules have one), Esc to back out of a submenu, r to re-scan
+everything (same progress screen as startup, current module selection
+preserved), q or Esc to quit. The header shows a continuously-updating
+CPU/memory/disk-usage line (roughly once a second, no action needed) and
+how old the displayed findings are — separate freshness stories, since
+the gauges are cheap `/proc` reads but re-scanning the full module
+pipeline (SMART, virsh, docker...) is not something to do automatically
+every second. The TUI needs a real terminal (it won't run over a piped
+stdout or in an environment with no TTY) — `linuxdoctor audit` always
+works regardless.
 
 ## Tests
 
@@ -255,7 +262,8 @@ linuxdoctor/
     └── output/
         ├── terminal.rs          # text + ANSI colors
         ├── json.rs                # JSON
-        └── tui.rs                  # interactive UI (ratatui)
+        ├── tui.rs                  # interactive UI (ratatui)
+        └── live_stats.rs             # TUI header gauges (CPU/mem/disk %)
 
 tests/       # fixture-driven integration tests, one file per module
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool

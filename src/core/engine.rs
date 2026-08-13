@@ -37,21 +37,35 @@ impl Report {
 /// Run every registered module, isolating failures per ARCHITECTURE.md
 /// "Error Handling": one module failing never stops the others.
 ///
+/// `on_progress(index, total, module_id)` is called just before each
+/// module runs — the TUI uses this to redraw a progress screen so a scan
+/// with a slow module (SMART's per-device `smartctl` calls, or
+/// Virtualization's `virsh`/`docker` calls) never looks like a frozen
+/// terminal. The plain `run_audit()` below passes a no-op callback.
+///
 /// v1 runs modules sequentially. Modules don't depend on each other's
 /// output (see ARCHITECTURE.md "Context"), so switching this loop to
 /// `std::thread::scope` later is a pure performance change, not a
 /// correctness one — not worth doing yet with a single module.
-pub fn run_audit(selected_ids: Option<&[String]>) -> Result<Report, CoreError> {
+pub fn run_audit_with_progress(
+    selected_ids: Option<&[String]>,
+    mut on_progress: impl FnMut(usize, usize, &str),
+) -> Result<Report, CoreError> {
     let context = Context::detect()?;
     let modules = all_modules();
+    let selected: Vec<_> = modules
+        .iter()
+        .filter(|m| {
+            selected_ids
+                .map(|ids| ids.iter().any(|id| id == m.id()))
+                .unwrap_or(true)
+        })
+        .collect();
+    let total = selected.len();
 
     let mut results = Vec::new();
-    for module in &modules {
-        if let Some(ids) = selected_ids {
-            if !ids.iter().any(|id| id == module.id()) {
-                continue;
-            }
-        }
+    for (index, module) in selected.iter().enumerate() {
+        on_progress(index, total, module.id());
 
         if !module.is_available(&context) {
             results.push(ModuleRunResult {
@@ -78,6 +92,13 @@ pub fn run_audit(selected_ids: Option<&[String]>) -> Result<Report, CoreError> {
             }),
         }
     }
+    on_progress(total, total, "");
 
     Ok(Report { context, results })
+}
+
+/// Plain entry point for the non-interactive `audit` command, which has
+/// no progress screen to update.
+pub fn run_audit(selected_ids: Option<&[String]>) -> Result<Report, CoreError> {
+    run_audit_with_progress(selected_ids, |_, _, _| {})
 }

@@ -9,6 +9,53 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- TUI : en-tête vivant, écran de progression au démarrage, rafraîchissement
+  manuel — trois demandes liées, une seule refonte cohérente.
+  - **En-tête en temps réel** : une deuxième ligne affiche CPU%, Mem%
+    (utilisée/totale en GB) et espace disque de `/` (`%`), rafraîchie
+    automatiquement environ une fois par seconde tant que le TUI est
+    ouvert — sans action de l'utilisateur. Codes couleur (vert/jaune/
+    rouge selon des seuils 70%/90%). Le CPU% est calculé par delta entre
+    deux lectures de `/proc/stat` (technique standard sous Linux — une
+    seule lecture ne donne pas de "% d'usage instantané", seulement des
+    compteurs cumulés depuis le boot), donc affiche "…" le temps qu'un
+    deuxième échantillon soit disponible (~1s après l'ouverture).
+    Nouveau module `output/live_stats.rs`, délibérément séparé du
+    pipeline des `Module` de diagnostic — ce sont des jauges d'affichage,
+    pas des findings avec preuve/explication/recommandation, et les
+    relancer en entier à chaque tick (y compris les appels `smartctl`
+    par disque) serait à la fois inutile et bien trop lent pour un
+    rafraîchissement à la seconde.
+  - **Écran de progression** : au lancement, une jauge centrée affiche
+    quel module est en cours de scan et où on en est (N/total) —
+    important pour un scan avec un module plus lent (`smartctl` par
+    disque dans Storage, `virsh`/`docker` dans Virtualization) qui
+    pouvait auparavant donner l'impression d'un terminal figé.
+  - **Rafraîchissement manuel (`r`)** : relance le pipeline complet des
+    modules sans quitter le programme, avec le même écran de progression.
+    La sélection de module courante est préservée si elle existe encore
+    dans les nouvelles données. Le compteur "findings from Ns ago" dans
+    l'en-tête distingue explicitement la fraîcheur des deux types de
+    données : les jauges de l'en-tête sont toujours à jour, les findings
+    affichés datent du dernier scan/rafraîchissement.
+  - **Changement d'architecture nécessaire** : `TuiApp` possède
+    maintenant son `Report` directement (au lieu de l'emprunter) — sans
+    ça, impossible de le remplacer lors d'un rafraîchissement. Ça a
+    changé la signature de plusieurs méthodes internes (retournent des
+    `String`s possédées plutôt que des `&str` empruntés) pour éviter un
+    conflit d'emprunt avec les `ListState` mutables de `ratatui`.
+    `core::engine::run_audit()` reste inchangé pour la commande `audit`
+    non-interactive ; un nouveau `run_audit_with_progress()` accepte un
+    callback de progression, utilisé uniquement par le TUI.
+  - **Vérifié avec un vrai pseudo-terminal** (`tmux`, pas seulement le
+    rendu headless `TestBackend`) : écran de progression capturé en plein
+    scan réel, en-tête confirmé vivant sur plusieurs secondes (CPU% se
+    résout après le deuxième tick, compteur d'âge incrémente), touche
+    `r` confirmée déclenchant un vrai nouveau scan avec préservation de
+    la sélection, sortie propre par `q`.
+
 ### Corrigé
 
 - **Bug réel signalé par un utilisateur** : sur un système en locale

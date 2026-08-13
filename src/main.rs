@@ -41,22 +41,17 @@ fn run_audit_command(modules: Option<Vec<String>>, format: OutputFormat) -> Exit
 }
 
 fn run_tui_command(modules: Option<Vec<String>>) -> ExitCode {
-    let report = match core::engine::run_audit(modules.as_deref()) {
+    let report = match output::tui::run(modules.as_deref()) {
         Ok(report) => report,
         Err(e) => {
-            eprintln!("linuxdoctor: {e}");
+            eprintln!(
+                "linuxdoctor: could not start the interactive UI ({e}). \
+                 Try `linuxdoctor audit` instead — this usually means stdout \
+                 isn't a real terminal (e.g. piped output or no TTY)."
+            );
             return ExitCode::FAILURE;
         }
     };
-
-    if let Err(e) = output::tui::run(&report) {
-        eprintln!(
-            "linuxdoctor: could not start the interactive UI ({e}). \
-             Try `linuxdoctor audit` instead — this usually means stdout \
-             isn't a real terminal (e.g. piped output or no TTY)."
-        );
-        return ExitCode::FAILURE;
-    }
 
     exit_code_for(&report)
 }

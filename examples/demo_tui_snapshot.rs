@@ -13,7 +13,7 @@ use linuxdoctor::modules::memory::analyze::analyze as analyze_memory;
 use linuxdoctor::modules::memory::collect::MemoryRawData;
 use linuxdoctor::modules::storage::analyze::analyze as analyze_storage;
 use linuxdoctor::modules::storage::collect::{DiskHealth, StorageRawData};
-use linuxdoctor::output::tui::{draw, TuiApp};
+use linuxdoctor::output::tui::{draw, draw_progress_screen, TuiApp};
 
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -142,12 +142,20 @@ fn main() {
         ],
     };
 
-    let mut app = TuiApp::new(&report);
+    let mut app = TuiApp::new(report);
+    app.refresh_live_stats();
     let backend = TestBackend::new(100, 32);
     let mut terminal = Terminal::new(backend).unwrap();
+
+    println!("--- startup progress screen (mid-scan, module 3 of 9) ---\n");
+    terminal
+        .draw(|f| draw_progress_screen(f, 3, 9, "storage"))
+        .unwrap();
+    print_buffer(&terminal);
+
     terminal.draw(|f| draw(f, &mut app)).unwrap();
 
-    println!("--- memory selected (no submenu -- flat view, same as before this feature) ---\n");
+    println!("\n--- memory selected: header now shows live CPU/Mem/Disk gauges ---\n");
     print_buffer(&terminal);
 
     println!("\n--- PgDn to 'cpu' (2 sockets -- module view shows only the global overview + a hint) ---\n");

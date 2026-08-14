@@ -247,8 +247,10 @@ status; part of systemd core, so gated by the same availability check as Systemd
 need systemd as PID 1, unlike `systemctl`/`timedatectl`, since it probes DMI/CPUID
 directly rather than talking to PID 1 over D-Bus — verified empirically, not assumed,
 so this module has no availability gate), `virsh` (Virtualization, host-side VM
-inventory via libvirt) and `docker`/`podman` (Virtualization, host-side container
-inventory — tried in that order, first one whose daemon is actually reachable wins).
+inventory via libvirt — also shells out to `lspci` per passthrough device found, to
+identify the hardware behind a bare PCI address) and `docker`/`podman`
+(Virtualization, host-side container inventory — tried in that order, first one whose
+daemon is actually reachable wins).
 `lsblk`, `journalctl`, `ethtool` remain plausible future
 collectors for modules not
 yet built (or, for `ethtool`, already pointed to in a *recommendation* string without

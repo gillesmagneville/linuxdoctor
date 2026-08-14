@@ -56,13 +56,25 @@ v1 scaffold, nine modules shipping end-to-end:
   `systemctl`/`timedatectl`) works without systemd as PID 1 — no
   availability gate needed; falls back to the CPUID hypervisor flag in
   `/proc/cpuinfo` when the tool isn't installed. *Host-side* inventory
-  when this machine hosts VMs (`VIRT002`/`VIRT003`, via `virsh`/libvirt —
-  including per-VM CPU pinning and per-disk capacity/allocation) or
-  containers (`VIRT004`/`VIRT005`, via `docker` or `podman`) — each
+  when this machine hosts VMs (`VIRT002`/`VIRT003`, via `virsh`/libvirt)
+  or containers (`VIRT004`/`VIRT005`, via `docker` or `podman`) — each
   with a three-state availability check (tool absent / tool present but
   backend unreachable / available), one finding per VM or container in
-  its own submenu, live resource usage for running ones. Always Info —
-  none of this is inherently good or bad, it's inventory.
+  its own submenu, live resource usage for running ones. Per-VM detail
+  covers CPU pinning with the NUMA node resolved per pinning group (not
+  just a VM-wide aggregate), cross-referenced against the host's own
+  isolated-CPU set, configured NUMA memory policy, per-disk
+  capacity/allocation (adaptive GB/MB/KB units, so a small real value
+  never looks indistinguishable from "0.0 GB"), passthrough/SR-IOV PCI
+  devices identified via `lspci` (not just their bus address), an
+  approximate host-observed CPU% and guest-reported internal memory
+  usage (`virsh dommemstat`, with an explicit caveat when its `unused`
+  field is exactly 0 — that can be a real reading or an unconfigured
+  balloon driver, indistinguishable from the data alone), and the VM's
+  network interfaces (type/source/model via `virsh domiflist`, with an
+  honest note on what each model implies rather than a fabricated link
+  speed). Always Info — none of this is inherently good or bad, it's
+  inventory.
 * **Network** — per-interface overview and error/drop rates (with a
   minimum-sample-size guard so a handful of startup drops on a fresh
   interface can't produce a misleading percentage), default gateway,
@@ -193,7 +205,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 220 unit tests + 29 integration tests
+cargo test               # 272 unit tests + 29 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

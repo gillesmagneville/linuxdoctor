@@ -9,6 +9,98 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Corrigé
+
+- Module **virtualization** : précision d'affichage du stockage. Un
+  petit-mais-réel allocation (ex. un disque qcow2 fraîchement créé)
+  s'arrondissait visuellement à "0.0 GB" avec un seul chiffre après la
+  virgule, indistinguable d'un vrai échec de lecture — signalé comme bug
+  par un utilisateur. Nouveau formateur à unité adaptative (GB → MB →
+  KB selon la magnitude) plutôt qu'un simple `{:.1} GB` fixe. Investigué
+  en profondeur avant de corriger : `virsh domblkinfo` avec `target`
+  (`vda`) vs `source` (chemin hôte complet) comme identifiant donnent en
+  fait le **même résultat** dans cette version de libvirt (10.0.0,
+  testé contre un vrai domaine avec un vrai disque qcow2, démon
+  `libvirtd` lancé manuellement dans ce sandbox) — donc le symptôme
+  exact rapporté n'a pas pu être reproduit à l'identique. Basculé vers
+  `target` quand même par robustesse (recommandé par les exemples
+  officiels libvirt, fonctionne aussi pour du stockage basé sur des
+  pools comme `virt-manager` en crée par défaut, contrairement à
+  `source` qui peut ne pas être un chemin de fichier direct dans ce cas).
+
+### Ajouté
+
+- Module **virtualization** : détail par VM très enrichi, vérifié avec
+  un vrai `libvirtd` lancé manuellement dans ce sandbox (aucun `/dev/kvm`
+  disponible ici, donc démarrage impossible, mais définition de domaine,
+  `domblklist`, `domblkinfo`, `domiflist` tous testés contre un domaine
+  inactif réel).
+  - **CPU pinning + nœud NUMA intégré par groupe** : au lieu d'un résumé
+    NUMA séparé de l'agrégat, chaque groupe de pinning affiche
+    directement son nœud ("vCPUs 0-1: host 0-3 (NUMA node 0)").
+  - **Croisement avec les CPUs isolés de l'hôte** : réutilise
+    `cpu::collect::collect().all_isolated_cpus()` — indique si les vCPUs
+    épinglées tombent sur des CPUs réservés/isolés du scheduler général,
+    pas seulement lesquelles.
+  - **Descriptions matérielles PCI** (`lspci -s <adresse>`) : chaque
+    périphérique passthrough/SR-IOV affiche maintenant à quel matériel
+    il correspond, pas seulement son adresse. Piège géré : une adresse
+    valide mais absente donne une sortie vide avec un code de sortie 0,
+    pas une erreur — vérifié empiriquement.
+  - **Statistiques mémoire internes à l'invité** (`virsh dommemstat`,
+    format confirmé via 4 sources concordantes) : pourcentage utilisé
+    réellement par le système d'exploitation invité, avec mise en garde
+    explicite quand la valeur "unused" est à 0 (peut être un vrai zéro
+    ou un pilote de ballon sans collecte périodique activée — les deux
+    sont indiscernables depuis cette seule donnée).
+  - **Utilisation CPU approximative** : delta entre deux échantillons
+    `virsh dominfo` pris avant/après le reste de l'enrichissement de
+    cette VM (pas une pause dédiée — le mot "approximative" dans le
+    texte reflète honnêtement une fenêtre d'échantillonnage courte et
+    variable, pas une mesure précise sur durée fixe comme celle de
+    l'en-tête TUI).
+  - **Interfaces réseau** (`virsh domiflist`, bien plus simple qu'un
+    reparsing XML — donne directement type/source/modèle/MAC en
+    colonnes) : type, source, modèle. Pas de "vitesse" inventée pour les
+    NICs paravirtualisées (virtio n'a pas de débit fixe) — à la place,
+    une note honnête sur ce qu'implique chaque modèle courant.
+  - Coût à connaître : environ 10 appels `virsh`/`lspci` supplémentaires
+    par VM désormais — significatif pour un hôte avec plusieurs VMs,
+    toujours dans l'esprit "scan complet, pas rafraîchissement continu"
+    du reste de l'outil.
+
+### Ajouté
+
+- Module **virtualization** : détail par VM encore enrichi — pinning CPU
+  vers les nœuds NUMA effectifs, politique NUMA configurée, périphériques
+  en passthrough/SR-IOV.
+  - **Nœuds NUMA effectifs** : donnée dérivée, pas directement fournie
+    par `virsh` — croise le pinning vCPU (`virsh vcpupin`) avec la
+    topologie NUMA réelle de l'hôte (`/sys/devices/system/node/*/
+    cpulist`, lue directement, sans passer par le pipeline complet du
+    module NUMA — même principe que `live_stats.rs`). Réutilise le
+    `parse_cpu_list` déjà partagé entre les modules CPU et NUMA plutôt
+    que d'en dupliquer un troisième.
+  - **Politique NUMA configurée** (`virsh numatune`) : mode et nodeset
+    explicitement définis, distinct du calcul ci-dessus (l'un est la
+    politique configurée, l'autre est où les vCPUs tournent réellement
+    une fois épinglées). Reste honnêtement `None` quand rien n'est
+    configuré plutôt que de deviner une valeur par défaut.
+  - **Périphériques passthrough/SR-IOV** (`virsh dumpxml`) : deux formes
+    XML distinctes gérées séparément, confirmées par la documentation
+    officielle libvirt et des exemples réels — `<hostdev type='pci'>`
+    pour le passthrough générique (GPU, etc.) et
+    `<interface type='hostdev'>` spécifiquement pour les VFs SR-IOV
+    réseau (avec l'adresse MAC). Parsé via une petite machine à états
+    ciblée sur le format de sortie de `virsh dumpxml` — pas un parseur
+    XML général — avec un piège géré explicitement : l'élément `<mac>`
+    apparaît *après* la fermeture de `<source>` dans l'ordre du
+    document, donc capturé en attente jusqu'à la fermeture du bloc
+    plutôt qu'au moment de lire l'adresse PCI.
+  - Adresses PCI acceptées en hexadécimal (`0x06`) ou décimal (`11`)
+    selon la forme XML rencontrée — les deux existent dans des exemples
+    réels de la documentation.
+
 ### Ajouté
 
 - TUI : en-tête vivant, écran de progression au démarrage, rafraîchissement

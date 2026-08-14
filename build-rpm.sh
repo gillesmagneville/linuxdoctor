@@ -30,15 +30,17 @@ Construit un paquet .rpm pour LinuxDoctor.
   --minor               Incremente le numero mineur (1.2.3 -> 1.3.0)
   --patch               Incremente le numero de patch (1.2.3 -> 1.2.4)
   --no-version-change   Reconstruit sans changer la version
+  --yes, -y             Ne pas demander de confirmation avant de construire
   --clean               Nettoie le dossier de build et les .rpm generes
   --help, -h            Affiche cette aide
 
-Sans argument de version : mode interactif.
+Sans argument de version : mode interactif (necessite un terminal).
 EOF
 }
 
 INCREMENT=""
 NO_VERSION_CHANGE=false
+ASSUME_YES=false
 CLEAN=false
 
 while [[ $# -gt 0 ]]; do
@@ -47,6 +49,7 @@ while [[ $# -gt 0 ]]; do
     --minor) INCREMENT="minor"; shift ;;
     --patch) INCREMENT="patch"; shift ;;
     --no-version-change) NO_VERSION_CHANGE=true; shift ;;
+    --yes|-y) ASSUME_YES=true; shift ;;
     --clean) CLEAN=true; shift ;;
     --help|-h) show_help; exit 0 ;;
     *) echo "Option inconnue : $1"; show_help; exit 1 ;;
@@ -87,7 +90,18 @@ IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 MAJOR=${MAJOR:-0}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
 
 # --- Mode interactif si aucun argument de version fourni ---
+# Sans flag de version ET sans terminal interactif, il n'y a aucune
+# facon de savoir quoi faire : mieux vaut echouer clairement ici que de
+# laisser `read` toucher un EOF silencieux plus loin (ce qui, avec
+# `set -e`, tuait le script sans message avant meme la compilation --
+# VERSION et Cargo.toml restaient donc inchanges sans aucune explication).
 if [ -z "$INCREMENT" ] && [ "$NO_VERSION_CHANGE" = false ]; then
+  if [ ! -t 0 ]; then
+    echo "Erreur : aucun flag de version fourni (--major/--minor/--patch/"
+    echo "--no-version-change) et aucun terminal interactif disponible pour"
+    echo "le menu de choix. Relance avec l'un de ces flags."
+    exit 1
+  fi
   echo ""
   echo "Version actuelle : $CURRENT_VERSION"
   echo ""
@@ -124,10 +138,23 @@ echo " Version  : $CURRENT_VERSION -> $NEW_VERSION"
 echo " Format   : .rpm"
 echo "========================================"
 echo ""
-read -p "Construire ? [o/N] " CONFIRM
-if [[ ! "$CONFIRM" =~ ^[oOyY]$ ]]; then
-  echo "Construction annulee. Aucun fichier n'a ete modifie."
-  exit 0
+# A ce stade, soit un flag de version a ete fourni explicitement (dans
+# ce cas stdin peut etre non-interactif : c'est un usage scripte/CI
+# legitime), soit le menu interactif ci-dessus a deja confirme qu'un
+# terminal est bien disponible. Ne demander confirmation que si on peut
+# reellement lire une reponse -- sinon `read` echoue silencieusement sur
+# EOF et, avec `set -e`, tuait le script sans message avant meme de
+# compiler.
+if [ "$ASSUME_YES" = true ]; then
+  echo "Confirmation automatique (--yes)."
+elif [ -t 0 ]; then
+  read -p "Construire ? [o/N] " CONFIRM
+  if [[ ! "$CONFIRM" =~ ^[oOyY]$ ]]; then
+    echo "Construction annulee. Aucun fichier n'a ete modifie."
+    exit 0
+  fi
+else
+  echo "Pas de terminal interactif : confirmation automatique (un flag de version a ete fourni explicitement)."
 fi
 
 # --- Mise a jour temporaire de Cargo.toml AVANT compilation, pour que le
@@ -199,6 +226,15 @@ if (cd "$PROJECT_DIR" && fpm -s dir -t rpm \
   echo "Paquet genere :"
   ls -1 "$PROJECT_DIR"/*.rpm | sed 's/^/   /'
   echo "Version enregistree : $NEW_VERSION (VERSION + Cargo.toml)"
+  echo ""
+  echo "Note : le nom du fichier .rpm contient un '-1' apres le numero de"
+  echo "version (ex. ${PACKAGE_NAME}-${NEW_VERSION}-1.x86_64.rpm). C'est le"
+  echo "champ \"Release\" du format RPM (distinct de \"Version\" dans la"
+  echo "convention NEVRA : Nom-Epoch:Version-Release.Architecture), fixe a 1"
+  echo "par defaut par fpm. Ce n'est pas une modification du numero de"
+  echo "version -- VERSION et Cargo.toml ci-dessus restent exacts, sans"
+  echo "aucun suffixe. Le format .deb n'a pas cette notion, d'ou l'absence"
+  echo "de ce suffixe cote build-deb.sh."
 else
   echo ""
   echo "Erreur : fpm a echoue."

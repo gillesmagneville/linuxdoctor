@@ -143,11 +143,22 @@ Two scripts build native packages via [fpm](https://fpm.readthedocs.io/) —
 openSUSE). Both follow the same flow: pick a version bump (interactively or
 via a flag), compile in release mode, stage the binary + docs, then package.
 `VERSION` and `Cargo.toml` are only updated after a fully successful build —
-a failed compile or a failed `fpm` step leaves the repo untouched.
+a failed compile or a failed `fpm` step leaves the repo untouched. A brief
+confirmation prompt runs before building, unless a version flag was already
+given without a real terminal attached to stdin (a script/CI context — the
+flag itself is treated as confirmation) or `--yes`/`-y` is passed explicitly.
+Running with no version flag and no interactive terminal available fails
+immediately with a clear message, rather than hanging or dying silently.
+The generated `.rpm` filename includes a `-1` suffix after the version
+(e.g. `linuxdoctor-1.2.3-1.x86_64.rpm`) — that's the RPM "Release" field,
+distinct from "Version" in RPM's NEVRA naming convention, defaulted to 1
+by `fpm`. `.deb` has no equivalent concept, hence no such suffix there.
+Neither `VERSION` nor `Cargo.toml` ever contain it.
 
 ```bash
 ./build-deb.sh --patch   # or --minor / --major / --no-version-change
 ./build-rpm.sh --patch
+./build-deb.sh --patch --yes   # skip the confirmation prompt
 ./build-deb.sh --clean   # remove build artifacts and generated .deb files
 ```
 

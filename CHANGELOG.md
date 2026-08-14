@@ -9,6 +9,55 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Clarifié
+
+- `build-rpm.sh` ajoute un "-1" au nom du fichier `.rpm` généré (ex.
+  `linuxdoctor-1.5.2-1.x86_64.rpm`) — signalé comme anormal par un
+  utilisateur. **Vérifié en profondeur, ce n'est pas un bug** : c'est le
+  champ "Release" du format RPM, distinct du champ "Version" dans la
+  convention NEVRA (Nom-Epoch:Version-Release.Architecture), fixé à `1`
+  par défaut par `fpm` en l'absence de `--iteration` explicite. Le
+  format `.deb` n'a pas cette notion, d'où l'absence de ce suffixe côté
+  `build-deb.sh` — ce qui expliquait la confusion. Vérification complète
+  effectuée (pas seulement relue) : les 4 options de version (1/2/3/4,
+  aussi bien via flags CLI que via le menu interactif numéroté, avec un
+  vrai pseudo-terminal) donnent un résultat strictement identique et
+  correct dans les deux scripts — `VERSION` et `Cargo.toml` ne
+  contiennent jamais ce suffixe, dans aucun scénario testé. Message de
+  succès de `build-rpm.sh` enrichi d'une note explicite là-dessus, pour
+  que ça ne reste plus jamais ambigu.
+
+### Corrigé
+
+- **Bug réel signalé par un utilisateur** : `VERSION` (et `Cargo.toml`)
+  n'était jamais mis à jour lors des builds, sans message d'erreur
+  visible. Cause trouvée en exécutant réellement les scripts (avec un
+  faux `fpm` pour contourner l'absence de `rubygems.org` dans ce
+  sandbox) plutôt qu'en les relisant seulement : l'invite de
+  confirmation `read -p "Construire ? [o/N]"` existait **même** quand un
+  flag de version explicite (`--patch` etc.) était déjà passé. Dans tout
+  contexte sans terminal interactif attaché à l'entrée standard (lancé
+  depuis un script, un outil, une automatisation), `read` reçoit un EOF
+  immédiat — et avec `set -e` en tête de script, ça tuait le script
+  instantanément, **avant même la compilation**, sans aucun message,
+  laissant `VERSION`/`Cargo.toml` inchangés. Reproduit et confirmé
+  précisément avant de corriger (`bash build-deb.sh --patch < /dev/null`
+  → code de sortie 1, aucune sortie).
+  - `build-deb.sh` et `build-rpm.sh` détectent maintenant si l'entrée
+    standard est un vrai terminal (`[ -t 0 ]`). Sans terminal ET sans
+    flag de version → message d'erreur clair demandant d'en passer un,
+    au lieu d'un blocage ou d'une mort silencieuse. Sans terminal MAIS
+    avec un flag déjà fourni → confirmation automatique (le flag exprime
+    déjà l'intention), avec un message explicite indiquant que c'est
+    arrivé.
+  - Nouveau flag `--yes`/`-y` pour sauter la confirmation explicitement,
+    même en session interactive.
+  - Revérifié après correction, dans les deux scripts, sur les quatre
+    scénarios : flag + pas de terminal (fonctionne maintenant), aucun
+    flag + pas de terminal (échoue proprement avec message clair),
+    `--yes` explicite, et le rollback existant en cas d'échec de `fpm`
+    (toujours intact, non affecté par ce correctif).
+
 ### Corrigé
 
 - Module **virtualization** : précision d'affichage du stockage. Un

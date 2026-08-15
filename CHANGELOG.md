@@ -9,6 +9,48 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [0.2.0] - 2026-08-15
+
+Première version "publiée" au sens propre depuis le scaffold initial
+0.1.0 — jusqu'ici, chaque changement s'accumulait sous "Non publié"
+sans jamais faire l'objet d'un incrément de version, ce qui a été
+signalé comme un problème réel : `VERSION` restait figé à `0.1.0`
+malgré une évolution substantielle du projet. À partir de maintenant,
+chaque changement livré incrémente `VERSION`/`Cargo.toml` et "publie"
+la section correspondante avec une date, au lieu de laisser
+s'accumuler indéfiniment sous "Non publié".
+
+Cette version regroupe tout ce qui a été construit depuis le scaffold
+initial (memory/cpu/numa/storage/systemd + TUI de base) : les modules
+network, kernel, ntp et virtualization ; l'enrichissement profond de
+memory, storage (SMART), et virtualization (VMs/conteneurs hôtes,
+pinning CPU/NUMA, passthrough/SR-IOV, stats internes aux VMs) ; la
+refonte du TUI (sous-menus, en-tête vivant, écran de progression,
+rafraîchissement manuel) ; et plusieurs corrections de bugs réels
+(faux positif SR-IOV, sensibilité à la locale de `virsh`, invite de
+confirmation bloquante dans les scripts de build, comportement par
+défaut de `linuxdoctor` sans sous-commande).
+
+### Modifié
+
+- `linuxdoctor` sans sous-commande ouvre maintenant le TUI par défaut,
+  quand stdin **et** stdout sont un vrai terminal (`std::io::IsTerminal`,
+  bibliothèque standard depuis Rust 1.70, aucune nouvelle dépendance) —
+  correspond à l'usage attendu une fois le paquet installé. Repli
+  automatique sur le comportement `audit` (texte, comme avant) dès que
+  ce n'est pas le cas (redirection, pipe, script/cron/CI), pour que les
+  usages non-interactifs existants (`linuxdoctor > rapport.txt`,
+  `linuxdoctor | grep ...`) continuent de fonctionner exactement comme
+  avant plutôt que d'échouer contre un TUI qui n'a nulle part où
+  s'afficher. `linuxdoctor audit` et `linuxdoctor tui` restent
+  disponibles pour forcer explicitement l'un ou l'autre mode.
+  Vérifié avec un vrai pseudo-terminal (`tmux`) : lancement sans
+  argument ouvre bien le TUI, sortie propre par `q` ; redirection vers
+  fichier et pipe vers `grep` restent bien en mode texte, inchangés.
+  Logique de décision extraite dans une fonction pure et testable
+  séparée de la détection I/O réelle — même principe "collecte fine +
+  cœur testable" que les modules de diagnostic.
+
 ### Clarifié
 
 - `build-rpm.sh` ajoute un "-1" au nom du fichier `.rpm` généré (ex.

@@ -193,11 +193,23 @@ and `/etc/resolv.conf` cover it with zero subprocess calls.
 
 ```bash
 cargo build --release
+./target/release/linuxdoctor              # no subcommand: TUI in a real
+                                           # terminal, plain audit otherwise
 ./target/release/linuxdoctor audit
 ./target/release/linuxdoctor audit --output json
 ./target/release/linuxdoctor audit --modules memory
-./target/release/linuxdoctor tui              # interactive terminal UI
+./target/release/linuxdoctor tui              # interactive terminal UI, explicitly
 ```
+
+Running `linuxdoctor` with no subcommand opens the interactive TUI when both
+stdin and stdout are a real terminal (`std::io::IsTerminal`, standard
+library, no extra dependency) — the expected experience once installed and
+run directly. It falls back to `audit`'s plain-text behavior when they
+aren't (piped, redirected, or run from a script/cron/CI), so existing
+non-interactive uses like `linuxdoctor > report.txt` or
+`linuxdoctor | grep ...` keep working exactly as before. `linuxdoctor audit`
+and `linuxdoctor tui` remain available to force either mode explicitly
+regardless of the terminal.
 
 In the TUI: PgUp/PgDn to select a module (or, once drilled in, an item
 within its submenu), ↑/↓ (or j/k) to scroll a long finding, Enter to open
@@ -216,7 +228,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 272 unit tests + 29 integration tests
+cargo test               # 272 lib unit tests + 4 CLI unit tests + 29 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

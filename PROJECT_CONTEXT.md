@@ -220,6 +220,8 @@ Examples:
 * CPU
 * Memory
 * NUMA
+* GPU
+* Firmware
 * Kernel
 * Scheduler
 * Storage

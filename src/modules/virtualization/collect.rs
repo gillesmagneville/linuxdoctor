@@ -881,7 +881,7 @@ pub fn parse_host_devices(xml: &str) -> Vec<HostDevice> {
 /// needed. Returns `None` if `lspci` isn't installed, exits with an
 /// error, or (confirmed real behavior for a validly-formatted but
 /// nonexistent address) succeeds with empty output.
-fn lookup_pci_description(pci_address: &str) -> Option<String> {
+pub fn lookup_pci_description(pci_address: &str) -> Option<String> {
     let output = command("lspci").args(["-s", pci_address]).output().ok()?;
     if !output.status.success() {
         return None;

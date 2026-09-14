@@ -9,7 +9,186 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
-## [0.2.0] - 2026-08-15
+## 2026-09-14
+
+### Changé — politique de gestion de version revue
+
+Correction de la correction précédente : la resynchronisation manuelle
+faite le 10/09 (voir plus bas) traitait le mauvais symptôme. Signalé
+par l'utilisateur : ce n'est pas que ses builds locaux dépassaient ce
+qui était livré ici — c'est l'inverse. Son `VERSION` local restait
+bloqué à `0.4.0` malgré plusieurs lancements de `build-deb.sh` avec
+des options d'incrément, alors qu'il aurait dû atteindre `1.3.0`.
+
+Vérifié en profondeur avant de conclure : la logique d'incrémentation
+elle-même fonctionne correctement — 4 lancements successifs réels
+(`--major`, `--minor`, `--minor`, `--minor`) enchaînent bien
+`0.4.0 → 1.0.0 → 1.1.0 → 1.2.0 → 1.3.0`, confirmant qu'un incrément se
+compose correctement d'un lancement à l'autre. La cause la plus
+probable côté utilisateur : `fpm` n'est pas un paquet système, il
+s'installe via `gem install --user-install fpm` — s'il n'est pas
+présent, chaque lancement échoue proprement à la vérification des
+outils, avec un message clair, **sans jamais toucher `VERSION`**
+(comportement volontaire : aucun incrément sans build entièrement
+réussi). Confirmé par un test dédié : lancement sans `fpm` disponible
+→ échec propre, `VERSION` inchangé, exactement le symptôme rapporté.
+
+**Décision** : `VERSION` (et le champ `version` de `Cargo.toml`) ne
+sont plus inclus dans les livraisons de code source à partir de
+maintenant. Ce fichier appartient exclusivement à l'environnement local
+de l'utilisateur, avancé uniquement par ses propres lancements réussis
+de `build-deb.sh`/`build-rpm.sh` — le faire avancer aussi côté
+livraison créait exactement le problème inverse de celui visé : chaque
+nouvelle livraison écrasait la progression locale de l'utilisateur.
+Vérifié que les deux scripts démarrent proprement à `0.1.0` en
+l'absence totale de `VERSION` (cas d'une extraction neuve). Les entrées
+de ce changelog utiliseront désormais une date plutôt qu'un numéro de
+version inventé ici, pour la même raison — ce numéro n'est plus de mon
+ressort.
+
+### Ajouté
+
+- Nouveau module **firmware**, placé dans le menu juste après `kernel`
+  et avant `virtualization` (la virtualisation activée au BIOS est un
+  prérequis logique de ce que fait ce dernier) — vérifié en conditions
+  réelles, pas seulement dans le code.
+  - **Réponse honnête à la question posée** : non, il n'existe aucune
+    API Linux universelle pour lire l'intégralité du menu de
+    configuration BIOS/UEFI (courbes de ventilateur, profils XMP,
+    ordre de démarrage détaillé, bascule CSM) — ce module ne prétend
+    pas le faire. Certains constructeurs (Dell, Lenovo) ont des outils
+    propriétaires pour une partie de leurs réglages spécifiques ; pas
+    couvert ici, périmètre bien plus vaste et fragile.
+  - **Ce qui est couvert, entièrement vérifié avant codage** : identité
+    du firmware (fabricant/version/date/révision) via
+    `/sys/class/dmi/id/*` — lecture sysfs pure, aucun outil externe,
+    aucun root requis (confirmé via plusieurs sources indépendantes) ;
+    mode de démarrage (UEFI vs Legacy/CSM) et état du Secure Boot (via
+    `mokutil`, laissé "indéterminé" plutôt que deviné depuis les
+    octets bruts de la variable EFI quand l'outil est absent — les
+    sources divergeaient sur l'offset exact) ; extensions de
+    virtualisation (VT-x/AMD-V) ; IOMMU/VT-d ; présence d'un TPM.
+  - **Virtualisation activée au BIOS** : la sévérité n'augmente que
+    lorsque `dmesg` confirme explicitement "disabled by bios" — la
+    simple absence du flag `vmx`/`svm` reste ambiguë (CPU sans support
+    réel vs désactivé au BIOS, deux cas indiscernables depuis cette
+    seule donnée) et ne fait donc jamais monter la sévérité seule,
+    juste baisser la confiance en conséquence.
+  - **IOMMU/VT-d** : croise le paramètre noyau demandé (`/proc/cmdline`)
+    avec l'état réellement actif (`/sys/class/iommu/`) — un
+    paramètre demandé mais jamais actif signale un blocage au niveau
+    BIOS, avec un renvoi direct vers les modules GPU (passthrough
+    SR-IOV) et Virtualization (VFIO) déjà existants.
+  - Nouvelle catégorie canonique `Firmware`, ajoutée à l'enum et à la
+    liste de vision de `PROJECT_CONTEXT.md` (même précédent que pour
+    GPU).
+
+## [1.3.0] - 2026-09-10
+
+### Note sur ce saut de version (0.4.0 → 1.3.0)
+
+Pas de changement de code dans cette entrée — resynchronisation de
+`VERSION`/`Cargo.toml` uniquement. Signalé comme incohérent par
+l'utilisateur : `VERSION` restait à `0.4.0` alors qu'il en était à
+`1.3.0` sur sa propre machine. Cause identifiée : deux mécanismes
+d'incrémentation distincts et non synchronisés entre eux —
+`build-deb.sh`/`build-rpm.sh` incrémentent `VERSION` directement sur la
+machine où ils sont lancés (localement, indépendamment de toute
+conversation), tandis que chaque livraison faite ici incrémente sa
+propre copie sans visibilité sur l'état local de l'utilisateur.
+Resynchronisé sur `1.3.0` (l'état local rapporté) plutôt que de
+continuer sur une base désynchronisée à `0.4.0`.
+
+## [0.4.0] - 2026-09-10
+
+### Ajouté
+
+- Module **gpu** enrichi avec plusieurs informations supplémentaires
+  demandées explicitement — chacune vérifiée avant d'être codée, avec
+  un piège de fiabilité réel trouvé et intégré honnêtement plutôt que
+  passé sous silence.
+  - **Horloges cœur/mémoire séparées**, pour les deux fabricants —
+    NVIDIA via `clocks.gr`/`clocks.mem`, AMD via `pp_dpm_sclk`/
+    `pp_dpm_mclk` (la ligne marquée d'un astérisque indique l'état
+    actif parmi tous les états DPM disponibles).
+  - **Vitesse et largeur du port PCIe** (actuel + maximum), lues de
+    façon générique via les fichiers sysfs PCI standards
+    (`current_link_speed` etc.) — applicable à n'importe quel
+    fabricant, pas seulement AMD/NVIDIA. **Piège de fiabilité trouvé et
+    documenté** : un ticket GitHub réel sur `amdgpu_top` rapporte que
+    `current_link_speed` peut parfois afficher la valeur *maximale*
+    plutôt qu'une vraie lecture en temps réel sur certaines
+    combinaisons noyau/pilote — le texte produit porte cette mise en
+    garde plutôt que de prétendre à une précision non garantie, et
+    cette seule donnée ne fait jamais monter la sévérité.
+  - **Version CUDA maximale supportée par le driver** (`GPU001`,
+    depuis l'en-tête texte de `nvidia-smi` — pas un champ de requête
+    `--query-gpu`, contrairement à ce qu'on pourrait attendre).
+    Explicitement étiquetée comme telle et distinguée de la version du
+    *toolkit* CUDA réellement installée (`nvcc --version`) — une
+    confusion documentée comme fréquente dans plusieurs sources
+    indépendantes trouvées pendant la recherche.
+  - **Nombre de cœurs CUDA — délibérément absent.** Confirmé non exposé
+    par `nvidia-smi`, y compris via `compute_cap` (qui donne
+    l'architecture, pas le nombre de cœurs, et peut en plus faire
+    échouer la requête entière sur d'anciens drivers). C'est une
+    caractéristique matérielle fixe par modèle ; l'ajouter aurait
+    nécessité une table de correspondance modèle→specs qui deviendrait
+    fausse dès la sortie d'une nouvelle carte — refusé plutôt que
+    deviné.
+  - Petite correction cosmétique au passage : le nom du fabricant ne se
+    répète plus quand la description du GPU l'inclut déjà (ex. "NVIDIA
+    NVIDIA GeForce RTX 4090" → "NVIDIA GeForce RTX 4090").
+
+
+
+### Ajouté
+
+- Nouveau module **gpu**, placé dans le menu juste après `numa` (avec
+  les autres ressources matérielles : memory/cpu/numa/gpu/storage,
+  avant les modules services/diagnostic) — vérifié en conditions
+  réelles, pas seulement dans le code.
+  - Détection générique via `/sys/class/drm/card*` (filtré des entrées
+    de connecteur type `card0-DP-1`), classification du fabricant à
+    partir du `PCI_ID` lu dans `uevent` (`0x10de` NVIDIA, `0x1002`
+    AMD/ATI — distinct de `0x1022`, l'ID PCI propre d'AMD pour ses
+    CPU/chipsets, volontairement pas confondu avec un GPU — `0x8086`
+    Intel).
+  - **AMD** : entièrement via sysfs direct, aucun outil externe —
+    `mem_info_vram_total`/`used` (octets), `gpu_busy_percent`/
+    `mem_busy_percent` (%), `hwmon/*/temp1_input` (**millidegrés**),
+    `power1_average` (**microwatts**), `fan1_input` (RPM). Chaque
+    chemin et unité confirmé via la documentation noyau elle-même et
+    plusieurs captures réelles indépendantes (dont la bibliothèque Rust
+    `amdgpu-sysfs`), pas supposé.
+  - **NVIDIA** : un seul appel `nvidia-smi --query-gpu=...
+    --format=csv,noheader,nounits` couvrant toutes les cartes NVIDIA à
+    la fois, corrélées aux entrées DRM par adresse PCI normalisée
+    (`nvidia-smi` utilise un domaine à 8 chiffres hex, le reste du
+    projet à 4 — normalisation dédiée, testée). Cas géré explicitement :
+    `power.draw` peut valoir littéralement `"[Not Supported]"` selon
+    l'état d'alimentation de la carte. Remontée des process consommant
+    du GPU (`--query-compute-apps`) uniquement quand une seule carte
+    NVIDIA est présente — avec plusieurs cartes, aucune attribution par
+    process n'est fournie plutôt que de risquer une mauvaise
+    corrélation.
+  - **Sévérité basée sur la température uniquement** : utilisation,
+    VRAM et puissance élevées restent en Info (signe normal d'une carte
+    qui travaille, pas un problème en soi — même raisonnement que les
+    métriques de ressources du module virtualization). Pour AMD, la
+    température est comparée au seuil critique *propre à cette carte*
+    (`temp1_crit`, une vraie donnée) ; pour NVIDIA, faute d'équivalent
+    aussi direct, un seuil générique plus conservateur est utilisé, avec
+    une confiance explicitement réduite en conséquence. Driver manquant
+    détecté séparément et toujours au moins en Warning, sans jamais
+    faire descendre la sévérité d'une carte par ailleurs en surchauffe.
+  - **Limite assumée** : le chemin `nvidia-smi`/sysfs AMD n'a pu être
+    vérifié qu'au niveau du parsing (fixtures basées sur des formats
+    réels confirmés) — `/sys/class/drm` étant une structure du noyau,
+    impossible de la simuler sans modifier le code de production
+    juste pour les tests, et ce sandbox n'a aucun GPU réel disponible.
+
+
 
 Première version "publiée" au sens propre depuis le scaffold initial
 0.1.0 — jusqu'ici, chaque changement s'accumulait sous "Non publié"

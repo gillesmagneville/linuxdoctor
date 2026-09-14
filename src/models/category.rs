@@ -16,6 +16,8 @@ pub enum Category {
     Cpu,
     Memory,
     Numa,
+    Gpu,
+    Firmware,
     Kernel,
     Scheduler,
     Storage,

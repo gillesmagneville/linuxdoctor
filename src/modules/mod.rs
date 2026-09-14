@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod cpu;
+pub mod firmware;
+pub mod gpu;
 pub mod kernel;
 pub mod memory;
 pub mod network;
@@ -39,11 +41,13 @@ pub fn all_modules() -> Vec<Box<dyn Module>> {
         Box::new(memory::MemoryModule),
         Box::new(cpu::CpuModule),
         Box::new(numa::NumaModule),
+        Box::new(gpu::GpuModule),
         Box::new(storage::StorageModule),
         Box::new(systemd::SystemdModule),
         Box::new(ntp::NtpModule),
         Box::new(network::NetworkModule),
         Box::new(kernel::KernelModule),
+        Box::new(firmware::FirmwareModule),
         Box::new(virtualization::VirtualizationModule),
     ]
 }

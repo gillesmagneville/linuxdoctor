@@ -79,11 +79,13 @@ linuxdoctor/
 │   │   ├── memory/
 │   │   ├── cpu/
 │   │   ├── numa/
+│   │   ├── gpu/
 │   │   ├── storage/
 │   │   ├── systemd/
 │   │   ├── ntp/
 │   │   ├── network/
 │   │   ├── kernel/
+│   │   ├── firmware/
 │   │   └── virtualization/
 │   │       # each module folder has the same shape:
 │   │       │   mod.rs        # implements Module, wires collect()+analyze()
@@ -104,11 +106,13 @@ linuxdoctor/
     ├── memory_module.rs
     ├── cpu_module.rs
     ├── numa_module.rs
+    ├── gpu_module.rs
     ├── storage_module.rs
     ├── systemd_module.rs
     ├── ntp_module.rs
     ├── network_module.rs
     ├── kernel_module.rs
+    ├── firmware_module.rs
     └── virtualization_module.rs
     # (one per module, same fixture-driven pattern)
 ```
@@ -248,9 +252,13 @@ need systemd as PID 1, unlike `systemctl`/`timedatectl`, since it probes DMI/CPU
 directly rather than talking to PID 1 over D-Bus — verified empirically, not assumed,
 so this module has no availability gate), `virsh` (Virtualization, host-side VM
 inventory via libvirt — also shells out to `lspci` per passthrough device found, to
-identify the hardware behind a bare PCI address) and `docker`/`podman`
+identify the hardware behind a bare PCI address), `docker`/`podman`
 (Virtualization, host-side container inventory — tried in that order, first one whose
-daemon is actually reachable wins).
+daemon is actually reachable wins), `nvidia-smi` (GPU — reuses the same `lspci`
+lookup as Virtualization for the PCI description; AMD's own equivalent needs no
+external tool at all, reading `/sys/class/drm/card*/device/*` and its `hwmon`
+subdirectory directly), and `mokutil` (Firmware — Secure Boot state; the rest of
+Firmware's checks are plain sysfs reads with no external tool at all).
 `lsblk`, `journalctl`, `ethtool` remain plausible future
 collectors for modules not
 yet built (or, for `ethtool`, already pointed to in a *recommendation* string without

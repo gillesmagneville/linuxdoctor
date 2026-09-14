@@ -8,7 +8,7 @@ severity/confidence scales, layout).
 
 ## Status
 
-v1 scaffold, nine modules shipping end-to-end:
+v1 scaffold, eleven modules shipping end-to-end:
 
 * **Memory** — usage overview (used vs reclaimable cache vs available,
   answering "why does `free` show so little free RAM"), `vm.swappiness`,
@@ -41,6 +41,31 @@ v1 scaffold, nine modules shipping end-to-end:
   memory-less/CPU-less nodes) — each always reported on multi-node systems
   with a concrete recommendation when asymmetry is found. Skips cleanly on
   systems without NUMA support.
+* **GPU** — per-card detail (`GPU002`, one per card in its own submenu
+  when 2+ are present) plus an always-present inventory summary
+  (`GPU001`). AMD entirely via direct sysfs reads (VRAM, busy%,
+  temperature, power, fan, core/memory clocks via `pp_dpm_sclk`/
+  `pp_dpm_mclk` — no external tool); NVIDIA via one combined
+  `nvidia-smi --query-gpu` call covering every NVIDIA card at once
+  (core/memory clocks included), plus per-process GPU memory when
+  exactly one NVIDIA card is present (skipped with 2+, rather than risk
+  misattributing a process to the wrong card), plus the maximum CUDA
+  version the installed driver supports (from `nvidia-smi`'s own text
+  header — not a `--query-gpu` field — and explicitly labeled as the
+  driver's ceiling, not the CUDA Toolkit version an application actually
+  uses, which are commonly confused). PCIe link speed/width (current and
+  maximum) read generically via PCI sysfs for any vendor, with an honest
+  caveat carried in the wording: some kernel/driver combinations report
+  the *maximum* speed even during idle/power-saving states rather than a
+  true live reading, a documented real-world quirk, so this alone never
+  raises severity. CUDA core count is deliberately not included — not
+  exposed by `nvidia-smi` at all, and would otherwise need a model→specs
+  lookup table that goes stale the moment a new card ships.
+  Severity is driven by temperature alone — utilization/VRAM/power near
+  their limits are normal signs of a card doing real work, not flagged on
+  their own — compared against each AMD card's own critical-temperature
+  reading when available, or a more conservative generic threshold (with
+  correspondingly lower confidence) for vendors without that exact figure.
 * **Systemd** — overall system state, one finding per failed unit. Skips
   cleanly on systems where systemd isn't PID 1 (checks
   `/run/systemd/system`, not just whether `systemctl` is installed).
@@ -94,6 +119,24 @@ v1 scaffold, nine modules shipping end-to-end:
   "not confirmed", not "clean", since the file is distro-specific),
   ASLR status, and a small set of notable boot parameters
   (`mitigations=off` and similar).
+* **Firmware** — what's readable of BIOS/UEFI from userspace, which is a
+  real but bounded subset: there's no universal Linux API for the full
+  Setup-menu contents (fan curves, memory timings/XMP, detailed boot
+  order), so this module doesn't attempt those. What it does cover:
+  firmware identity (vendor/version/date/revision via
+  `/sys/class/dmi/id/*` — plain sysfs, no root needed, no external
+  tool); boot mode (UEFI vs. Legacy/CSM) and Secure Boot state (via
+  `mokutil`, left unknown rather than guessed from raw EFI-variable
+  bytes when it isn't installed — sources disagreed on the exact byte
+  offset); hardware virtualization extensions (VT-x/AMD-V — skipped
+  entirely on non-x86 architectures, where the vocabulary doesn't
+  apply; severity only escalates when `dmesg` directly confirms "disabled
+  by bios", since the flag's mere absence can't distinguish that from
+  genuinely unsupported hardware); IOMMU/VT-d (kernel parameter
+  requested vs. actually active via `/sys/class/iommu/` — a mismatch
+  flags BIOS-level blocking of PCI passthrough, cross-referencing
+  directly with the GPU and Virtualization modules' SR-IOV/VFIO
+  findings); and TPM presence.
 
 The core, `Module` trait, engine, and three output modes (terminal, JSON,
 interactive TUI) are built and tested. Adding the next module means only
@@ -133,7 +176,7 @@ and generated packages (`*.deb`, `*.rpm`):
 ```bash
 git init
 git add .
-git commit -m "Initial scaffold: core engine, 9 modules (memory/cpu/numa/storage/systemd/ntp/network/kernel/virtualization), terminal/json/tui output"
+git commit -m "Initial scaffold: core engine, 10 modules (memory/cpu/numa/gpu/storage/systemd/ntp/network/kernel/virtualization), terminal/json/tui output"
 ```
 
 ## Packaging
@@ -165,7 +208,24 @@ Neither `VERSION` nor `Cargo.toml` ever contain it.
 Before first use, edit `MAINTAINER` and `URL` at the top of each script —
 they're placeholders. Both scripts check for their required tools (`fpm`,
 `cargo`, and `dpkg-deb` or `rpmbuild` respectively) and tell you what's
-missing and how to install it if something's not found.
+missing and how to install it if something's not found — check that
+message carefully: on a silent "no version bump happened", the far more
+likely cause is a failed tool check (e.g. `fpm` isn't actually installed —
+it needs `gem install --user-install fpm`, not a distro package) than a
+bug in the version arithmetic itself, since a bump is only ever written
+after a build fully succeeds.
+
+**`VERSION` is deliberately not part of this source drop.** It's yours to
+own locally: each successful `build-deb.sh`/`build-rpm.sh` run advances it
+on your machine, tracking your own release history across as many builds
+as you do between updates from here. If `VERSION` (and `Cargo.toml`'s
+matching `version` field) were included and refreshed with every source
+update instead, extracting a new drop over your existing project would
+silently roll your local version back to whatever this drop last set,
+undoing your own build history — so neither file ships here, and this
+project's own version tracking isn't touched between drops. If `VERSION`
+is missing entirely (a fresh checkout with no local build yet), both
+scripts default `CURRENT_VERSION` to `0.1.0` and bump from there.
 
 **On dependencies (`requirements.txt`):** this doesn't apply here the way it
 does for a Python project like planche-contact — Rust has no separate
@@ -228,7 +288,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 272 lib unit tests + 4 CLI unit tests + 29 integration tests
+cargo test               # 332 lib unit tests + 4 CLI unit tests + 33 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -287,6 +347,7 @@ linuxdoctor/
     │   ├── memory/              # collect.rs (I/O) + analyze.rs (pure logic) + tests
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
     │   ├── numa/                  # per-node topology, cross-node imbalance
+    │   ├── gpu/                     # AMD sysfs, NVIDIA via nvidia-smi
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode

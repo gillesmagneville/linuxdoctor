@@ -1,6 +1,6 @@
 [package]
 name = "linuxdoctor"
-version = "1.3.0"
+version = "1.5.0"
 edition = "2021"
 description = "Fast, explainable Linux health diagnostics"
 license = "GPL-3.0-only"

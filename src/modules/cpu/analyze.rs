@@ -319,8 +319,16 @@ fn offline_cpus_finding(data: &CpuRawData) -> Option<Finding> {
              vCPUs than it currently activates, so they can be hot-added \
              later without a reboot.",
             data.offline_cpus.len(),
-            if data.offline_cpus.len() == 1 { "" } else { "s" },
-            if data.offline_cpus.len() == 1 { "is" } else { "are" },
+            if data.offline_cpus.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            if data.offline_cpus.len() == 1 {
+                "is"
+            } else {
+                "are"
+            },
         ))
         .build(),
     )
@@ -566,8 +574,14 @@ mod tests {
     fn cpu005_always_present_even_with_nothing_isolated() {
         let findings = analyze(&single_socket(0.1, 0.1, 0.1), &ctx());
         let cpu005 = findings.iter().find(|f| f.id == "CPU005");
-        assert!(cpu005.is_some(), "CPU005 must always be reported, not skipped");
-        assert!(cpu005.unwrap().explanation.contains("hypervisor/host level"));
+        assert!(
+            cpu005.is_some(),
+            "CPU005 must always be reported, not skipped"
+        );
+        assert!(cpu005
+            .unwrap()
+            .explanation
+            .contains("hypervisor/host level"));
     }
 
     #[test]

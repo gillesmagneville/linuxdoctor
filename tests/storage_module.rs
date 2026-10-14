@@ -3,7 +3,9 @@
 use linuxdoctor::core::context::Context;
 use linuxdoctor::models::Severity;
 use linuxdoctor::modules::storage::analyze::analyze;
-use linuxdoctor::modules::storage::collect::{parse_inode_usage, parse_space_usage, StorageRawData};
+use linuxdoctor::modules::storage::collect::{
+    parse_inode_usage, parse_space_usage, StorageRawData,
+};
 
 fn test_context() -> Context {
     Context {

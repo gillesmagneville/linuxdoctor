@@ -168,7 +168,7 @@ pub fn collect() -> Result<CpuRawData, ModuleError> {
 /// Parse `/proc/loadavg`, e.g. "0.52 0.58 0.59 1/234 5678". Pure function,
 /// tested directly against fixture strings.
 pub fn parse_loadavg(text: &str) -> Result<(f64, f64, f64), ModuleError> {
-    let mut fields = text.trim().split_whitespace();
+    let mut fields = text.split_whitespace();
     let parse_next = |fields: &mut std::str::SplitWhitespace, which: &str| {
         fields
             .next()
@@ -533,7 +533,10 @@ model name\t: Test CPU
 
     #[test]
     fn parses_cpu_list_ranges_and_singles() {
-        assert_eq!(parse_cpu_list("0-3,8,10-12"), vec![0, 1, 2, 3, 8, 10, 11, 12]);
+        assert_eq!(
+            parse_cpu_list("0-3,8,10-12"),
+            vec![0, 1, 2, 3, 8, 10, 11, 12]
+        );
     }
 
     #[test]
@@ -552,7 +555,10 @@ model name\t: Test CPU
             std::process::id(),
             "found"
         ));
-        let nested = root.join("kubepods.slice").join("pod-abc").join("container.scope");
+        let nested = root
+            .join("kubepods.slice")
+            .join("pod-abc")
+            .join("container.scope");
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("cpuset.cpus.isolated"), "4-5\n").unwrap();
 
@@ -631,8 +637,7 @@ model name\t: Test CPU
     fn system_slice_file_absent_reports_nothing_excluded() {
         // The common case: cpuset controller never delegated to
         // system.slice because this technique isn't in use here.
-        let root = std::env::temp_dir()
-            .join("linuxdoctor_test_system_slice_never_created_at_all");
+        let root = std::env::temp_dir().join("linuxdoctor_test_system_slice_never_created_at_all");
         let online: Vec<u32> = (0..8).collect();
         assert!(read_system_slice_excluded(&root, &online).is_empty());
     }

@@ -109,8 +109,12 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         .find(|f| f.id == "GPU002" && f.instance.as_deref() == Some("card1"))
         .unwrap();
     assert_eq!(nvidia_finding.severity, Severity::Warning);
-    assert!(nvidia_finding.explanation.contains("python3 (pid 12345, 22000 MB)"));
-    assert!(nvidia_finding.explanation.contains("NVIDIA GeForce RTX 4090"));
+    assert!(nvidia_finding
+        .explanation
+        .contains("python3 (pid 12345, 22000 MB)"));
+    assert!(nvidia_finding
+        .explanation
+        .contains("NVIDIA GeForce RTX 4090"));
     // High utilization/VRAM/power on the busy card must not, on their
     // own, push severity any higher than the temperature check already
     // set it to.

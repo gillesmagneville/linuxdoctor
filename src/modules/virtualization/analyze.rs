@@ -99,14 +99,15 @@ fn vm_summary_finding(data: &VirtualizationRawData) -> Finding {
     let explanation = if !inv.available {
         format!(
             "No VM inventory available: {}.",
-            inv.unavailable_reason.as_deref().unwrap_or("virsh not found")
+            inv.unavailable_reason
+                .as_deref()
+                .unwrap_or("virsh not found")
         )
     } else {
         let total = inv.items.len();
         let running = inv.items.iter().filter(|v| v.state == "running").count();
         if total == 0 {
-            "virsh is available and reachable, but no VMs are currently defined."
-                .to_string()
+            "virsh is available and reachable, but no VMs are currently defined.".to_string()
         } else {
             format!(
                 "{total} VM{s} defined via libvirt, {running} currently running.",
@@ -196,7 +197,11 @@ fn format_vcpu_pinning(pinning: &[(u32, String)], cpu_numa_nodes: &[(u32, u32)])
                 1 => format!(" (NUMA node {})", nodes[0]),
                 _ => format!(
                     " (NUMA nodes {})",
-                    nodes.iter().map(u32::to_string).collect::<Vec<_>>().join(","),
+                    nodes
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(","),
                 ),
             };
             format!("{label}: host {affinity}{node_note}")
@@ -324,7 +329,11 @@ fn vm_detail_finding(vm: &VmInfo) -> Finding {
             " Pinned to isolated host CPU{s} {} — reserved from the general \
              host scheduler for exclusive use like this.",
             cpus.join(", "),
-            s = if vm.isolated_cpus_used.len() == 1 { "" } else { "s" },
+            s = if vm.isolated_cpus_used.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
         )
     };
     let numa_policy_note = vm
@@ -423,10 +432,15 @@ fn vm_detail_finding(vm: &VmInfo) -> Finding {
     for disk in &vm.disks {
         builder = builder.evidence(
             format!("disk:{}", disk.target),
-            disk.source.clone().unwrap_or_else(|| "unknown source".to_string()),
+            disk.source
+                .clone()
+                .unwrap_or_else(|| "unknown source".to_string()),
         );
         if let Some(cap) = disk.capacity_bytes {
-            builder = builder.evidence(format!("disk:{}:capacity_bytes", disk.target), cap.to_string());
+            builder = builder.evidence(
+                format!("disk:{}:capacity_bytes", disk.target),
+                cap.to_string(),
+            );
         }
         if let Some(alloc) = disk.allocation_bytes {
             builder = builder.evidence(
@@ -605,7 +619,9 @@ fn container_detail_finding(c: &ContainerInfo) -> Finding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::virtualization::collect::{HostDevice, HostDeviceKind, ToolInventory, VmMemoryStats, VmNetworkInterface, VmNumaPolicy};
+    use crate::modules::virtualization::collect::{
+        HostDevice, HostDeviceKind, ToolInventory, VmMemoryStats, VmNetworkInterface, VmNumaPolicy,
+    };
 
     fn ctx() -> Context {
         Context {
@@ -728,7 +744,16 @@ mod tests {
                 nodeset: "0".to_string(),
             }),
             numa_nodes_used: vec![0, 1],
-            cpu_numa_nodes: vec![(0, 0), (1, 0), (2, 0), (3, 0), (4, 1), (5, 1), (6, 1), (7, 1)],
+            cpu_numa_nodes: vec![
+                (0, 0),
+                (1, 0),
+                (2, 0),
+                (3, 0),
+                (4, 1),
+                (5, 1),
+                (6, 1),
+                (7, 1),
+            ],
             host_devices: vec![
                 HostDevice {
                     pci_address: "0000:01:00.0".to_string(),
@@ -744,8 +769,7 @@ mod tests {
                     kind: HostDeviceKind::SriovNetworkInterface,
                     mac_address: Some("52:54:00:6d:90:02".to_string()),
                     description: Some(
-                        "Ethernet controller: Intel Corporation 82576 Virtual Function"
-                            .to_string(),
+                        "Ethernet controller: Intel Corporation 82576 Virtual Function".to_string(),
                     ),
                 },
             ],
@@ -807,10 +831,7 @@ mod tests {
         assert!(virt003.explanation.contains("vCPUs 2-3: host 4-7"));
         assert!(virt003.explanation.contains("vda"));
         assert!(virt003.explanation.contains("21.0 GB allocated"));
-        assert!(virt003
-            .evidence
-            .iter()
-            .any(|(k, _)| k == "disk:vda"));
+        assert!(virt003.evidence.iter().any(|(k, _)| k == "disk:vda"));
     }
 
     #[test]
@@ -824,10 +845,16 @@ mod tests {
         };
         let findings = analyze(&d, &ctx());
         let virt003 = findings.iter().find(|f| f.id == "VIRT003").unwrap();
-        assert!(virt003.explanation.contains("NUMA policy: strict on node(s) 0"));
+        assert!(virt003
+            .explanation
+            .contains("NUMA policy: strict on node(s) 0"));
         // Per-CPU-group node is now integrated into the pinning clause itself.
-        assert!(virt003.explanation.contains("vCPUs 0-1: host 0-3 (NUMA node 0)"));
-        assert!(virt003.explanation.contains("vCPUs 2-3: host 4-7 (NUMA node 1)"));
+        assert!(virt003
+            .explanation
+            .contains("vCPUs 0-1: host 0-3 (NUMA node 0)"));
+        assert!(virt003
+            .explanation
+            .contains("vCPUs 2-3: host 4-7 (NUMA node 1)"));
         assert!(virt003.explanation.contains("span more than one NUMA node"));
         assert!(virt003
             .evidence
@@ -841,7 +868,16 @@ mod tests {
         // Genuinely single-node: both fields need to agree, not just
         // numa_nodes_used -- the per-group display reads cpu_numa_nodes.
         vm.numa_nodes_used = vec![0];
-        vm.cpu_numa_nodes = vec![(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0)];
+        vm.cpu_numa_nodes = vec![
+            (0, 0),
+            (1, 0),
+            (2, 0),
+            (3, 0),
+            (4, 0),
+            (5, 0),
+            (6, 0),
+            (7, 0),
+        ];
         let mut d = data("none", "none");
         d.vm_inventory = ToolInventory {
             runtime: Some("virsh".to_string()),
@@ -935,15 +971,15 @@ mod tests {
     fn moderate_allocation_shown_in_mb() {
         // 50 MB -- big enough that "0.0 GB" would be actively misleading,
         // small enough that GB would round away the actual magnitude.
-        assert_eq!(format_bytes_adaptive(50 * 1024 * 1024), "50.0 MB".to_string());
+        assert_eq!(
+            format_bytes_adaptive(50 * 1024 * 1024),
+            "50.0 MB".to_string()
+        );
     }
 
     #[test]
     fn large_allocation_still_shown_in_gb() {
-        assert_eq!(
-            format_bytes_adaptive(22_548_578_304),
-            "21.0 GB".to_string()
-        );
+        assert_eq!(format_bytes_adaptive(22_548_578_304), "21.0 GB".to_string());
     }
 
     #[test]
@@ -973,7 +1009,9 @@ mod tests {
         };
         let findings = analyze(&d, &ctx());
         let virt003 = findings.iter().find(|f| f.id == "VIRT003").unwrap();
-        assert!(virt003.explanation.contains("isolated host CPUs 0, 1, 2, 3"));
+        assert!(virt003
+            .explanation
+            .contains("isolated host CPUs 0, 1, 2, 3"));
         assert!(virt003
             .evidence
             .iter()

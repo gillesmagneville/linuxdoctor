@@ -4,6 +4,7 @@ use std::fs;
 
 use crate::core::command::command;
 use crate::core::error::ModuleError;
+use crate::core::parallel::parallel_map;
 
 /// Raw facts read from the system, before any interpretation. See
 /// ARCHITECTURE.md "Collectors". Deliberately includes every mounted
@@ -84,6 +85,11 @@ fn is_candidate_block_device(name: &str) -> bool {
         .any(|prefix| name.starts_with(prefix))
 }
 
+/// How many `smartctl` processes may run at once. Enough to overlap the
+/// waits on a large machine, few enough not to hammer the disks (or the
+/// process table) with dozens of simultaneous queries.
+const SMART_PARALLELISM: usize = 8;
+
 /// List candidate block device names (e.g. "sda", "nvme0n1") from
 /// `/sys/block`, filtering out pseudo/virtual ones. Missing directory
 /// (exotic kernel/container) just yields no candidates, not an error.
@@ -124,6 +130,7 @@ fn run_smartctl(device: &str) -> Option<serde_json::Value> {
     let path = format!("/dev/{device}");
     let output = command("smartctl")
         .args(["-a", "--json=c", &path])
+        .slow() // may have to spin up a sleeping disk
         .output()
         .ok()?;
     serde_json::from_slice(&output.stdout).ok()
@@ -179,8 +186,8 @@ pub fn parse_smart_json(device_path: &str, json: &serde_json::Value) -> Option<D
                 .and_then(|r| r.get("value"))
                 .and_then(|v| v.as_u64());
             match id {
-                Some(5) => reallocated_sectors = raw,   // Reallocated_Sector_Ct
-                Some(197) => pending_sectors = raw,      // Current_Pending_Sector
+                Some(5) => reallocated_sectors = raw, // Reallocated_Sector_Ct
+                Some(197) => pending_sectors = raw,   // Current_Pending_Sector
                 Some(198) => uncorrectable_sectors = raw, // Offline_Uncorrectable
                 _ => {}
             }
@@ -231,15 +238,15 @@ pub fn collect() -> Result<StorageRawData, ModuleError> {
     if smartctl_available {
         let devices = list_block_devices();
         disks_checked = devices.len();
-        for device in &devices {
-            let Some(json) = run_smartctl(device) else {
-                continue; // smartctl couldn't even produce JSON for this one
-            };
-            let path = format!("/dev/{device}");
-            if let Some(health) = parse_smart_json(&path, &json) {
-                disk_health.push(health);
-            }
-        }
+        // One smartctl per disk, several at a time: each query is
+        // independent, and on a server with a dozen disks (some of them
+        // possibly spun down) doing them one after another is what made
+        // this module the slowest part of the whole audit.
+        let readings = parallel_map(&devices, SMART_PARALLELISM, |device| {
+            let json = run_smartctl(device)?; // smartctl couldn't even produce JSON
+            parse_smart_json(&format!("/dev/{device}"), &json)
+        });
+        disk_health.extend(readings.into_iter().flatten());
     }
 
     Ok(StorageRawData {

@@ -5,10 +5,25 @@ use std::io::IsTerminal;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
-#[command(name = "linuxdoctor", version, about = "Explainable Linux health diagnostics")]
+#[command(
+    name = "linuxdoctor",
+    version,
+    about = "Explainable Linux health diagnostics"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// Longest an external tool (smartctl, virsh, docker, nvidia-smi...)
+    /// may run, in seconds, before LinuxDoctor stops it and reports the
+    /// module's data as incomplete. Default: 10.
+    #[arg(
+        long,
+        global = true,
+        value_name = "SECONDS",
+        value_parser = clap::value_parser!(u64).range(1..=3600)
+    )]
+    pub timeout: Option<u64>,
 }
 
 #[derive(Subcommand)]
@@ -68,15 +83,13 @@ impl Cli {
     /// `resolved_command()` itself can't be meaningfully unit-tested for
     /// the interactive branch — this can, deterministically, for both.
     fn resolved_command_with(self, interactive: bool) -> Command {
-        self.command.unwrap_or_else(|| {
-            if interactive {
-                Command::Tui(TuiArgs { modules: None })
-            } else {
-                Command::Audit(AuditArgs {
-                    modules: None,
-                    output: OutputFormat::Terminal,
-                })
-            }
+        self.command.unwrap_or(if interactive {
+            Command::Tui(TuiArgs { modules: None })
+        } else {
+            Command::Audit(AuditArgs {
+                modules: None,
+                output: OutputFormat::Terminal,
+            })
         })
     }
 }
@@ -87,13 +100,19 @@ mod tests {
 
     #[test]
     fn no_subcommand_resolves_to_tui_when_interactive() {
-        let cli = Cli { command: None };
+        let cli = Cli {
+            command: None,
+            timeout: None,
+        };
         assert!(matches!(cli.resolved_command_with(true), Command::Tui(_)));
     }
 
     #[test]
     fn no_subcommand_resolves_to_audit_when_not_interactive() {
-        let cli = Cli { command: None };
+        let cli = Cli {
+            command: None,
+            timeout: None,
+        };
         assert!(matches!(
             cli.resolved_command_with(false),
             Command::Audit(_)
@@ -110,6 +129,7 @@ mod tests {
                 modules: None,
                 output: OutputFormat::Json,
             })),
+            timeout: None,
         };
         let resolved = cli.resolved_command_with(true);
         assert!(matches!(resolved, Command::Audit(_)));
@@ -124,11 +144,35 @@ mod tests {
             command: Some(Command::Tui(TuiArgs {
                 modules: Some(vec!["memory".to_string()]),
             })),
+            timeout: None,
         };
         let resolved = cli.resolved_command_with(false);
         assert!(matches!(resolved, Command::Tui(_)));
         if let Command::Tui(args) = resolved {
             assert_eq!(args.modules, Some(vec!["memory".to_string()]));
         }
+    }
+
+    #[test]
+    fn timeout_is_accepted_before_or_after_the_subcommand() {
+        let before = Cli::try_parse_from(["linuxdoctor", "--timeout", "30", "audit"]).unwrap();
+        assert_eq!(before.timeout, Some(30));
+        let after = Cli::try_parse_from(["linuxdoctor", "audit", "--timeout", "30"]).unwrap();
+        assert_eq!(after.timeout, Some(30));
+        let bare = Cli::try_parse_from(["linuxdoctor", "--timeout", "7"]).unwrap();
+        assert_eq!(bare.timeout, Some(7));
+    }
+
+    #[test]
+    fn timeout_defaults_to_unset() {
+        let cli = Cli::try_parse_from(["linuxdoctor", "audit"]).unwrap();
+        assert_eq!(cli.timeout, None);
+    }
+
+    #[test]
+    fn timeout_rejects_zero_and_non_numbers() {
+        assert!(Cli::try_parse_from(["linuxdoctor", "--timeout", "0"]).is_err());
+        assert!(Cli::try_parse_from(["linuxdoctor", "--timeout", "abc"]).is_err());
+        assert!(Cli::try_parse_from(["linuxdoctor", "--timeout", "99999"]).is_err());
     }
 }

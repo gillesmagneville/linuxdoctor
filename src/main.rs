@@ -4,6 +4,7 @@ mod cli;
 
 use clap::Parser;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use cli::{Cli, Command, OutputFormat};
 use linuxdoctor::core;
@@ -11,7 +12,11 @@ use linuxdoctor::models::Severity;
 use linuxdoctor::output;
 
 fn main() -> ExitCode {
-    match Cli::parse().resolved_command() {
+    let cli = Cli::parse();
+    if let Some(seconds) = cli.timeout {
+        core::command::set_default_timeout(Duration::from_secs(seconds));
+    }
+    match cli.resolved_command() {
         Command::Audit(args) => run_audit_command(args.modules, args.output),
         Command::Tui(args) => run_tui_command(args.modules),
     }

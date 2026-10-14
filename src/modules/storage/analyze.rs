@@ -189,8 +189,7 @@ fn smart_summary_finding(data: &StorageRawData) -> Finding {
          (SMART) couldn't be checked for any device."
             .to_string()
     } else if checked == 0 {
-        "No candidate storage devices were found under /sys/block to check."
-            .to_string()
+        "No candidate storage devices were found under /sys/block to check.".to_string()
     } else if capable == 0 {
         let priv_note = if !data.running_as_root {
             " This may also be a permissions issue — SMART queries \
@@ -245,13 +244,24 @@ fn smart_health_finding(disk: &DiskHealth) -> Finding {
 
     if let Some(n) = disk.reallocated_sectors {
         if n > 0 {
-            severity = severity.max(if n >= 10 { Severity::Error } else { Severity::Warning });
-            concerns.push(format!("{n} reallocated sector{s}", s = if n == 1 { "" } else { "s" }));
+            severity = severity.max(if n >= 10 {
+                Severity::Error
+            } else {
+                Severity::Warning
+            });
+            concerns.push(format!(
+                "{n} reallocated sector{s}",
+                s = if n == 1 { "" } else { "s" }
+            ));
         }
     }
     if let Some(n) = disk.pending_sectors {
         if n > 0 {
-            severity = severity.max(if n >= 10 { Severity::Error } else { Severity::Warning });
+            severity = severity.max(if n >= 10 {
+                Severity::Error
+            } else {
+                Severity::Warning
+            });
             concerns.push(format!(
                 "{n} pending sector{s} awaiting reallocation",
                 s = if n == 1 { "" } else { "s" }
@@ -261,7 +271,10 @@ fn smart_health_finding(disk: &DiskHealth) -> Finding {
     if let Some(n) = disk.uncorrectable_sectors {
         if n > 0 {
             severity = severity.max(Severity::Error);
-            concerns.push(format!("{n} uncorrectable sector{s}", s = if n == 1 { "" } else { "s" }));
+            concerns.push(format!(
+                "{n} uncorrectable sector{s}",
+                s = if n == 1 { "" } else { "s" }
+            ));
         }
     }
     if let Some(cw) = disk.nvme_critical_warning {
@@ -282,7 +295,10 @@ fn smart_health_finding(disk: &DiskHealth) -> Finding {
     if let Some(n) = disk.nvme_media_errors {
         if n > 0 {
             severity = severity.max(Severity::Warning);
-            concerns.push(format!("{n} media error{s} logged", s = if n == 1 { "" } else { "s" }));
+            concerns.push(format!(
+                "{n} media error{s} logged",
+                s = if n == 1 { "" } else { "s" }
+            ));
         }
     }
 

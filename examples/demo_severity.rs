@@ -34,6 +34,7 @@ fn main() {
         swappiness: 10,
         dirty_ratio: 20,
         dirty_background_ratio: 10,
+        ..Default::default()
     };
 
     let findings = analyze(&critical_data, &ctx);
@@ -44,6 +45,7 @@ fn main() {
             findings,
             error: None,
             skipped: false,
+            notes: Vec::new(),
         }],
     };
 

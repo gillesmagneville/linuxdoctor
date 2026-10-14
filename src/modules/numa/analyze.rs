@@ -345,7 +345,10 @@ mod tests {
         };
         let findings = analyze(&data, &ctx());
         let numa002 = findings.iter().find(|f| f.id == "NUMA002");
-        assert!(numa002.is_some(), "NUMA002 must always be reported, not skipped");
+        assert!(
+            numa002.is_some(),
+            "NUMA002 must always be reported, not skipped"
+        );
         assert_eq!(numa002.unwrap().severity, Severity::Info);
     }
 

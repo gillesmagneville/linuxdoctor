@@ -96,7 +96,7 @@ fn read_memory_percent() -> Option<(f64, f64, f64)> {
         let Some((key, rest)) = line.split_once(':') else {
             continue;
         };
-        let Some(value_str) = rest.trim().split_whitespace().next() else {
+        let Some(value_str) = rest.split_whitespace().next() else {
             continue;
         };
         let Ok(value) = value_str.parse::<u64>() else {

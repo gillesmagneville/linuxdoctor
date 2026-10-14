@@ -71,7 +71,7 @@ fn read_mem_total_kb() -> Option<u64> {
     let text = fs::read_to_string("/proc/meminfo").ok()?;
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("MemTotal:") {
-            return rest.trim().split_whitespace().next()?.parse().ok();
+            return rest.split_whitespace().next()?.parse().ok();
         }
     }
     None

@@ -238,7 +238,10 @@ fn default_gateway_finding(data: &NetworkRawData) -> Finding {
         severity,
         Confidence::direct_observation(),
     )
-    .evidence("has_default_route", data.route.has_default_route.to_string());
+    .evidence(
+        "has_default_route",
+        data.route.has_default_route.to_string(),
+    );
 
     if let Some(gw) = &data.route.default_gateway {
         builder = builder.evidence("gateway", gw.clone());
@@ -330,7 +333,8 @@ mod tests {
             tx_errors: 0,
             tx_dropped: 0,
         }
-    }    fn route(has_default: bool) -> RouteInfo {
+    }
+    fn route(has_default: bool) -> RouteInfo {
         RouteInfo {
             has_default_route: has_default,
             default_gateway: if has_default {

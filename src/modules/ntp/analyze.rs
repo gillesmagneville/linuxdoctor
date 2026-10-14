@@ -97,15 +97,13 @@ fn sync_status_finding(data: &NtpRawData) -> Finding {
 /// systems. Purely informational context, not a verdict.
 fn rtc_mode_finding(data: &NtpRawData) -> Finding {
     let explanation = match data.local_rtc {
-        Some(true) => {
-            "The hardware clock (RTC) is kept in local time rather than \
+        Some(true) => "The hardware clock (RTC) is kept in local time rather than \
              UTC. This is a common, deliberate setting on systems that \
              dual-boot Windows (which historically assumes local-time RTC) \
              — worth confirming that's the reason here, since a \
              local-time RTC can cause clock jumps around daylight saving \
              time changes."
-                .to_string()
-        }
+            .to_string(),
         Some(false) => "The hardware clock (RTC) is kept in UTC, the \
              recommended default — avoids daylight-saving-time-related \
              clock jumps."

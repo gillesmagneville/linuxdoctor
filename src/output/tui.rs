@@ -36,7 +36,9 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -109,9 +111,8 @@ impl TuiApp {
         let selected_id = self.selected_module().map(|r| r.module_id);
         self.report = new_report;
 
-        let new_index = selected_id.and_then(|id| {
-            self.report.results.iter().position(|r| r.module_id == id)
-        });
+        let new_index =
+            selected_id.and_then(|id| self.report.results.iter().position(|r| r.module_id == id));
         if self.report.results.is_empty() {
             self.module_state.select(None);
         } else {
@@ -305,6 +306,13 @@ fn module_status(result: &ModuleRunResult) -> (&'static str, Color) {
     }
     match result.findings.iter().map(|f| f.severity).max() {
         Some(sev) if sev > Severity::Info => (sev.symbol(), severity_color(sev)),
+        // A module whose commands were cut short may simply be missing
+        // the finding that would have turned it red: a green check would
+        // claim more than the data supports.
+        _ if !result.notes.is_empty() => (
+            Severity::Warning.symbol(),
+            severity_color(Severity::Warning),
+        ),
         _ => (Severity::Info.symbol(), severity_color(Severity::Info)),
     }
 }
@@ -412,8 +420,7 @@ fn draw_header(f: &mut Frame, app: &TuiApp, area: Rect) {
     ));
     let line2 = Line::from(stats);
 
-    let header =
-        Paragraph::new(vec![line1, line2]).block(Block::default().borders(Borders::ALL));
+    let header = Paragraph::new(vec![line1, line2]).block(Block::default().borders(Borders::ALL));
     f.render_widget(header, area);
 }
 
@@ -471,8 +478,11 @@ fn draw_detail_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
     };
 
     if result.skipped {
-        let detail = Paragraph::new("Skipped: not applicable to this system.")
-            .block(Block::default().borders(Borders::ALL).title(result.module_id));
+        let detail = Paragraph::new("Skipped: not applicable to this system.").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(result.module_id),
+        );
         f.render_widget(detail, area);
         return;
     }
@@ -481,7 +491,11 @@ fn draw_detail_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
             format!("Error: {err}"),
             Style::default().fg(Color::Red),
         )))
-        .block(Block::default().borders(Borders::ALL).title(result.module_id));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(result.module_id),
+        );
         f.render_widget(detail, area);
         return;
     }
@@ -528,12 +542,47 @@ fn draw_detail_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
         )
     };
 
+    // Module-level incidents belong on the module's own page, not on each
+    // of its sub-items.
+    let inside_submenu =
+        items.len() >= MIN_ITEMS_FOR_SUBMENU && matches!(app.focus, Focus::Submenu);
+    let lines = if inside_submenu {
+        lines
+    } else {
+        let mut banner = notes_banner(result);
+        banner.extend(lines);
+        banner
+    };
+
     let detail = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: false })
         .scroll((app.detail_scroll, 0));
 
     f.render_widget(detail, area);
+}
+
+/// Yellow warning block listing why a module's data may be incomplete
+/// (today: external commands stopped after the time limit). Empty — and
+/// therefore invisible — on a healthy run.
+fn notes_banner(result: &ModuleRunResult) -> Vec<Line<'static>> {
+    if result.notes.is_empty() {
+        return Vec::new();
+    }
+    let warn = Style::default().fg(Color::Yellow);
+    let mut lines = vec![Line::from(Span::styled(
+        "\u{26a0} Some data may be missing from this module:",
+        warn.add_modifier(Modifier::BOLD),
+    ))];
+    for note in &result.notes {
+        lines.push(Line::from(Span::styled(format!("  \u{2022} {note}"), warn)));
+    }
+    lines.push(Line::from(Span::styled(
+        "  Raise the limit with --timeout <seconds> if the tool is just slow.",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+    lines
 }
 
 fn render_findings<'f>(findings: impl Iterator<Item = &'f Finding>) -> Vec<Line<'static>> {
@@ -570,15 +619,17 @@ fn render_findings<'f>(findings: impl Iterator<Item = &'f Finding>) -> Vec<Line<
         }
 
         if !f.explanation.is_empty() {
-            lines.push(Line::from(f.explanation.clone()));
+            // Explanations may hold several paragraphs and small tables:
+            // one terminal line per text line, since a newline inside a
+            // single `Line` would not be drawn as a line break.
+            for text_line in f.explanation.lines() {
+                lines.push(Line::from(text_line.to_string()));
+            }
             lines.push(Line::from(""));
         }
 
         if let Some(rec) = &f.recommendation {
-            lines.push(Line::from(Span::styled(
-                format!("Recommendation: {rec}"),
-                Style::default().fg(Color::DarkGray),
-            )));
+            lines.extend(recommendation_lines(rec));
             lines.push(Line::from(""));
         }
 
@@ -592,12 +643,59 @@ fn render_findings<'f>(findings: impl Iterator<Item = &'f Finding>) -> Vec<Line<
     lines
 }
 
+/// A single-line recommendation keeps the compact "Recommendation: ..."
+/// form. A multi-line one (numbered steps with commands on their own
+/// indented lines) gets a heading, with the commands in a distinct colour
+/// so they stand out from the prose and can be copied as they are.
+fn recommendation_lines(rec: &str) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(Color::DarkGray);
+    if !rec.contains('\n') {
+        return vec![Line::from(Span::styled(
+            format!("Recommendation: {rec}"),
+            dim,
+        ))];
+    }
+    let mut lines = vec![Line::from(Span::styled(
+        "Recommendation:",
+        Style::default().add_modifier(Modifier::BOLD),
+    ))];
+    for text_line in rec.lines() {
+        let style = if text_line.starts_with("    ") {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(text_line.to_string(), style)));
+    }
+    lines
+}
+
+/// How many still-running module names the progress label spells out
+/// before collapsing the rest into "+N" — at the start of a scan every
+/// module is pending, and a list of eleven names would overflow the gauge.
+const PENDING_NAMES_SHOWN: usize = 3;
+
+/// "storage, virtualization" / "memory, cpu, numa +8".
+fn summarize_pending(pending: &[&str]) -> String {
+    if pending.len() <= PENDING_NAMES_SHOWN {
+        pending.join(", ")
+    } else {
+        format!(
+            "{} +{}",
+            pending[..PENDING_NAMES_SHOWN].join(", "),
+            pending.len() - PENDING_NAMES_SHOWN
+        )
+    }
+}
+
 /// The startup/refresh loading screen: a centered gauge that fills in as
-/// each module completes, plus the name of whichever module is currently
-/// running. Exists specifically so a scan with a slow module (SMART's
-/// per-device `smartctl` calls, Virtualization's `virsh`/`docker` calls)
-/// never looks like a frozen terminal.
-pub fn draw_progress_screen(f: &mut Frame, index: usize, total: usize, current_module: &str) {
+/// each module completes, plus the names of the modules still running.
+/// Modules run concurrently, so there is no single "current" module —
+/// what a user waiting on a slow one wants to know is *which* ones are
+/// holding things up (SMART's per-device `smartctl` calls,
+/// Virtualization's `virsh`/`docker` calls). Exists specifically so a
+/// slow scan never looks like a frozen terminal.
+pub fn draw_progress_screen(f: &mut Frame, done: usize, total: usize, pending: &[&str]) {
     let area = f.size();
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -618,14 +716,17 @@ pub fn draw_progress_screen(f: &mut Frame, index: usize, total: usize, current_m
     let ratio = if total == 0 {
         0.0
     } else {
-        (index as f64 / total as f64).clamp(0.0, 1.0)
+        (done as f64 / total as f64).clamp(0.0, 1.0)
     };
     let label = if total == 0 {
         "No modules selected".to_string()
-    } else if index >= total {
+    } else if done >= total {
         "Finalizing\u{2026}".to_string()
     } else {
-        format!("Scanning {current_module}\u{2026} ({}/{})", index + 1, total)
+        format!(
+            "{done}/{total} done \u{2014} waiting for {}",
+            summarize_pending(pending)
+        )
     };
 
     let gauge = Gauge::default()
@@ -644,8 +745,8 @@ fn run_scan_with_progress<B: Backend>(
     terminal: &mut Terminal<B>,
     selected_ids: Option<&[String]>,
 ) -> io::Result<Report> {
-    run_audit_with_progress(selected_ids, |index, total, module_id| {
-        let _ = terminal.draw(|f| draw_progress_screen(f, index, total, module_id));
+    run_audit_with_progress(selected_ids, |done, total, pending| {
+        let _ = terminal.draw(|f| draw_progress_screen(f, done, total, pending));
     })
     .map_err(|e| io::Error::other(e.to_string()))
 }
@@ -761,6 +862,7 @@ mod tests {
                 findings: vec![finding],
                 error: None,
                 skipped: false,
+                notes: Vec::new(),
             }],
         }
     }
@@ -807,6 +909,7 @@ mod tests {
                 findings: vec![global, socket0, socket1],
                 error: None,
                 skipped: false,
+                notes: Vec::new(),
             }],
         }
     }
@@ -831,12 +934,14 @@ mod tests {
                     findings: vec![],
                     error: None,
                     skipped: false,
+                    notes: Vec::new(),
                 },
                 ModuleRunResult {
                     module_id: "network",
                     findings: vec![finding],
                     error: None,
                     skipped: false,
+                    notes: Vec::new(),
                 },
             ],
         }
@@ -891,6 +996,67 @@ mod tests {
         assert!(app.live_stats.mem_percent.is_some());
     }
 
+    fn plain(lines: &[Line<'_>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn multi_paragraph_explanations_become_separate_lines() {
+        let f = Finding::builder(
+            "MEM007",
+            "Used Memory",
+            Category::Memory,
+            Severity::Info,
+            Confidence::direct_observation(),
+        )
+        .explanation("First paragraph.\n\nTable:\n  Programs   5.0 GB\n  Free       4.0 GB")
+        .build();
+        let lines = plain(&render_findings(std::iter::once(&f)));
+        assert!(lines.iter().all(|l| !l.contains('\n')), "{lines:?}");
+        assert!(
+            lines.contains(&"  Programs   5.0 GB".to_string()),
+            "{lines:?}"
+        );
+        assert!(lines.contains(&"Table:".to_string()), "{lines:?}");
+    }
+
+    #[test]
+    fn numbered_recommendation_gets_a_heading_and_keeps_command_indentation() {
+        let lines = plain(&recommendation_lines(
+            "1. Do this:\n    sudo thing\n2. Then that.",
+        ));
+        assert_eq!(
+            lines,
+            [
+                "Recommendation:",
+                "1. Do this:",
+                "    sudo thing",
+                "2. Then that."
+            ]
+        );
+    }
+
+    #[test]
+    fn one_line_recommendation_keeps_the_compact_form() {
+        let lines = plain(&recommendation_lines("Check the logs."));
+        assert_eq!(lines, ["Recommendation: Check the logs."]);
+    }
+
+    #[test]
+    fn commands_are_coloured_apart_from_the_prose() {
+        let lines = recommendation_lines("1. Do this:\n    sudo thing");
+        assert_ne!(lines[1].spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(lines[2].spans[0].style.fg, Some(Color::Cyan));
+    }
+
     #[test]
     fn navigation_wraps_around() {
         let mut app = TuiApp::new(flat_report());
@@ -912,14 +1078,21 @@ mod tests {
     fn two_instance_module_has_submenu() {
         let app = TuiApp::new(report_with_submenu());
         assert!(app.has_submenu());
-        assert_eq!(app.submenu_items(), vec!["socket 0".to_string(), "socket 1".to_string()]);
+        assert_eq!(
+            app.submenu_items(),
+            vec!["socket 0".to_string(), "socket 1".to_string()]
+        );
     }
 
     #[test]
     fn drill_in_only_works_when_submenu_exists() {
         let mut app = TuiApp::new(flat_report());
         app.drill_in();
-        assert_eq!(app.focus, Focus::Modules, "no submenu here, drill_in should no-op");
+        assert_eq!(
+            app.focus,
+            Focus::Modules,
+            "no submenu here, drill_in should no-op"
+        );
 
         let mut app2 = TuiApp::new(report_with_submenu());
         app2.drill_in();
@@ -930,7 +1103,10 @@ mod tests {
     #[test]
     fn back_out_returns_false_at_top_level() {
         let mut app = TuiApp::new(report_with_submenu());
-        assert!(!app.back_out(), "already at top level, nothing to back out of");
+        assert!(
+            !app.back_out(),
+            "already at top level, nothing to back out of"
+        );
         app.drill_in();
         assert!(app.back_out(), "should back out of the submenu");
         assert_eq!(app.focus, Focus::Modules);
@@ -1026,7 +1202,7 @@ mod tests {
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|f| draw_progress_screen(f, 2, 5, "storage"))
+            .draw(|f| draw_progress_screen(f, 2, 5, &["storage", "virtualization", "gpu"]))
             .unwrap();
         let content: String = terminal
             .backend()
@@ -1036,14 +1212,16 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(content.contains("storage"));
-        assert!(content.contains("3/5"));
+        assert!(content.contains("2/5 done"), "{content}");
     }
 
     #[test]
     fn progress_screen_handles_completion() {
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| draw_progress_screen(f, 5, 5, "")).unwrap();
+        terminal
+            .draw(|f| draw_progress_screen(f, 5, 5, &[]))
+            .unwrap();
         let content: String = terminal
             .backend()
             .buffer()
@@ -1052,5 +1230,57 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(content.contains("Finalizing"));
+    }
+    #[test]
+    fn pending_names_are_listed_then_collapsed() {
+        assert_eq!(summarize_pending(&[]), "");
+        assert_eq!(summarize_pending(&["gpu"]), "gpu");
+        assert_eq!(summarize_pending(&["a", "b", "c"]), "a, b, c");
+        assert_eq!(summarize_pending(&["a", "b", "c", "d", "e"]), "a, b, c +2");
+    }
+
+    #[test]
+    fn module_with_notes_is_not_shown_as_a_clean_green_check() {
+        let mut clean = ModuleRunResult {
+            module_id: "storage",
+            findings: Vec::new(),
+            error: None,
+            skipped: false,
+            notes: Vec::new(),
+        };
+        assert_eq!(module_status(&clean).0, Severity::Info.symbol());
+        clean
+            .notes
+            .push("'smartctl' did not finish within 20s and was stopped".into());
+        assert_eq!(module_status(&clean).0, Severity::Warning.symbol());
+    }
+
+    #[test]
+    fn notes_banner_is_empty_when_healthy_and_explains_the_remedy_otherwise() {
+        let mut result = ModuleRunResult {
+            module_id: "gpu",
+            findings: Vec::new(),
+            error: None,
+            skipped: false,
+            notes: Vec::new(),
+        };
+        assert!(notes_banner(&result).is_empty());
+
+        result
+            .notes
+            .push("'nvidia-smi' did not finish within 20s and was stopped".into());
+        let text: String = notes_banner(&result)
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Some data may be missing"), "{text}");
+        assert!(text.contains("'nvidia-smi' did not finish"), "{text}");
+        assert!(text.contains("--timeout"), "{text}");
     }
 }

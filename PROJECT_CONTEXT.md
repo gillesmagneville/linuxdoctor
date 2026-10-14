@@ -208,8 +208,9 @@ The output should be readable by humans.
 Machine-readable formats should also be available:
 
 * JSON (v1)
+* Markdown report
+* HTML report (self-contained single page)
 * YAML (future)
-* HTML report (future)
 
 ---
 
@@ -326,8 +327,7 @@ Swap = 2.1 GB
 
 Future versions may include:
 
-* HTML reports
-* Trend comparison
+* Trend comparison (diff between two JSON reports)
 * Configuration snapshots
 * Interactive TUI
 * Plugin system

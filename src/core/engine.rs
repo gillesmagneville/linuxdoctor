@@ -55,6 +55,24 @@ impl Report {
     pub fn highest_severity(&self) -> Option<crate::models::Severity> {
         self.all_findings().map(|f| f.severity).max()
     }
+
+    /// How many findings are at `min` severity or worse.
+    pub fn count_at_or_above(&self, min: crate::models::Severity) -> usize {
+        self.all_findings().filter(|f| f.severity >= min).count()
+    }
+
+    /// Drops every finding below `min` and returns how many were dropped.
+    /// A display filter: module errors, skips and notes are left alone, so
+    /// nothing about *whether the audit worked* is ever hidden.
+    pub fn retain_at_or_above(&mut self, min: crate::models::Severity) -> usize {
+        let mut dropped = 0;
+        for result in &mut self.results {
+            let before = result.findings.len();
+            result.findings.retain(|f| f.severity >= min);
+            dropped += before - result.findings.len();
+        }
+        dropped
+    }
 }
 
 /// Best-effort text of a panic payload (`panic!("literal")` carries a
@@ -409,5 +427,101 @@ mod tests {
         });
         assert!(results.is_empty());
         assert_eq!(calls, 1);
+    }
+}
+
+#[cfg(test)]
+mod report_filter_tests {
+    use super::*;
+    use crate::models::{Category, Confidence, Severity};
+
+    fn finding(id: &str, severity: Severity) -> Finding {
+        Finding::builder(
+            id,
+            "title",
+            Category::Memory,
+            severity,
+            Confidence::direct_observation(),
+        )
+        .build()
+    }
+
+    fn result(id: &'static str, findings: Vec<Finding>) -> ModuleRunResult {
+        ModuleRunResult {
+            module_id: id,
+            findings,
+            error: None,
+            skipped: false,
+            notes: vec![],
+        }
+    }
+
+    fn report() -> Report {
+        let mut failed = result("net", vec![]);
+        failed.error = Some("boom".into());
+        let mut skipped = result("ntp", vec![]);
+        skipped.skipped = true;
+        let mut noted = result("gpu", vec![finding("G1", Severity::Info)]);
+        noted.notes = vec!["nvidia-smi did not finish".into()];
+        Report {
+            context: Context {
+                hostname: "h".into(),
+                kernel_version: "6".into(),
+                distro: None,
+                architecture: "x86_64".into(),
+                cpu_count: 1,
+                mem_total_kb: 1024,
+                boot_time_unix: 0,
+            },
+            results: vec![
+                result(
+                    "memory",
+                    vec![
+                        finding("M1", Severity::Info),
+                        finding("M2", Severity::Warning),
+                        finding("M3", Severity::Critical),
+                    ],
+                ),
+                result("cpu", vec![finding("C1", Severity::Error)]),
+                failed,
+                skipped,
+                noted,
+            ],
+        }
+    }
+
+    #[test]
+    fn counts_findings_at_or_above_a_level() {
+        let r = report();
+        assert_eq!(r.count_at_or_above(Severity::Info), 5);
+        assert_eq!(r.count_at_or_above(Severity::Warning), 3);
+        assert_eq!(r.count_at_or_above(Severity::Error), 2);
+        assert_eq!(r.count_at_or_above(Severity::Critical), 1);
+    }
+
+    #[test]
+    fn retain_drops_lower_findings_and_reports_how_many() {
+        let mut r = report();
+        assert_eq!(r.retain_at_or_above(Severity::Error), 3);
+        let ids: Vec<&str> = r.all_findings().map(|f| f.id.as_str()).collect();
+        assert_eq!(ids, ["M3", "C1"]);
+    }
+
+    #[test]
+    fn retain_info_changes_nothing() {
+        let mut r = report();
+        assert_eq!(r.retain_at_or_above(Severity::Info), 0);
+        assert_eq!(r.all_findings().count(), 5);
+    }
+
+    #[test]
+    fn retain_never_hides_errors_skips_or_notes() {
+        let mut r = report();
+        r.retain_at_or_above(Severity::Critical);
+        assert_eq!(r.results.len(), 5, "no module disappears");
+        assert_eq!(r.results[2].error.as_deref(), Some("boom"));
+        assert!(r.results[3].skipped);
+        assert_eq!(r.results[4].notes.len(), 1);
+        assert!(r.results[4].findings.is_empty());
     }
 }

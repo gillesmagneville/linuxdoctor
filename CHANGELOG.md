@@ -9,6 +9,66 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **Rapport Markdown** : `linuxdoctor audit --output markdown` (alias `md`)
+  produit un document complet — en-tête (machine, date, version), tableau
+  récapitulatif par module, puis chaque constat avec sa gravité, sa
+  confiance, ses preuves, son explication et ses recommandations (étapes
+  numérotées, commandes dans des blocs `bash`). Les tableaux alignés par
+  les modules sont rendus en blocs de code pour garder leurs colonnes. Tout
+  texte venant de la machine (nom d'hôte, noms de processus, messages
+  d'erreur des outils) est échappé : il ne peut pas casser la mise en page
+  ni injecter de balise.
+- **Rapport HTML** : `linuxdoctor audit --output html` produit une page
+  unique et autonome (CSS intégré, aucun JavaScript, aucun fichier ni accès
+  réseau externe), thèmes clair et sombre, lisible jusque sur téléphone,
+  avec des constats repliables (ouverts à partir de Warning). La gravité
+  n'est jamais indiquée par la seule couleur. Les chaînes dynamiques sont
+  échappées et la page porte une `Content-Security-Policy` stricte.
+- **`--min-severity info|warning|error|critical`** (`audit`) : filtre
+  d'**affichage** qui masque les constats moins graves. Il ne cache jamais
+  un module en erreur, ignoré ou aux données incomplètes, et tous les
+  formats indiquent combien de constats ont été masqués (ligne finale en
+  terminal, bandeau « Filtered view » en Markdown et HTML, objet `filter`
+  en JSON).
+- **`--fail-on info|warning|error|critical|never`** (`audit`) : seuil du
+  **code de sortie**. Le code 1 est renvoyé dès qu'un constat atteint le
+  seuil ; `never` renvoie toujours 0. Le verdict porte sur le rapport
+  **complet**, avant le filtre d'affichage : masquer des constats ne peut
+  pas transformer un audit en échec en audit réussi. Quand l'option est
+  donnée explicitement, une phrase sur la sortie d'erreur explique l'échec
+  (la sortie standard reste un JSON/Markdown/HTML propre).
+- **Clé `filter` dans le JSON** (uniquement quand `--min-severity` est
+  utilisé) : `{"min_severity": "...", "hidden_findings": N}`, juste après
+  `schema_version`. Ajout d'un champ : `schema_version` reste à 1.
+- Modules `core::gate` (décision de réussite/échec), `output::common`
+  (éléments partagés par les rendus-documents) et `output::markdown` /
+  `output::html`.
+
+### Modifié
+
+- Le code de sortie passe par `core::gate`. Sans `--fail-on`, le comportement
+  est inchangé : code 1 dès qu'un constat Error ou Critical existe (et
+  pour une erreur d'exécution), code 2 pour une erreur d'utilisation.
+  `linuxdoctor tui` garde ce seuil par défaut et n'a pas les nouvelles options.
+- Un module dont un outil a été interrompu (« données incomplètes ») est
+  présenté en Markdown/HTML comme « ⚠ Incomplete data » et non comme « OK »,
+  comme dans le terminal.
+
+### Tests
+
+- `tests/export_and_gate.rs` : 14 tests de bout en bout avec le vrai binaire
+  (formats Markdown/HTML, alias `md`, `--min-severity`, `--fail-on`, code de
+  sortie pour chaque seuil, le filtre d'affichage ne change jamais le code de
+  sortie, erreurs d'utilisation = code 2).
+- Tests unitaires des rendus (échappement de contenu hostile, balises
+  autorisées dans le HTML, structure des tableaux/blocs de code), de
+  `core::gate`, du filtrage du rapport et de l'analyse des arguments.
+- Les rendus ont aussi été validés avec un analyseur CommonMark, un analyseur
+  HTML5 strict et un navigateur sans interface (clair, sombre, largeur de
+  téléphone).
+
 ## 2026-10-14
 
 ### Ajouté

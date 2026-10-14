@@ -3,6 +3,8 @@
 use crate::core::engine::Report;
 use crate::models::Severity;
 
+use super::common::RenderMeta;
+
 const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[2m";
 const BOLD: &str = "\x1b[1m";
@@ -11,6 +13,11 @@ const BOLD: &str = "\x1b[1m";
 /// `Finding`s it's given — never computes severity, confidence, or
 /// evidence itself. See ARCHITECTURE.md "Output Engine".
 pub fn render(report: &Report) -> String {
+    render_with(report, &RenderMeta::default())
+}
+
+/// Like `render`, adding a closing line when `--min-severity` hid findings.
+pub fn render_with(report: &Report, meta: &RenderMeta) -> String {
     let mut out = String::new();
 
     out.push_str(&format!(
@@ -70,6 +77,15 @@ pub fn render(report: &Report) -> String {
     {
         out.push_str(&render_finding(finding));
         out.push('\n');
+    }
+
+    if let Some(filter) = &meta.filter {
+        out.push_str(&format!(
+            "{DIM}{} finding(s) below {} hidden (--min-severity {}){RESET}\n",
+            filter.hidden,
+            filter.min_severity,
+            filter.min_severity.to_string().to_lowercase()
+        ));
     }
 
     out

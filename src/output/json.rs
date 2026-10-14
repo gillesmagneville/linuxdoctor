@@ -3,6 +3,9 @@
 use serde::Serialize;
 
 use crate::core::engine::Report;
+use crate::models::Severity;
+
+use super::common::RenderMeta;
 
 /// Version of the JSON report layout, emitted as the top-level
 /// `schema_version` field so scripts can check what they are reading.
@@ -12,12 +15,22 @@ use crate::core::engine::Report;
 /// value means, bumps it by one. See ARCHITECTURE.md "JSON Renderer".
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Present only when `--min-severity` removed findings, so a filtered
+/// report can never be mistaken for a complete one.
+#[derive(Serialize)]
+struct FilterJson {
+    min_severity: Severity,
+    hidden_findings: usize,
+}
+
 /// The report plus its schema version. `schema_version` comes first in the
 /// output so it is the first thing a human or a streaming parser sees; the
 /// report's own fields follow unchanged at the same level.
 #[derive(Serialize)]
 struct Envelope<'a> {
     schema_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    filter: Option<FilterJson>,
     #[serde(flatten)]
     report: &'a Report,
 }
@@ -25,8 +38,18 @@ struct Envelope<'a> {
 /// Serializes a Report to pretty JSON. Formatting only — no diagnostics.
 /// See ARCHITECTURE.md "Output Engine" / "JSON Renderer".
 pub fn render(report: &Report) -> serde_json::Result<String> {
+    render_with(report, &RenderMeta::default())
+}
+
+/// Like `render`, also recording a `--min-severity` filter when one was
+/// applied (`filter: { min_severity, hidden_findings }`).
+pub fn render_with(report: &Report, meta: &RenderMeta) -> serde_json::Result<String> {
     serde_json::to_string_pretty(&Envelope {
         schema_version: SCHEMA_VERSION,
+        filter: meta.filter.map(|f| FilterJson {
+            min_severity: f.min_severity,
+            hidden_findings: f.hidden,
+        }),
         report,
     })
 }
@@ -99,6 +122,31 @@ mod tests {
         assert_eq!(json["results"][0]["module_id"], "memory");
         assert_eq!(json["results"][0]["findings"][0]["id"], "MEM001");
         assert!(json["results"][0]["notes"].is_array());
+    }
+
+    #[test]
+    fn unfiltered_report_has_no_filter_key() {
+        assert!(parsed(&report()).get("filter").is_none());
+    }
+
+    #[test]
+    fn filtered_report_records_the_filter_after_the_version() {
+        use crate::output::common::FilterInfo;
+        let meta = RenderMeta {
+            filter: Some(FilterInfo {
+                min_severity: Severity::Warning,
+                hidden: 12,
+            }),
+            ..RenderMeta::default()
+        };
+        let text = render_with(&report(), &meta).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(json["filter"]["min_severity"], "warning");
+        assert_eq!(json["filter"]["hidden_findings"], 12);
+        assert_eq!(json["schema_version"], serde_json::json!(SCHEMA_VERSION));
+        assert!(json["results"].is_array(), "report fields are still there");
+        let second_key = text.lines().nth(2).unwrap().trim();
+        assert!(second_key.starts_with("\"filter\":"), "{second_key}");
     }
 
     #[test]

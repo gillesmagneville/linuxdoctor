@@ -270,9 +270,58 @@ cargo build --release
                                            # terminal, plain audit otherwise
 ./target/release/linuxdoctor audit
 ./target/release/linuxdoctor audit --output json   # starts with "schema_version": 1
+./target/release/linuxdoctor audit --output markdown > report.md   # a document to read/share
+./target/release/linuxdoctor audit --output html > report.html     # one self-contained page
+./target/release/linuxdoctor audit --min-severity warning          # show Warning and above only
+./target/release/linuxdoctor audit --fail-on warning               # exit 1 on any Warning or worse
 ./target/release/linuxdoctor audit --modules memory
 ./target/release/linuxdoctor tui              # interactive terminal UI, explicitly
 ./target/release/linuxdoctor audit --timeout 30   # allow slow tools 30 s each
+```
+
+### Reports, filtering and exit codes
+
+`--output` picks the format: `terminal` (default), `json`, `markdown` (alias `md`) or
+`html`. The Markdown and HTML reports are complete documents meant to be saved and
+shared — a ticket, a wiki page, an email attachment, a file you keep next to the
+machine's backups. The HTML one is a single self-contained page (no JavaScript, no
+external file, no network access; light and dark themes; readable on a phone), and
+both formats include every finding, Info ones too.
+
+```bash
+linuxdoctor audit --output html > "report-$(hostname)-$(date +%F).html"
+linuxdoctor audit --output markdown --min-severity warning > problems.md
+```
+
+Two options, kept separate on purpose:
+
+- **`--min-severity info|warning|error|critical`** only changes **what is shown**. It
+  never hides a module that failed, was skipped or returned incomplete data, and every
+  format says how many findings it hid (a closing line in the terminal, a banner in
+  Markdown/HTML, a top-level `filter` object in JSON). A filtered report cannot pass
+  for a complete one.
+- **`--fail-on info|warning|error|critical|never`** decides **the exit status**.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | The audit ran and nothing reached the `--fail-on` level |
+| 1 | A finding reached the level (default `error`: Error and Critical), **or** the audit itself could not run |
+| 2 | Command-line usage error |
+
+Without `--fail-on` the behaviour is exactly what it has always been (exit 1 on Error
+or Critical). With it, a short explanation goes to **stderr**, so `--output json >
+report.json` stays clean. Things worth knowing, for scripts and CI:
+
+- `--fail-on` always judges the **whole** report, before `--min-severity` filters the
+  display: hiding findings can never make a failing audit pass.
+- A module that could not run is reported as such but is **not** a finding, so it does
+  not change the exit status; check the report's `error` fields if that matters to you.
+- `linuxdoctor tui` keeps the default threshold and has neither option.
+
+```bash
+# Nightly job: keep a dated report, fail the job on any Warning or worse
+linuxdoctor audit --output html --fail-on warning > "/var/reports/$(date +%F).html" \
+  || echo "LinuxDoctor found something, see the report" >&2
 ```
 
 ### Speed and slow tools
@@ -314,7 +363,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 567 lib unit tests + 7 CLI unit tests + 45 integration tests
+cargo test               # 639 lib unit tests + 14 CLI unit tests + 59 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -347,7 +396,7 @@ linuxdoctor/
 ├── .github/workflows/ci.yml   # CI: fmt, clippy, tests on Rust 1.75 + stable
 ├── LICENSE                    # GPL-3.0 full text
 ├── VERSION                  # single source of truth for the version number
-├── CHANGELOG.md              # Keep a Changelog format
+├── CHANGELOG.md              # Keep a Changelog format (in French)
 ├── CONTRIBUTING.md            # how to report bugs, add a module, code style
 ├── build-deb.sh                 # .deb packaging (fpm)
 ├── build-rpm.sh                  # .rpm packaging (fpm)
@@ -359,7 +408,7 @@ linuxdoctor/
 │
 └── src/
     ├── main.rs                # bin entry point
-    ├── cli.rs                 # argument parsing (audit / tui)
+    ├── cli.rs                 # argument parsing (audit / tui, --output, --min-severity, --fail-on)
     ├── lib.rs                 # library root (also used by examples/ and tests/)
     │
     ├── core/
@@ -367,6 +416,7 @@ linuxdoctor/
     │   │                        # limit — every collector that shells out uses this
     │   ├── context.rs         # Context — reads /proc, /sys, /etc/os-release once
     │   ├── engine.rs           # runs modules concurrently, isolates failures
+    │   ├── gate.rs               # pass/fail decision behind the exit status (--fail-on)
     │   ├── parallel.rs          # ordered parallel map (per-disk SMART queries)
     │   └── error.rs
     │
@@ -391,13 +441,19 @@ linuxdoctor/
     │   └── virtualization/                 # systemd-detect-virt, no PID1 gate
     │
     └── output/
+        ├── common.rs            # what the document renderers share (dates, layout of
+        │                        #   explanations/recommendations, filter notice)
         ├── terminal.rs          # text + ANSI colors
         ├── json.rs                # JSON
+        ├── markdown.rs             # Markdown report
+        ├── html.rs                   # self-contained HTML report
         ├── tui.rs                  # interactive UI (ratatui)
         └── live_stats.rs             # TUI header gauges (CPU/mem/disk %)
 
 tests/       # fixture-driven integration tests, one file per module,
-             # plus hung_tools.rs (real binary vs. fake tools that hang)
+             # plus hung_tools.rs (real binary vs. fake tools that hang),
+             # json_schema.rs and export_and_gate.rs (real binary: report
+             # formats, --min-severity, --fail-on and the exit status)
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

@@ -4,4 +4,5 @@ pub mod command;
 pub mod context;
 pub mod engine;
 pub mod error;
+pub mod gate;
 pub mod parallel;

@@ -65,6 +65,7 @@ linuxdoctor/
 │   │   │                      # uses this, not std::process::Command
 │   │   ├── context.rs        # shared, read-only system facts
 │   │   ├── engine.rs         # concurrent orchestration, failure isolation
+│   │   ├── gate.rs           # pass/fail decision behind the exit status (--fail-on)
 │   │   ├── parallel.rs       # ordered parallel map for per-device work (SMART)
 │   │   └── error.rs
 │   │
@@ -97,8 +98,12 @@ linuxdoctor/
 │   │
 │   └── output/
 │       ├── mod.rs
+│       ├── common.rs         # RenderMeta, date formatting, recommendation/explanation
+│       │                     # layout shared by the document renderers
 │       ├── terminal.rs       # text + ANSI colors
-│       ├── json.rs           # JSON
+│       ├── json.rs           # JSON (+ schema_version)
+│       ├── markdown.rs       # Markdown report — see "Markdown Renderer" below
+│       ├── html.rs           # self-contained HTML report — see "HTML Renderer" below
 │       ├── tui.rs            # interactive UI (ratatui) — see "Output Engine"
 │       └── live_stats.rs     # TUI header gauges (CPU/mem/disk %) — see "Output Engine"
 │
@@ -148,9 +153,13 @@ For each module:
  ↓
 Aggregate Findings into a Report
  ↓
-Output Formatter (terminal | json | tui)
+Exit-status gate (--fail-on) evaluated on the whole report
  ↓
-Exit code reflects highest severity found
+Display filter (--min-severity)
+ ↓
+Output Formatter (terminal | json | markdown | html | tui)
+ ↓
+Exit code: 1 if a finding reached the --fail-on level (default: Error)
 ```
 
 ---
@@ -159,8 +168,14 @@ Exit code reflects highest severity found
 
 ## CLI
 
-Parses arguments, selects modules, selects output format, sets verbosity. Contains
-no diagnostic logic.
+Parses arguments, selects modules, selects output format, applies the display filter
+(`--min-severity`) and the exit-status threshold (`--fail-on`), sets verbosity.
+Contains no diagnostic logic.
+
+`audit` options: `--modules`, `--output terminal|json|markdown|html`,
+`--min-severity info|warning|error|critical`, `--fail-on info|warning|error|critical|never`
+(and the global `--timeout`). The order in `main.rs` matters and is tested: run the
+audit → **decide pass/fail on the whole report** → apply the display filter → render.
 
 ## Core Engine
 
@@ -415,11 +430,47 @@ pub struct Confidence {
 
 # Output Engine
 
-Supported now: Terminal, JSON, interactive TUI.
-Future: HTML, Markdown.
+Supported now: Terminal, JSON, Markdown, HTML, interactive TUI.
 
 Output formatters only render `Finding`s — they never compute severity, confidence,
 or evidence themselves.
+
+Non-interactive renderers receive the report plus a `RenderMeta`
+(`output/common.rs`): the tool version, the generation time (passed in, never read
+inside a renderer, so output is deterministic and testable) and, when `--min-severity`
+removed findings, a `FilterInfo { min_severity, hidden }`. Every renderer states a
+filter when there is one — a filtered report must never pass for a complete one.
+
+## Severity filter and exit status
+
+Two independent options on `audit`, deliberately kept apart:
+
+- `--min-severity <level>` is a **display filter**. `Report::retain_at_or_above` drops
+  findings below the level from the output. It never hides module errors, skipped
+  modules or "incomplete data" notes, and the renderers say how many findings it hid
+  (terminal: a closing line; Markdown/HTML: a banner; JSON: a top-level `filter`
+  object).
+- `--fail-on <level|never>` is the **gate**. `core::gate::evaluate` counts findings at
+  or above the level and the process exits with status 1 if there is any. It looks at
+  the **whole report, before the display filter**: hiding findings can never turn a
+  failing audit into a passing one (`display_filter_never_changes_the_exit_status` in
+  `tests/export_and_gate.rs`, plus a mutation check that fails if the order is swapped).
+
+Without `--fail-on` the threshold is `error`, which is what the exit status always was
+(Error and Critical fail), so existing scripts are unaffected; that default gate stays
+silent. An explicit `--fail-on` explains itself on stderr
+(`N finding(s) at WARNING or above (--fail-on warning); exiting with status 1`) and
+keeps stdout clean, so `--output json > report.json` stays parseable.
+
+| Status | Meaning |
+|---|---|
+| 0 | The audit ran and no finding reached the threshold |
+| 1 | A finding reached the threshold, **or** the audit itself could not run (unchanged) |
+| 2 | Command-line usage error (from the argument parser) |
+
+A module that fails to run (`error` in the JSON, `✗ ... (error: ...)` in the terminal)
+does not count as a finding; check for it separately in CI if it matters.
+`tui` keeps the default gate and has neither option.
 
 ## Terminal Renderer
 
@@ -483,7 +534,8 @@ It is added by a small wrapper in `output/json.rs`, not by `Report` itself, so
 in-memory code and the other renderers never see it.
 
 - **Adding** a field (a new key in a finding, a new note, a new top-level section)
-  does **not** change the version: readers must ignore keys they do not know.
+  does **not** change the version: readers must ignore keys they do not know. (Example:
+  the optional top-level `filter` object below was added without a bump.)
 - **Removing**, renaming or re-typing a field, or changing what a value means
   (for example the unit of an evidence value), **bumps** it by one, with a
   `### Changé` entry in `CHANGELOG.md`.
@@ -491,8 +543,58 @@ in-memory code and the other renderers never see it.
   `id` keeps its meaning forever; a retired id is not reused.
 
 Tests: unit tests in `output/json.rs` and the end-to-end `tests/json_schema.rs` (real
-binary) pin the envelope — `schema_version` is the first key and the only addition to
-the report's top level.
+binary) pin the envelope — `schema_version` is the first key and, on an unfiltered
+report, the only addition to the report's top level.
+
+When `--min-severity` was used, the document also carries (right after
+`schema_version`) a `filter` object, absent otherwise:
+
+```json
+"filter": { "min_severity": "warning", "hidden_findings": 12 }
+```
+
+## Markdown Renderer
+
+`--output markdown` (alias `md`) prints a complete document: title and machine facts, a
+summary table (one row per module with counts per severity; skipped and failed modules
+are dashed, a module with cut-short tools says "Incomplete data"), then one section per
+module with its findings (all of them, Info included — it is a report, not a terminal
+screen). Each finding shows severity, confidence, evidence as a list of code spans, the
+explanation, and the recommendation.
+
+Layout rules (`output/common.rs` parses what modules write):
+
+- **Explanations**: unindented lines are prose; indented lines are tables or lists that
+  modules align with spaces, so each indented group becomes a fenced code block (aligned
+  columns survive).
+- **Recommendations**: `1. text` steps with commands indented four spaces underneath
+  become a numbered list with ```` ```bash ```` blocks; a single line stays a paragraph;
+  anything else multi-line is fenced as text.
+- **Untrusted text** (host name, instance names, process names, tool error messages):
+  prose has its Markdown punctuation backslash-escaped (backslash, `*`, `_`, `[`, `]`, `<`,
+  a leading `#` or `>`), values go in code
+  spans whose delimiter is longer than any backtick run inside, fences grow the same
+  way, table cells escape `|`. Tests check that no `<` survives unescaped.
+
+## HTML Renderer
+
+`--output html` prints one self-contained page: inline CSS, light and dark themes
+(`prefers-color-scheme`), responsive down to phone width, no JavaScript, no external
+file, no network. Findings are `<details>` blocks: Warning and above are open, Info is
+collapsed. Severity is shown as a symbol plus a word, never colour alone. Summary
+columns shorten on narrow screens and tables scroll inside their own container, so the
+page itself never scrolls sideways.
+
+Security: every dynamic string goes through `esc()` (`& < > " '`); module ids are
+slugged before they are used in ids and links; and the page carries a
+`Content-Security-Policy` (`default-src 'none'; style-src 'unsafe-inline'`) so that
+even a missed escape could not run a script. `hostile_content_cannot_inject_markup_or_script`
+feeds an attack string into every field and checks that the only tags in the output are
+the renderer's own.
+
+Both document renderers are verified, beyond unit tests, by parsing real output with an
+independent parser (a CommonMark parser for Markdown, a strict HTML5 parser for HTML)
+and by looking at the HTML in a headless browser (light, dark, phone width).
 
 ## Interactive TUI
 
@@ -660,9 +762,11 @@ full `collect → analyze` path with an injected fixture instead of live `/proc`
 
 **End-to-end tests** — run against real systems (Ubuntu, Debian, Fedora, Arch,
 Rocky, AlmaLinux). Not part of `cargo test`; run on real or containerized targets.
-(`tests/hung_tools.rs` and `tests/json_schema.rs` are the exception: they run the real
-binary inside `cargo test`, but against fake tools or only the memory module, so they
-need no particular distribution.)
+(`tests/hung_tools.rs`, `tests/json_schema.rs` and `tests/export_and_gate.rs` are the
+exception: they run the real binary inside `cargo test`, but against fake tools or only
+the memory module, so they need no particular distribution. The memory module always
+reports at least its Info overview, which is what makes their expectations
+deterministic on any host.)
 
 **Continuous integration** — `.github/workflows/ci.yml` runs on every push to `main`
 and every pull request: `cargo fmt --check`, `cargo clippy --all-targets -- -D

@@ -128,13 +128,10 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 - La version minimale de Rust (1.75) n'a pas pu être vérifiée ici (le
   compilateur local est en 1.97) ; le nouveau code évite les API
   postérieures connues (par exemple `Option::is_none_or`).
-- La compatibilité avec Rust 1.75 n'a toujours pas pu être vérifiée
-  localement (rustup est bloqué dans l'environnement de développement).
-  Vérifications faites à la place : les dépendances verrouillées déclarent
-  au plus 1.74, et une recherche dans le code n'a trouvé aucune API plus
-  récente que 1.75. La tâche « Tests (Rust 1.75.0) » de l'intégration
-  continue sera la première vraie vérification ; si elle échoue, le
-  message d'erreur dira quelle API remplacer.
+- Compatibilité avec Rust 1.75 : non vérifiable en local (rustup bloqué dans
+  l'environnement de développement), mais **vérifiée par l'intégration
+  continue** — la tâche « Tests (Rust 1.75.0) » est passée au vert sur la
+  pull request #1, comme les tâches stable, fmt et Clippy.
 
 ## 2026-10-07
 

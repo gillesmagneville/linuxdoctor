@@ -8,7 +8,7 @@ severity/confidence scales, layout).
 
 ## Status
 
-v1 scaffold, eleven modules shipping end-to-end:
+v1 scaffold, twelve modules shipping end-to-end:
 
 * **Memory** — the most detailed module, organised in six topics
   (TUI submenu): **Used memory** (breakdown by kind — program memory,
@@ -122,6 +122,36 @@ v1 scaffold, eleven modules shipping end-to-end:
   error/drop-rate severity and confidence accordingly — on some NIC/
   driver combinations, VF-steered traffic inflates the physical
   function's `rx_dropped` without indicating a real link problem.
+* **Security** — strictly read-only, usable without root (root only adds
+  visibility, and each finding says what it could not see). Six topics
+  (TUI submenu): **Listening services** (every TCP/UDP socket in
+  `/proc/net/*`, whether it is reachable from the network or only from this
+  machine, and — as root — which program owns it; a catalogue of services
+  that should rarely face the network, such as Telnet, the unencrypted
+  Docker API, Redis, Memcached or database servers, is flagged with a
+  severity that depends on whether a firewall stands in front of it),
+  **Firewall** (ufw, firewalld, nftables or iptables; "not detected" is only
+  a warning when something is actually reachable, and the finding says
+  whether the rules could be read), **SSH** (the effective `sshd_config`
+  including `Include` drop-ins and `Match` blocks: root login, password
+  and empty-password authentication, SSH protocol 1, host-based trust and
+  `.rhosts`, `PermitUserEnvironment`, weak ciphers/MACs/key exchanges, and
+  — as Info — X11 forwarding and a high `MaxAuthTries`; capped at Warning
+  when sshd is not running),
+  **Access control** (SELinux enforcing/permissive/disabled, AppArmor
+  profiles and enforcement, read from sysfs without any tool),
+  **Hardening** (19 kernel and network settings — SYN cookies, source
+  routing, redirects, reverse-path filtering, `kptr_restrict`,
+  `ptrace_scope`, protected links/files, unprivileged BPF… — judged against
+  the value actually in force, with the `/etc/sysctl.d/` file that makes the
+  fix persistent) and **Accounts & files** (extra UID 0 accounts, logins
+  without a password, weak password hashes when `/etc/shadow` is readable,
+  and permissions of the files that protect the system: `/etc/passwd`,
+  `/etc/shadow`, `sudoers`, the SSH configuration, `/tmp`…). Every finding
+  above Info comes with numbered steps that put the safe action first
+  (for SSH: install a key *before* disabling passwords, validate with
+  `sshd -t`, keep a second session open). Commands are only suggested,
+  never run.
 * **Kernel** — taint status (all 20 bits, transcribed from the kernel's
   own documentation, not guessed) and OOM-kill history via `dmesg`
   (degrades cleanly when unreadable — `kernel.dmesg_restrict` commonly
@@ -260,7 +290,13 @@ root-restricted; `virsh` (from `libvirt-clients`) for VM inventory, and
 when unavailable. SMART queries and some `virsh`/`docker` operations
 typically need root; run as root/sudo for full detail everywhere.
 Network needs nothing extra at all — `/proc/net/*`, `/sys/class/net/*`,
-and `/etc/resolv.conf` cover it with zero subprocess calls.
+and `/etc/resolv.conf` cover it with zero subprocess calls. Security reads
+files first (`/proc/net/*`, `/etc/ssh/sshd_config*`, `/sys/kernel/security/lsm`,
+`/proc/sys/*`, `/etc/passwd`, file permissions) and only calls `systemctl`,
+`nft` and `iptables` — each optional — to know whether a firewall is active
+and what its rules do. Without root it still reports exposure and
+configuration, but cannot name the program behind another user's socket,
+read `/etc/shadow` or list the firewall rules, and says so.
 
 ## Quickstart
 
@@ -275,6 +311,7 @@ cargo build --release
 ./target/release/linuxdoctor audit --min-severity warning          # show Warning and above only
 ./target/release/linuxdoctor audit --fail-on warning               # exit 1 on any Warning or worse
 ./target/release/linuxdoctor audit --modules memory
+./target/release/linuxdoctor audit --modules security   # exposure, firewall, SSH, hardening
 ./target/release/linuxdoctor tui              # interactive terminal UI, explicitly
 ./target/release/linuxdoctor audit --timeout 30   # allow slow tools 30 s each
 ```
@@ -363,7 +400,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 639 lib unit tests + 14 CLI unit tests + 59 integration tests
+cargo test               # 777 lib unit tests + 14 CLI unit tests + 67 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -428,6 +465,8 @@ linuxdoctor/
     │
     ├── modules/
     │   ├── mod.rs              # the Module trait + all_modules()
+    │   ├── recommend.rs        # numbered-steps builder (Steps) + sysctl snippets, shared
+    │   │                       #   by every module that writes recommendations
     │   ├── memory/              # collect.rs (I/O) + analyze.rs + one file per topic (used, cache,
     │   │                        #   shared, swap, pressure, tuning, kernel) + format.rs
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
@@ -437,6 +476,8 @@ linuxdoctor/
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode
     │   ├── network/                    # interfaces, gateway, DNS (zero subprocess calls)
+    │   ├── security/                   # collect.rs (I/O) + one pure file per topic (listeners,
+    │   │                               #   firewall, ssh, access, accounts) + analyze.rs
     │   ├── kernel/                       # taint status, OOM history (dmesg)
     │   └── virtualization/                 # systemd-detect-virt, no PID1 gate
     │
@@ -453,7 +494,8 @@ linuxdoctor/
 tests/       # fixture-driven integration tests, one file per module,
              # plus hung_tools.rs (real binary vs. fake tools that hang),
              # json_schema.rs and export_and_gate.rs (real binary: report
-             # formats, --min-severity, --fail-on and the exit status)
+             # formats, --min-severity, --fail-on and the exit status);
+             # security_module.rs also runs the real binary on the real host
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

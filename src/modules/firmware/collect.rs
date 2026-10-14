@@ -195,7 +195,10 @@ mod tests {
 
     #[test]
     fn parses_secure_boot_disabled() {
-        assert_eq!(parse_secure_boot_state("SecureBoot disabled\n"), Some(false));
+        assert_eq!(
+            parse_secure_boot_state("SecureBoot disabled\n"),
+            Some(false)
+        );
     }
 
     #[test]

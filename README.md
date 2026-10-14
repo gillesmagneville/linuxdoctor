@@ -10,14 +10,27 @@ severity/confidence scales, layout).
 
 v1 scaffold, eleven modules shipping end-to-end:
 
-* **Memory** — usage overview (used vs reclaimable cache vs available,
-  answering "why does `free` show so little free RAM"), `vm.swappiness`,
-  swap pressure (cross-referenced against swappiness), critical
-  low-memory detection, dirty-page/writeback pressure (compared against
-  this system's actual configured `vm.dirty_ratio` /
-  `vm.dirty_background_ratio`, not assumed defaults), and shared memory
-  (tmpfs/shm) usage — each concerning finding paired with a concrete
-  resolution.
+* **Memory** — the most detailed module, organised in six topics
+  (TUI submenu): **Used memory** (breakdown by kind — program memory,
+  page cache, shared memory, kernel — with the top consumers by private
+  memory, grouped by program name, and a critical low-memory check),
+  **Page cache** (what is really reclaimable, the `drop_caches` myth,
+  dirty pages judged against this system's actual `vm.dirty_*` settings
+  and the memory they apply to, not assumed defaults), **Shared memory**
+  (`Shmem`, tmpfs/`/dev/shm` fill levels, orphaned SysV segments with the
+  `ipcrm` command to remove them), **Swap** (`vm.swappiness` judged for
+  the kind of swap in use — zram, SSD or spinning disk —, swap activity
+  with the programs that are swapped out and since-boot swap traffic,
+  and the swap configuration: missing swap, zram priority and
+  compression, zswap, `page-cluster`), **Pressure** (PSI stall times,
+  OOM kills since boot, direct reclaim) and **Kernel tuning**
+  (overcommit mode and commit limit, Transparent Huge Pages, idle
+  reserved huge pages, slab/page-table growth, ZFS ARC, `min_free_kbytes`).
+  Every finding above Info comes with numbered, copy-pasteable steps
+  (commands are only suggested, never run), sized to the machine — for
+  example the swap file size, or the `vm.overcommit_ratio` that leaves
+  20% headroom. Sources beyond `/proc/meminfo` are best-effort: a missing
+  one just removes the findings that need it.
 * **CPU** — per-socket topology (cores, threads, model), load-average
   pressure, sustained overload, and — per socket — how many of its logical
   CPUs are available versus isolated. Isolation is checked via three
@@ -256,10 +269,23 @@ cargo build --release
 ./target/release/linuxdoctor              # no subcommand: TUI in a real
                                            # terminal, plain audit otherwise
 ./target/release/linuxdoctor audit
-./target/release/linuxdoctor audit --output json
+./target/release/linuxdoctor audit --output json   # starts with "schema_version": 1
 ./target/release/linuxdoctor audit --modules memory
 ./target/release/linuxdoctor tui              # interactive terminal UI, explicitly
+./target/release/linuxdoctor audit --timeout 30   # allow slow tools 30 s each
 ```
+
+### Speed and slow tools
+
+Modules run **concurrently** (one thread each, standard library only), and the
+per-disk `smartctl` queries inside Storage run several at a time, so a slow tool
+delays only its own module instead of the whole audit. Every external command also
+has a time limit — 10 seconds by default, `--timeout <seconds>` to change it
+(`smartctl`, `nvidia-smi` and `docker stats` get twice that, since waking a sleeping
+disk or initializing a driver can legitimately take a few seconds). A command that
+exceeds it is stopped, and the module is reported as having **incomplete data**
+(a ⚠ instead of a ✓, with the stopped command named) rather than silently showing
+less. A wedged `libvirtd` or NVIDIA driver costs one time limit, not one per call.
 
 Running `linuxdoctor` with no subcommand opens the interactive TUI when both
 stdin and stdout are a real terminal (`std::io::IsTerminal`, standard
@@ -288,7 +314,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 332 lib unit tests + 4 CLI unit tests + 33 integration tests
+cargo test               # 567 lib unit tests + 7 CLI unit tests + 45 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -305,6 +331,11 @@ Two dependencies are pinned for that MSRV:
 * `unicode-segmentation` (a transitive dependency of `ratatui`) pinned to `1.11.0`
   in `Cargo.lock` for the same reason.
 
+`Cargo.toml` declares `rust-version = "1.75"`, and the GitHub Actions workflow
+(`.github/workflows/ci.yml`) builds and tests on exactly 1.75.0 as well as on
+stable, then checks formatting and Clippy (`-D warnings`) on stable. Always build
+with `--locked` so those pins are respected.
+
 If you're on a newer toolchain (1.85+), both are safe to unpin — `cargo update`
 will pick up current versions without any code changes.
 
@@ -313,6 +344,8 @@ will pick up current versions without any code changes.
 ```
 linuxdoctor/
 ├── .gitignore
+├── .github/workflows/ci.yml   # CI: fmt, clippy, tests on Rust 1.75 + stable
+├── LICENSE                    # GPL-3.0 full text
 ├── VERSION                  # single source of truth for the version number
 ├── CHANGELOG.md              # Keep a Changelog format
 ├── CONTRIBUTING.md            # how to report bugs, add a module, code style
@@ -330,10 +363,11 @@ linuxdoctor/
     ├── lib.rs                 # library root (also used by examples/ and tests/)
     │
     ├── core/
-    │   ├── command.rs           # Command builder forcing LC_ALL=C — every
-    │   │                        # collector that parses CLI output uses this
+    │   ├── command.rs           # Command builder forcing LC_ALL=C and a time
+    │   │                        # limit — every collector that shells out uses this
     │   ├── context.rs         # Context — reads /proc, /sys, /etc/os-release once
-    │   ├── engine.rs           # runs modules, isolates per-module failures
+    │   ├── engine.rs           # runs modules concurrently, isolates failures
+    │   ├── parallel.rs          # ordered parallel map (per-disk SMART queries)
     │   └── error.rs
     │
     ├── models/
@@ -344,7 +378,8 @@ linuxdoctor/
     │
     ├── modules/
     │   ├── mod.rs              # the Module trait + all_modules()
-    │   ├── memory/              # collect.rs (I/O) + analyze.rs (pure logic) + tests
+    │   ├── memory/              # collect.rs (I/O) + analyze.rs + one file per topic (used, cache,
+    │   │                        #   shared, swap, pressure, tuning, kernel) + format.rs
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
     │   ├── numa/                  # per-node topology, cross-node imbalance
     │   ├── gpu/                     # AMD sysfs, NVIDIA via nvidia-smi
@@ -361,7 +396,8 @@ linuxdoctor/
         ├── tui.rs                  # interactive UI (ratatui)
         └── live_stats.rs             # TUI header gauges (CPU/mem/disk %)
 
-tests/       # fixture-driven integration tests, one file per module
+tests/       # fixture-driven integration tests, one file per module,
+             # plus hung_tools.rs (real binary vs. fake tools that hang)
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

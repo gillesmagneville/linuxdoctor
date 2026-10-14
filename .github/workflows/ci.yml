@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR makes the older run pointless.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # --locked: Cargo.lock pins two dependencies for the old toolchain
+      # (see README "Toolchain note"); never let CI silently re-resolve it.
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    name: Tests (Rust ${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.75.0 is the minimum supported Rust version (Cargo.toml
+        # `rust-version`); stable catches new-compiler breakage early.
+        toolchain: ["1.75.0", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      # Cargo 1.75 predates lockfile format v4 (Cargo 1.78+) and refuses to
+      # read it. With registry-only dependencies, as here, v3 and v4 differ
+      # only by the header line, so the pinned versions stay exactly as
+      # committed. (The change is local to this CI run.)
+      - name: Lockfile v3 for the old toolchain
+        if: matrix.toolchain == '1.75.0'
+        run: sed -i 's/^version = 4$/version = 3/' Cargo.lock
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --all-targets
+      - run: cargo test --locked

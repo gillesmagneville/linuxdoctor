@@ -92,10 +92,11 @@ pub fn parse_node_meminfo(text: &str) -> Result<(u64, u64), ModuleError> {
     let mut mem_free: Option<u64> = None;
 
     for line in text.lines() {
-        let Some(colon) = line.find(':') else { continue };
+        let Some(colon) = line.find(':') else {
+            continue;
+        };
         let key = line[..colon].split_whitespace().last().unwrap_or("");
         let value = line[colon + 1..]
-            .trim()
             .split_whitespace()
             .next()
             .and_then(|v| v.parse::<u64>().ok());

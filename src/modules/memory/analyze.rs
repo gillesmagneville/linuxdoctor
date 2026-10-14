@@ -1,418 +1,113 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::cmp::Reverse;
+
 use crate::core::context::Context;
-use crate::models::{Category, Confidence, Finding, Severity};
+use crate::models::{Finding, Severity};
 
 use super::collect::MemoryRawData;
+use super::{cache, kernel, pressure, shared, swap, tuning, used};
 
-const DEFAULT_SWAPPINESS: u8 = 60;
+/// The pages of the module's submenu, in the order they are shown. Each
+/// finding that is not serious enough to deserve the top page lives on the
+/// page of its topic (see [`topic_of`]).
+pub const TOPICS: [&str; 6] = [
+    "Used memory",
+    "Page cache",
+    "Shared memory",
+    "Swap",
+    "Pressure",
+    "Kernel tuning",
+];
+
+/// Order in which findings appear within the module (also the tie-break
+/// when severities are equal).
+const ORDER: [&str; 13] = [
+    "MEM004", "MEM003", "MEM007", "MEM008", "MEM005", "MEM006", "MEM001", "MEM002", "MEM010",
+    "MEM009", "MEM013", "MEM011", "MEM012",
+];
+
+/// Which submenu page a finding belongs to.
+fn topic_of(id: &str) -> Option<&'static str> {
+    match id {
+        "MEM003" | "MEM007" => Some(TOPICS[0]),
+        "MEM005" | "MEM008" => Some(TOPICS[1]),
+        "MEM006" => Some(TOPICS[2]),
+        "MEM001" | "MEM002" | "MEM010" => Some(TOPICS[3]),
+        "MEM009" => Some(TOPICS[4]),
+        "MEM011" | "MEM012" | "MEM013" => Some(TOPICS[5]),
+        _ => None,
+    }
+}
+
+fn topic_rank(topic: &str) -> usize {
+    TOPICS
+        .iter()
+        .position(|t| *t == topic)
+        .unwrap_or(TOPICS.len())
+}
+
+fn order_rank(id: &str) -> usize {
+    ORDER.iter().position(|o| *o == id).unwrap_or(ORDER.len())
+}
 
 /// Pure function: RawData -> Findings. No I/O, no filesystem access, fully
 /// unit-testable — this is the whole point of separating collect() from
 /// analyze(). See ARCHITECTURE.md "Testing Strategy".
+///
+/// Layout of the result: the top page first — anything of Warning severity
+/// or above, worst first (so a problem is never buried in a submenu),
+/// followed by the overview (MEM004), which is the whole page on a healthy
+/// machine — then the remaining findings grouped by topic: Used memory,
+/// Page cache, Shared memory, Swap, Pressure, Kernel tuning.
 pub fn analyze(data: &MemoryRawData, _ctx: &Context) -> Vec<Finding> {
-    let mut findings = Vec::new();
+    let mut findings = vec![
+        used::overview(data),
+        used::used_memory(data),
+        cache::page_cache(data),
+        cache::dirty_pages(data),
+        shared::shared_memory(data),
+        swap::swappiness(data),
+        swap::swap_config(data),
+    ];
+    findings.extend(used::critical(data));
+    findings.extend(swap::swap_activity(data));
+    findings.extend(pressure::pressure(data));
+    findings.extend(kernel::kernel_memory(data));
+    findings.extend(tuning::overcommit(data));
+    findings.extend(tuning::huge_pages(data));
 
-    findings.push(memory_overview_finding(data));
-    findings.push(swappiness_finding(data));
-
-    if let Some(f) = swap_pressure_finding(data) {
-        findings.push(f);
+    for f in &mut findings {
+        f.instance = if f.id == "MEM004" || f.severity >= Severity::Warning {
+            None
+        } else {
+            topic_of(&f.id).map(str::to_string)
+        };
     }
-    if let Some(f) = critical_memory_finding(data) {
-        findings.push(f);
-    }
 
-    findings.push(dirty_pages_finding(data));
-    findings.push(shared_memory_finding(data));
-
+    findings.sort_by_key(|f| {
+        (
+            f.instance.is_some(),
+            f.instance.as_deref().map(topic_rank).unwrap_or(0),
+            Reverse(f.severity),
+            order_rank(&f.id),
+        )
+    });
     findings
-}
-
-/// MEM004 — always reported. This is the "why is my free RAM low" answer:
-/// distinguishes actually-used memory from reclaimable cache, since the
-/// two are easy to confuse and only one of them is worth worrying about.
-fn memory_overview_finding(data: &MemoryRawData) -> Finding {
-    let used_kb = data.mem_total_kb.saturating_sub(data.mem_available_kb);
-    let used_pct = if data.mem_total_kb > 0 {
-        used_kb as f64 / data.mem_total_kb as f64 * 100.0
-    } else {
-        0.0
-    };
-
-    let to_gb = |kb: u64| kb as f64 / 1024.0 / 1024.0;
-
-    Finding::builder(
-        "MEM004",
-        "Memory Usage Overview",
-        Category::Memory,
-        Severity::Info,
-        Confidence::direct_observation(),
-    )
-    .evidence("total_kb", data.mem_total_kb.to_string())
-    .evidence("used_kb", used_kb.to_string())
-    .evidence("free_kb", data.mem_free_kb.to_string())
-    .evidence("available_kb", data.mem_available_kb.to_string())
-    .evidence("cached_kb", data.cached_kb.to_string())
-    .evidence("used_percent", format!("{used_pct:.1}"))
-    .explanation(format!(
-        "Of {:.1} GB total memory, {:.1} GB ({used_pct:.1}%) is actually in \
-         use. Only {:.1} GB shows as strictly free, but {:.1} GB is \
-         reclaimable page cache — Linux uses spare RAM to cache disk data \
-         for speed, and hands it back automatically the moment an \
-         application needs it. A low 'free' number by itself is not a sign \
-         of a problem: {:.1} GB is genuinely available for new allocations.",
-        to_gb(data.mem_total_kb),
-        to_gb(used_kb),
-        to_gb(data.mem_free_kb),
-        to_gb(data.cached_kb),
-        to_gb(data.mem_available_kb),
-    ))
-    .build()
-}
-
-/// MEM001 — always reported. Directly mirrors the worked example in
-/// PROJECT_CONTEXT.md's "Explain instead of dumping data" section.
-fn swappiness_finding(data: &MemoryRawData) -> Finding {
-    let is_default = data.swappiness == DEFAULT_SWAPPINESS;
-    let explanation = if is_default {
-        "This is the default kernel value. For a desktop with large amounts \
-         of RAM, a lower value is often preferred. No action required \
-         unless swap activity is high."
-            .to_string()
-    } else if data.swappiness < DEFAULT_SWAPPINESS {
-        format!(
-            "Lower than the kernel default of {DEFAULT_SWAPPINESS}. The kernel \
-             will prefer keeping data in RAM over swapping it out, which usually \
-             favors responsiveness on systems with plenty of memory."
-        )
-    } else {
-        format!(
-            "Higher than the kernel default of {DEFAULT_SWAPPINESS}. The kernel \
-             will swap out memory more eagerly. Reasonable on systems tuned for \
-             throughput over latency; worth a second look otherwise."
-        )
-    };
-
-    Finding::builder(
-        "MEM001",
-        "Kernel Swappiness Setting",
-        Category::Memory,
-        Severity::Info,
-        Confidence::direct_observation(),
-    )
-    .evidence("vm.swappiness", data.swappiness.to_string())
-    .evidence("kernel_default", DEFAULT_SWAPPINESS.to_string())
-    .explanation(explanation)
-    .build()
-}
-
-/// MEM002 — only reported when swap is actually in use. Severity and
-/// confidence scale with how little free memory remains alongside it.
-/// Cross-references the configured swappiness: swap activity at a low
-/// configured swappiness is a stronger signal than the same activity
-/// would be at the default, since the kernel is normally reluctant to
-/// swap at all in that case.
-fn swap_pressure_finding(data: &MemoryRawData) -> Option<Finding> {
-    if data.swap_total_kb == 0 {
-        return None; // no swap configured, nothing to say here
-    }
-    let swap_used_kb = data.swap_total_kb.saturating_sub(data.swap_free_kb);
-    if swap_used_kb == 0 {
-        return None; // swap configured but unused
-    }
-
-    let mem_available_pct = if data.mem_total_kb > 0 {
-        (data.mem_available_kb as f64 / data.mem_total_kb as f64) * 100.0
-    } else {
-        100.0
-    };
-
-    let (severity, confidence, mut explanation) = if mem_available_pct < 3.0 {
-        (
-            Severity::Error,
-            Confidence::correlated(95),
-            "The system is actively swapping while almost no RAM remains free. \
-             This commonly causes visible slowdowns. Investigation is recommended."
-                .to_string(),
-        )
-    } else if mem_available_pct < 10.0 {
-        (
-            Severity::Warning,
-            Confidence::strong_indication(85),
-            "The system is actively swapping while relatively little RAM remains \
-             free. This commonly indicates memory pressure, though it is not \
-             necessarily a problem on its own — worth investigating if \
-             performance feels degraded."
-                .to_string(),
-        )
-    } else {
-        (
-            Severity::Info,
-            Confidence::weak_indication(70),
-            "Swap is in use, but plenty of RAM is still free. This is not \
-             necessarily a problem — some swap usage is normal even on systems \
-             with ample memory."
-                .to_string(),
-        )
-    };
-
-    if data.swappiness <= 10 {
-        explanation.push_str(&format!(
-            " Notably, vm.swappiness is set low ({}), meaning the kernel \
-             normally avoids swapping unless under real pressure — this \
-             activity is a stronger signal than the same swap usage would be \
-             at the default swappiness ({DEFAULT_SWAPPINESS}).",
-            data.swappiness,
-        ));
-    }
-
-    Some(
-        Finding::builder(
-            "MEM002",
-            "Swap Activity",
-            Category::Memory,
-            severity,
-            confidence,
-        )
-        .evidence("swap_used_kb", swap_used_kb.to_string())
-        .evidence("mem_available_kb", data.mem_available_kb.to_string())
-        .evidence(
-            "mem_available_pct",
-            format!("{mem_available_pct:.1}"),
-        )
-        .evidence("vm.swappiness", data.swappiness.to_string())
-        .explanation(explanation)
-        .recommendation(
-            "Identify high-memory processes (ps, smem) and consider whether \
-             more RAM or lower memory usage is needed.",
-        )
-        .build(),
-    )
-}
-
-/// MEM003 — memory is critically low AND there's no swap left to absorb it
-/// (either no swap configured, or swap itself is exhausted).
-fn critical_memory_finding(data: &MemoryRawData) -> Option<Finding> {
-    if data.mem_total_kb == 0 {
-        return None;
-    }
-    let mem_available_pct = (data.mem_available_kb as f64 / data.mem_total_kb as f64) * 100.0;
-    let swap_exhausted = data.swap_total_kb == 0 || data.swap_free_kb == 0;
-
-    if mem_available_pct < 5.0 && swap_exhausted {
-        Some(
-            Finding::builder(
-                "MEM003",
-                "Critically Low Available Memory",
-                Category::Memory,
-                Severity::Critical,
-                Confidence::correlated(90),
-            )
-            .evidence("mem_available_pct", format!("{mem_available_pct:.1}"))
-            .evidence("swap_total_kb", data.swap_total_kb.to_string())
-            .evidence("swap_free_kb", data.swap_free_kb.to_string())
-            .explanation(
-                "Available memory is critically low and there is no swap left to \
-                 absorb further pressure. New allocations may soon fail or the \
-                 kernel's OOM killer may start terminating processes."
-                    .to_string(),
-            )
-            .recommendation(
-                "Free memory immediately (stop or restart high-memory processes) \
-                 or add swap/RAM before the situation worsens.",
-            )
-            .build(),
-        )
-    } else {
-        None
-    }
-}
-
-/// MEM005 — always reported. Compares actual dirty-page level against
-/// this system's *own configured* thresholds (not assumed Linux defaults)
-/// — evidence-based rather than guessed, since these are commonly tuned
-/// away from their defaults on real servers.
-fn dirty_pages_finding(data: &MemoryRawData) -> Finding {
-    let dirty_pct = if data.mem_total_kb > 0 {
-        data.dirty_kb as f64 / data.mem_total_kb as f64 * 100.0
-    } else {
-        0.0
-    };
-
-    // Ratio-based dirty-page tuning can be turned off in favor of the
-    // *_bytes equivalents (vm.dirty_bytes / vm.dirty_background_bytes),
-    // which reads as 0 here. Comparing against a zero threshold would be
-    // meaningless (and falsely trigger on any nonzero dirty amount), so
-    // this is reported as a distinct, honest case rather than guessed at.
-    if data.dirty_ratio == 0 || data.dirty_background_ratio == 0 {
-        return Finding::builder(
-            "MEM005",
-            "Dirty Page / Writeback Pressure",
-            Category::Memory,
-            Severity::Info,
-            Confidence::direct_observation(),
-        )
-        .evidence("dirty_kb", data.dirty_kb.to_string())
-        .evidence("dirty_percent", format!("{dirty_pct:.2}"))
-        .evidence("dirty_background_ratio", data.dirty_background_ratio.to_string())
-        .evidence("dirty_ratio", data.dirty_ratio.to_string())
-        .explanation(format!(
-            "{dirty_pct:.1}% of memory is currently dirty (modified, not yet \
-             written to disk). This system's vm.dirty_ratio or \
-             vm.dirty_background_ratio is set to 0, which usually means the \
-             byte-based equivalents (vm.dirty_bytes / \
-             vm.dirty_background_bytes) are in effect instead — this tool \
-             doesn't currently compare against those."
-        ))
-        .build();
-    }
-
-    let (severity, confidence, explanation) = if dirty_pct >= data.dirty_ratio as f64 {
-        (
-            Severity::Error,
-            Confidence::strong_indication(87),
-            format!(
-                "{dirty_pct:.1}% of memory is dirty — at or above this \
-                 system's configured vm.dirty_ratio of {}%. Past this point \
-                 processes writing to disk can block synchronously until the \
-                 kernel catches up, which shows up as I/O stalls.",
-                data.dirty_ratio,
-            ),
-        )
-    } else if dirty_pct >= data.dirty_background_ratio as f64 {
-        (
-            Severity::Warning,
-            Confidence::strong_indication(78),
-            format!(
-                "{dirty_pct:.1}% of memory is dirty — at or above this \
-                 system's configured vm.dirty_background_ratio of {}%, so the \
-                 kernel should already be actively flushing pages to disk in \
-                 the background. Not necessarily a problem on its own, but \
-                 worth watching if it stays elevated.",
-                data.dirty_background_ratio,
-            ),
-        )
-    } else {
-        (
-            Severity::Info,
-            Confidence::direct_observation(),
-            format!(
-                "{dirty_pct:.1}% of memory is dirty, comfortably below this \
-                 system's configured background writeback threshold of {}%.",
-                data.dirty_background_ratio,
-            ),
-        )
-    };
-
-    let mut builder = Finding::builder(
-        "MEM005",
-        "Dirty Page / Writeback Pressure",
-        Category::Memory,
-        severity,
-        confidence,
-    )
-    .evidence("dirty_kb", data.dirty_kb.to_string())
-    .evidence("dirty_percent", format!("{dirty_pct:.2}"))
-    .evidence("dirty_background_ratio", data.dirty_background_ratio.to_string())
-    .evidence("dirty_ratio", data.dirty_ratio.to_string())
-    .explanation(explanation);
-
-    if severity > Severity::Info {
-        builder = builder.recommendation(
-            "Check what's generating the writes with `iostat -x 1` or \
-             `vmstat 1`. If this is expected under sustained write load, \
-             consider tuning vm.dirty_background_ratio / vm.dirty_ratio (or \
-             the *_bytes equivalents) to flush more gradually, and confirm \
-             the underlying storage can keep up.",
-        );
-    }
-    builder.build()
-}
-
-/// MEM006 — always reported. Shared memory (tmpfs/shm) isn't reclaimable
-/// the way page cache is, so unlike MEM004's cached figure, a large value
-/// here directly competes with applications for RAM.
-fn shared_memory_finding(data: &MemoryRawData) -> Finding {
-    let shmem_pct = if data.mem_total_kb > 0 {
-        data.shmem_kb as f64 / data.mem_total_kb as f64 * 100.0
-    } else {
-        0.0
-    };
-
-    let (severity, confidence, explanation) = if shmem_pct >= 25.0 {
-        (
-            Severity::Error,
-            Confidence::strong_indication(85),
-            format!(
-                "Shared memory (tmpfs, /dev/shm, SysV/POSIX shm segments) \
-                 accounts for {shmem_pct:.1}% of total RAM. Unlike page \
-                 cache, this memory isn't automatically reclaimable — it \
-                 stays allocated until something explicitly frees it (or it \
-                 gets swapped out), so it competes directly with \
-                 applications for RAM."
-            ),
-        )
-    } else if shmem_pct >= 10.0 {
-        (
-            Severity::Warning,
-            Confidence::strong_indication(76),
-            format!(
-                "Shared memory accounts for {shmem_pct:.1}% of total RAM — \
-                 worth knowing what's using it, since it isn't reclaimable \
-                 the way page cache is."
-            ),
-        )
-    } else {
-        (
-            Severity::Info,
-            Confidence::direct_observation(),
-            format!(
-                "Shared memory accounts for {shmem_pct:.1}% of total RAM, a \
-                 normal level."
-            ),
-        )
-    };
-
-    let mut builder = Finding::builder(
-        "MEM006",
-        "Shared Memory Usage",
-        Category::Memory,
-        severity,
-        confidence,
-    )
-    .evidence("shmem_kb", data.shmem_kb.to_string())
-    .evidence("shmem_percent", format!("{shmem_pct:.1}"))
-    .explanation(explanation);
-
-    if severity > Severity::Info {
-        builder = builder.recommendation(
-            "Find what's using it: `du -sh /dev/shm`, `ipcs -m` for SysV \
-             shared segments, and `df -h -t tmpfs` for tmpfs mounts sized \
-             larger than expected. Large temp files or caches an \
-             application places in /dev/shm are common culprits.",
-        );
-    }
-    builder.build()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::memory::collect::{
+        MemoryPressure, PsiLine, SwapDevice, SwapKind, SysvSegment, TmpfsMount, VmTunables,
+        VmstatCounters, ZramStats,
+    };
+    use crate::modules::memory::test_support::{ctx, evidence, healthy, proc};
 
-    fn ctx() -> Context {
-        Context {
-            hostname: "test".into(),
-            kernel_version: "test".into(),
-            distro: None,
-            architecture: "x86_64".into(),
-            cpu_count: 4,
-            mem_total_kb: 16_384_000,
-            boot_time_unix: 0,
-        }
-    }
-
-    fn base_data() -> MemoryRawData {
+    /// What the module could always read, and nothing else: the shape of
+    /// data on a container or an old kernel.
+    fn minimal() -> MemoryRawData {
         MemoryRawData {
             mem_total_kb: 16_384_000,
             mem_free_kb: 7_500_000,
@@ -425,172 +120,556 @@ mod tests {
             swappiness: 60,
             dirty_ratio: 20,
             dirty_background_ratio: 10,
+            ..Default::default()
+        }
+    }
+
+    fn ids(findings: &[Finding]) -> Vec<&str> {
+        findings.iter().map(|f| f.id.as_str()).collect()
+    }
+
+    fn find<'a>(findings: &'a [Finding], id: &str) -> &'a Finding {
+        findings
+            .iter()
+            .find(|f| f.id == id)
+            .unwrap_or_else(|| panic!("{id} missing from {:?}", ids(findings)))
+    }
+
+    // ---- what is reported -------------------------------------------
+
+    #[test]
+    fn healthy_machine_reports_every_always_on_finding() {
+        let findings = analyze(&healthy(), &ctx());
+        for id in [
+            "MEM001", "MEM004", "MEM005", "MEM006", "MEM007", "MEM008", "MEM010", "MEM013",
+        ] {
+            assert!(
+                ids(&findings).contains(&id),
+                "{id} missing: {:?}",
+                ids(&findings)
+            );
+        }
+        for id in ["MEM002", "MEM003", "MEM009", "MEM011", "MEM012"] {
+            assert!(
+                !ids(&findings).contains(&id),
+                "{id} should be absent: {:?}",
+                ids(&findings)
+            );
+        }
+        assert!(findings.iter().all(|f| f.severity == Severity::Info));
+    }
+
+    #[test]
+    fn minimal_data_still_produces_the_historic_findings() {
+        let findings = analyze(&minimal(), &ctx());
+        for id in ["MEM001", "MEM004", "MEM005", "MEM006"] {
+            assert!(ids(&findings).contains(&id));
+        }
+        assert!(
+            !ids(&findings).contains(&"MEM013"),
+            "no slab data, no kernel finding"
+        );
+        assert!(findings.iter().all(|f| f.severity == Severity::Info));
+    }
+
+    #[test]
+    fn optional_sources_add_their_findings() {
+        let mut d = healthy();
+        d.pressure = Some(MemoryPressure {
+            some: PsiLine::default(),
+            full: Some(PsiLine::default()),
+        });
+        d.vm = VmTunables {
+            overcommit_memory: Some(0),
+            thp_enabled: Some("madvise".into()),
+            ..Default::default()
+        };
+        let findings = analyze(&d, &ctx());
+        for id in ["MEM009", "MEM011", "MEM012"] {
+            assert!(ids(&findings).contains(&id), "{id}");
         }
     }
 
     #[test]
-    fn always_reports_overview_and_swappiness() {
-        let findings = analyze(&base_data(), &ctx());
-        assert!(findings.iter().any(|f| f.id == "MEM004"));
-        assert!(findings.iter().any(|f| f.id == "MEM001"));
+    fn ids_are_unique() {
+        let mut d = healthy();
+        d.swap_free_kb = 1_000_000;
+        d.vmstat = Some(VmstatCounters::default());
+        let findings = analyze(&d, &ctx());
+        let mut seen = ids(&findings);
+        seen.sort();
+        let before = seen.len();
+        seen.dedup();
+        assert_eq!(before, seen.len());
+    }
+
+    // ---- layout ------------------------------------------------------
+
+    #[test]
+    fn on_a_healthy_machine_the_overview_is_the_whole_top_page() {
+        let findings = analyze(&healthy(), &ctx());
+        assert_eq!(findings[0].id, "MEM004");
+        assert!(findings[0].instance.is_none());
+        assert!(findings[1..].iter().all(|f| f.instance.is_some()));
     }
 
     #[test]
-    fn overview_reports_used_as_total_minus_available() {
-        let findings = analyze(&base_data(), &ctx());
-        let overview = findings.iter().find(|f| f.id == "MEM004").unwrap();
-        // 16_384_000 - 8_000_000 = 8_384_000
-        assert!(overview
-            .evidence
+    fn problems_come_before_the_overview() {
+        let mut d = healthy();
+        d.mem_available_kb = 1_200_000; // 7.5%
+        let findings = analyze(&d, &ctx());
+        assert_eq!(findings[0].id, "MEM007", "{:?}", ids(&findings));
+        assert_eq!(findings[1].id, "MEM004");
+        assert!(findings[2].instance.is_some());
+    }
+
+    #[test]
+    fn quiet_findings_are_filed_under_their_topic() {
+        let mut d = healthy();
+        d.swap_free_kb = 3_000_000; // swap in use -> MEM002
+        d.vm.overcommit_memory = Some(0);
+        d.vmstat = Some(VmstatCounters::default());
+        let findings = analyze(&d, &ctx());
+        let topic = |id: &str| find(&findings, id).instance.clone();
+        assert_eq!(topic("MEM007").as_deref(), Some("Used memory"));
+        assert_eq!(topic("MEM008").as_deref(), Some("Page cache"));
+        assert_eq!(topic("MEM005").as_deref(), Some("Page cache"));
+        assert_eq!(topic("MEM006").as_deref(), Some("Shared memory"));
+        assert_eq!(topic("MEM001").as_deref(), Some("Swap"));
+        assert_eq!(topic("MEM002").as_deref(), Some("Swap"));
+        assert_eq!(topic("MEM010").as_deref(), Some("Swap"));
+        assert_eq!(topic("MEM009").as_deref(), Some("Pressure"));
+        assert_eq!(topic("MEM013").as_deref(), Some("Kernel tuning"));
+        assert_eq!(topic("MEM011").as_deref(), Some("Kernel tuning"));
+        assert!(
+            findings.iter().all(|f| match f.instance.as_deref() {
+                None => true,
+                Some(t) => TOPICS.contains(&t),
+            }),
+            "every instance is a declared topic"
+        );
+    }
+
+    #[test]
+    fn warnings_surface_on_the_top_page() {
+        let mut d = healthy();
+        d.mem_available_kb = 1_200_000; // 7.5%: MEM007 warns
+        d.swap_free_kb = 3_000_000; // MEM002 warns too
+        let findings = analyze(&d, &ctx());
+        assert!(find(&findings, "MEM007").instance.is_none());
+        assert!(find(&findings, "MEM002").instance.is_none());
+        assert_eq!(
+            find(&findings, "MEM008").instance.as_deref(),
+            Some("Page cache")
+        );
+    }
+
+    #[test]
+    fn top_level_findings_come_first_worst_first() {
+        let mut d = healthy();
+        d.mem_available_kb = 400_000; // 2.5%: MEM007 error, MEM002 error
+        d.swap_free_kb = 3_000_000;
+        let findings = analyze(&d, &ctx());
+        let top: Vec<&Finding> = findings
             .iter()
-            .any(|(k, v)| k == "used_kb" && v == "8384000"));
+            .take_while(|f| f.instance.is_none())
+            .collect();
+        assert!(top.len() >= 3);
+        assert_eq!(
+            top.last().unwrap().id,
+            "MEM004",
+            "the Info overview closes the top page"
+        );
+        for pair in top.windows(2) {
+            assert!(pair[0].severity >= pair[1].severity, "{:?}", ids(&findings));
+        }
+        // everything after the top page is grouped, never top-level again
+        assert!(findings[top.len()..].iter().all(|f| f.instance.is_some()));
+    }
+
+    #[test]
+    fn topic_findings_are_grouped_in_menu_order() {
+        let findings = analyze(&healthy(), &ctx());
+        let topics: Vec<&str> = findings
+            .iter()
+            .filter_map(|f| f.instance.as_deref())
+            .collect();
+        let mut ranks: Vec<usize> = topics.iter().map(|t| topic_rank(t)).collect();
+        let sorted = {
+            let mut s = ranks.clone();
+            s.sort();
+            s
+        };
+        assert_eq!(ranks, sorted, "{topics:?}");
+        ranks.dedup();
+        assert_eq!(
+            ranks.len(),
+            5,
+            "healthy machine shows five topics: {topics:?}"
+        );
+    }
+
+    // ---- behaviour carried over from the original module -----------
+
+    #[test]
+    fn overview_reports_used_as_total_minus_available() {
+        let findings = analyze(&minimal(), &ctx());
+        // 16_384_000 - 8_000_000 = 8_384_000
+        assert_eq!(
+            evidence(find(&findings, "MEM004"), "used_kb"),
+            Some("8384000")
+        );
     }
 
     #[test]
     fn no_swap_pressure_finding_when_swap_unused() {
-        let findings = analyze(&base_data(), &ctx());
-        assert!(!findings.iter().any(|f| f.id == "MEM002"));
+        assert!(!ids(&analyze(&minimal(), &ctx())).contains(&"MEM002"));
     }
 
     #[test]
-    fn info_level_swap_pressure_when_memory_is_ample() {
-        let mut data = base_data();
-        data.swap_free_kb = 100_000; // swap in use
-        let findings = analyze(&data, &ctx());
-        let mem002 = findings.iter().find(|f| f.id == "MEM002").unwrap();
-        assert_eq!(mem002.severity, Severity::Info);
+    fn swap_activity_tiers() {
+        let mut data = minimal();
+        data.swap_free_kb = 2_000_000; // about half of swap in use
+        assert_eq!(
+            find(&analyze(&data, &ctx()), "MEM002").severity,
+            Severity::Info
+        );
+        data.mem_available_kb = 1_000_000; // ~6.1%
+        assert_eq!(
+            find(&analyze(&data, &ctx()), "MEM002").severity,
+            Severity::Warning
+        );
+        data.mem_available_kb = 300_000; // ~1.8%
+        assert_eq!(
+            find(&analyze(&data, &ctx()), "MEM002").severity,
+            Severity::Error
+        );
     }
 
     #[test]
-    fn warning_level_swap_pressure_when_memory_is_tight() {
-        let mut data = base_data();
-        data.swap_free_kb = 100_000;
-        data.mem_available_kb = 1_000_000; // ~6.1% available
-        let findings = analyze(&data, &ctx());
-        let mem002 = findings.iter().find(|f| f.id == "MEM002").unwrap();
-        assert_eq!(mem002.severity, Severity::Warning);
-    }
-
-    #[test]
-    fn error_level_swap_pressure_when_memory_is_nearly_gone() {
-        let mut data = base_data();
-        data.swap_free_kb = 100_000;
-        data.mem_available_kb = 300_000; // ~1.8% available
-        let findings = analyze(&data, &ctx());
-        let mem002 = findings.iter().find(|f| f.id == "MEM002").unwrap();
-        assert_eq!(mem002.severity, Severity::Error);
+    fn nearly_full_swap_is_a_warning_even_with_plenty_of_ram() {
+        let mut data = minimal();
+        data.swap_free_kb = 100_000; // 97.6% of swap used, 8 GB of RAM available
+        assert_eq!(
+            find(&analyze(&data, &ctx()), "MEM002").severity,
+            Severity::Warning
+        );
     }
 
     #[test]
     fn low_swappiness_note_appears_when_swapping_anyway() {
-        let mut data = base_data();
-        data.swap_free_kb = 100_000; // swap in use
-        data.swappiness = 1;
-        let findings = analyze(&data, &ctx());
-        let mem002 = findings.iter().find(|f| f.id == "MEM002").unwrap();
-        assert!(mem002.explanation.contains("stronger signal"));
-    }
-
-    #[test]
-    fn high_swappiness_gets_no_low_swappiness_note() {
-        let mut data = base_data();
+        let mut data = minimal();
         data.swap_free_kb = 100_000;
+        data.swappiness = 1;
+        assert!(find(&analyze(&data, &ctx()), "MEM002")
+            .explanation
+            .contains("stronger signal"));
         data.swappiness = 60;
-        let findings = analyze(&data, &ctx());
-        let mem002 = findings.iter().find(|f| f.id == "MEM002").unwrap();
-        assert!(!mem002.explanation.contains("stronger signal"));
+        assert!(!find(&analyze(&data, &ctx()), "MEM002")
+            .explanation
+            .contains("stronger signal"));
     }
 
     #[test]
     fn critical_finding_when_memory_low_and_swap_exhausted() {
-        let mut data = base_data();
-        data.mem_available_kb = 200_000; // ~1.2% available
-        data.swap_free_kb = 0; // swap exhausted
+        let mut data = minimal();
+        data.mem_available_kb = 200_000;
+        data.swap_free_kb = 0;
         let findings = analyze(&data, &ctx());
-        let mem003 = findings.iter().find(|f| f.id == "MEM003");
-        assert!(mem003.is_some());
-        assert_eq!(mem003.unwrap().severity, Severity::Critical);
+        assert_eq!(find(&findings, "MEM003").severity, Severity::Critical);
+        data.swap_free_kb = 1000; // swap still has room
+        assert!(!ids(&analyze(&data, &ctx())).contains(&"MEM003"));
     }
 
     #[test]
-    fn no_critical_finding_when_swap_still_has_room() {
-        let mut data = base_data();
-        data.mem_available_kb = 200_000; // low, but swap still has room
+    fn critical_machine_leads_with_the_critical_finding() {
+        let mut data = healthy();
+        data.mem_available_kb = 200_000;
+        data.swap_total_kb = 0;
+        data.swap_free_kb = 0;
         let findings = analyze(&data, &ctx());
-        assert!(!findings.iter().any(|f| f.id == "MEM003"));
+        assert_eq!(findings[0].id, "MEM003");
+        assert!(ids(&findings).contains(&"MEM004"));
     }
 
     #[test]
-    fn dirty_pages_info_when_below_background_threshold() {
-        let findings = analyze(&base_data(), &ctx());
-        let mem005 = findings.iter().find(|f| f.id == "MEM005").unwrap();
-        assert_eq!(mem005.severity, Severity::Info);
-    }
-
-    #[test]
-    fn dirty_pages_warning_at_background_ratio() {
-        let mut data = base_data();
-        // 10% of 16_384_000 = 1_638_400
-        data.dirty_kb = 1_700_000;
-        let findings = analyze(&data, &ctx());
-        let mem005 = findings.iter().find(|f| f.id == "MEM005").unwrap();
-        assert_eq!(mem005.severity, Severity::Warning);
-        assert!(mem005.recommendation.is_some());
-    }
-
-    #[test]
-    fn dirty_pages_error_at_dirty_ratio() {
-        let mut data = base_data();
-        // 20% of 16_384_000 = 3_276_800
-        data.dirty_kb = 3_400_000;
-        let findings = analyze(&data, &ctx());
-        let mem005 = findings.iter().find(|f| f.id == "MEM005").unwrap();
-        assert_eq!(mem005.severity, Severity::Error);
+    fn dirty_pages_tiers_on_minimal_data() {
+        // 16_384_000 kB: background 1_638_400, throttling from 2_457_600,
+        // hard limit 3_276_800.
+        let sev = |dirty: u64| {
+            let mut data = minimal();
+            data.dirty_kb = dirty;
+            find(&analyze(&data, &ctx()), "MEM005").severity
+        };
+        assert_eq!(sev(16_000), Severity::Info);
+        assert_eq!(
+            sev(1_700_000),
+            Severity::Info,
+            "background flushing is normal"
+        );
+        assert_eq!(sev(2_500_000), Severity::Warning);
+        assert_eq!(sev(3_400_000), Severity::Error);
     }
 
     #[test]
     fn dirty_pages_handles_bytes_based_tuning_gracefully() {
-        let mut data = base_data();
-        data.dirty_ratio = 0; // ratio tuning disabled in favor of *_bytes
-        data.dirty_kb = 5_000_000; // would be well above 20% if compared naively
-        let findings = analyze(&data, &ctx());
-        let mem005 = findings.iter().find(|f| f.id == "MEM005").unwrap();
-        assert_eq!(mem005.severity, Severity::Info);
-        assert!(mem005.explanation.contains("dirty_bytes"));
+        let mut data = minimal();
+        data.dirty_ratio = 0;
+        data.dirty_kb = 5_000_000;
+        let f = analyze(&data, &ctx())
+            .into_iter()
+            .find(|f| f.id == "MEM005")
+            .unwrap();
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.explanation.contains("dirty_bytes"));
     }
 
     #[test]
-    fn shared_memory_info_when_normal() {
-        let findings = analyze(&base_data(), &ctx());
-        let mem006 = findings.iter().find(|f| f.id == "MEM006").unwrap();
-        assert_eq!(mem006.severity, Severity::Info);
+    fn shared_memory_tiers() {
+        let sev = |shmem: u64| {
+            let mut data = minimal();
+            data.shmem_kb = shmem;
+            find(&analyze(&data, &ctx()), "MEM006").severity
+        };
+        assert_eq!(sev(200_000), Severity::Info);
+        assert_eq!(sev(2_000_000), Severity::Warning);
+        assert_eq!(sev(5_000_000), Severity::Error);
     }
 
-    #[test]
-    fn shared_memory_warning_tier() {
-        let mut data = base_data();
-        data.shmem_kb = 2_000_000; // ~12.2%
-        let findings = analyze(&data, &ctx());
-        let mem006 = findings.iter().find(|f| f.id == "MEM006").unwrap();
-        assert_eq!(mem006.severity, Severity::Warning);
-        assert!(mem006.recommendation.is_some());
-    }
+    // ---- invariants over many machines -----------------------------
 
-    #[test]
-    fn shared_memory_error_tier() {
-        let mut data = base_data();
-        data.shmem_kb = 5_000_000; // ~30.5%
-        let findings = analyze(&data, &ctx());
-        let mem006 = findings.iter().find(|f| f.id == "MEM006").unwrap();
-        assert_eq!(mem006.severity, Severity::Error);
+    /// A set of machines, each in a different kind of trouble.
+    fn scenarios() -> Vec<(&'static str, MemoryRawData)> {
+        let mut out = vec![("healthy", healthy()), ("minimal", minimal())];
+
+        let mut tight = healthy();
+        tight.mem_available_kb = 1_000_000;
+        tight.swap_free_kb = 300_000;
+        tight.processes = vec![proc(10, "java", 8_000_000), proc(11, "java", 1_000_000)];
+        tight.pressure = Some(MemoryPressure {
+            some: PsiLine {
+                avg10: 35.0,
+                avg60: 28.0,
+                avg300: 12.0,
+                total_us: 1,
+            },
+            full: Some(PsiLine {
+                avg10: 9.0,
+                avg60: 6.0,
+                avg300: 2.0,
+                total_us: 1,
+            }),
+        });
+        tight.vmstat = Some(VmstatCounters {
+            oom_kill: 2,
+            pswpout: 4_000_000,
+            ..Default::default()
+        });
+        out.push(("tight", tight));
+
+        let mut no_swap = healthy();
+        no_swap.swap_total_kb = 0;
+        no_swap.swap_free_kb = 0;
+        no_swap.mem_available_kb = 300_000;
+        out.push(("critical, no swap", no_swap));
+
+        let mut shm = healthy();
+        shm.shmem_kb = 5_000_000;
+        shm.tmpfs_mounts = vec![TmpfsMount {
+            mount_point: "/dev/shm".into(),
+            size_kb: 8_000_000,
+            used_kb: 7_800_000,
+        }];
+        shm.sysv_shm = Some(vec![SysvSegment {
+            shmid: 9,
+            size_kb: 2_000_000,
+            nattch: 0,
+            rss_kb: 2_000_000,
+            swap_kb: 0,
+            uid: 0,
+        }]);
+        out.push(("shared memory leak", shm));
+
+        let mut zram = healthy();
+        zram.swap_devices = vec![
+            SwapDevice {
+                path: "/dev/zram0".into(),
+                kind: SwapKind::Zram,
+                size_kb: 8_000_000,
+                used_kb: 6_000_000,
+                priority: 10,
+                zram: Some(ZramStats {
+                    original_kb: 6_000_000,
+                    compressed_kb: 4_800_000,
+                    memory_used_kb: 4_800_000,
+                    algorithm: Some("lzo-rle".into()),
+                }),
+                rotational: None,
+            },
+            SwapDevice {
+                path: "/dev/sda2".into(),
+                kind: SwapKind::Partition,
+                size_kb: 4_000_000,
+                used_kb: 0,
+                priority: 20,
+                zram: None,
+                rotational: Some(true),
+            },
+        ];
+        zram.swappiness = 150;
+        zram.vm = VmTunables {
+            page_cluster: Some(3),
+            zswap_enabled: Some(true),
+            ..Default::default()
+        };
+        out.push(("badly configured swap", zram));
+
+        let mut kernel = healthy();
+        kernel.detail.slab_kb = 4_000_000;
+        kernel.detail.sunreclaim_kb = 3_800_000;
+        kernel.detail.page_tables_kb = 1_500_000;
+        kernel.vm = VmTunables {
+            min_free_kbytes: Some(2_000_000),
+            overcommit_memory: Some(2),
+            thp_enabled: Some("always".into()),
+            ..Default::default()
+        };
+        kernel.detail.commit_limit_kb = 10_000_000;
+        kernel.detail.committed_as_kb = 10_500_000;
+        kernel.detail.hugepages_total = 5000;
+        kernel.detail.hugepages_free = 5000;
+        kernel.detail.hugepage_size_kb = 2048;
+        kernel.processes = vec![proc(1, "mongod", 3_000_000)];
+        out.push(("kernel and tuning trouble", kernel));
+
+        let mut writeback = healthy();
+        writeback.dirty_kb = 3_400_000;
+        writeback.detail.active_file_kb = 500_000;
+        writeback.detail.inactive_file_kb = 400_000;
+        writeback.mem_available_kb = 1_200_000;
+        out.push(("writeback storm", writeback));
+
+        out
     }
 
     #[test]
     fn confidence_never_reported_below_60() {
-        for data in [base_data()] {
+        for (name, data) in scenarios() {
             for f in analyze(&data, &ctx()) {
-                assert!(f.confidence.percent >= 60);
+                assert!(
+                    f.confidence.percent >= 60,
+                    "{name}: {} at {}",
+                    f.id,
+                    f.confidence.percent
+                );
             }
+        }
+    }
+
+    #[test]
+    fn every_problem_comes_with_a_numbered_solution() {
+        let mut checked = 0;
+        for (name, data) in scenarios() {
+            for f in analyze(&data, &ctx()) {
+                if f.severity >= Severity::Warning {
+                    let rec = f.recommendation.as_deref().unwrap_or_else(|| {
+                        panic!("{name}: {} ({}) has no recommendation", f.id, f.severity)
+                    });
+                    assert!(
+                        rec.starts_with("1. "),
+                        "{name}: {} recommendation is not a step list:\n{rec}",
+                        f.id
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(
+            checked >= 12,
+            "scenarios should exercise many problem findings, got {checked}"
+        );
+    }
+
+    #[test]
+    fn recommendations_have_no_formatting_leftovers() {
+        // Commands are suggestions, never executed; make sure none of them
+        // (or any explanation) still holds a `{}` that was meant to be
+        // filled in, and that no command line is empty.
+        for (name, data) in scenarios() {
+            for f in analyze(&data, &ctx()) {
+                if let Some(rec) = &f.recommendation {
+                    for line in rec.lines().filter(|l| l.starts_with("    ")) {
+                        assert!(
+                            !line.trim().is_empty(),
+                            "{name}: {} has an empty command line",
+                            f.id
+                        );
+                    }
+                    assert!(
+                        !rec.contains('{') || rec.contains("-F") || rec.contains("awk"),
+                        "{name}: {}:\n{rec}",
+                        f.id
+                    );
+                }
+                assert!(!f.explanation.contains("{}"), "{name}: {}", f.id);
+            }
+        }
+    }
+
+    #[test]
+    fn explanations_use_the_tools_binary_units_not_mib_or_gib() {
+        for (name, data) in scenarios() {
+            for f in analyze(&data, &ctx()) {
+                assert!(
+                    !f.explanation.contains("MiB") && !f.explanation.contains("GiB"),
+                    "{name}: {}",
+                    f.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scenarios_trigger_the_findings_they_were_built_for() {
+        let by_name = |wanted: &str| {
+            scenarios()
+                .into_iter()
+                .find(|(n, _)| *n == wanted)
+                .unwrap()
+                .1
+        };
+
+        let tight = analyze(&by_name("tight"), &ctx());
+        assert_eq!(find(&tight, "MEM009").severity, Severity::Error);
+        assert!(find(&tight, "MEM007").severity >= Severity::Warning);
+
+        let shm = analyze(&by_name("shared memory leak"), &ctx());
+        assert_eq!(find(&shm, "MEM006").severity, Severity::Error);
+        assert!(find(&shm, "MEM006")
+            .recommendation
+            .as_deref()
+            .unwrap()
+            .contains("ipcrm"));
+
+        let swap = analyze(&by_name("badly configured swap"), &ctx());
+        assert_eq!(
+            find(&swap, "MEM010").severity,
+            Severity::Warning,
+            "disk outranks zram"
+        );
+
+        let kernel = analyze(&by_name("kernel and tuning trouble"), &ctx());
+        for id in ["MEM011", "MEM012", "MEM013"] {
+            assert!(find(&kernel, id).severity >= Severity::Warning, "{id}");
+        }
+    }
+
+    #[test]
+    fn findings_serialise_to_json() {
+        for (_, data) in scenarios() {
+            let findings = analyze(&data, &ctx());
+            let json = serde_json::to_string(&findings).expect("findings serialise");
+            assert!(json.contains("MEM004"));
         }
     }
 }

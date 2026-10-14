@@ -26,10 +26,16 @@ seuils et de la sévérité avant qu'après.
 2. Vérifiez que tout passe avant de proposer une pull request :
 
    ```bash
-   cargo build
-   cargo test
+   cargo build --locked
+   cargo test --locked
    cargo fmt --check
+   cargo clippy --locked --all-targets -- -D warnings
    ```
+
+   Ces quatre commandes sont exactement celles de l'intégration continue
+   (`.github/workflows/ci.yml`), qui les exécute aussi avec Rust 1.75, la
+   version minimale supportée. N'utilisez donc pas d'API plus récente que
+   1.75 (par exemple `Option::is_none_or`, stabilisée en 1.82).
 
 3. Décrivez dans la pull request ce qui change et pourquoi.
 
@@ -49,6 +55,25 @@ pour que ça n'implique de toucher qu'un seul dossier. Pour un module
    terminal/JSON/TUI.
 
 Voir `ARCHITECTURE.md` pour le contrat exact (types, sévérité, confiance).
+
+### Lancer des commandes externes
+
+Passez toujours par `core::command::command()`, jamais par
+`std::process::Command` : cela force la locale `C` **et** applique une
+limite de temps (10 s par défaut, réglable par `--timeout`).
+
+- Outil susceptible d'être lent même en bonne santé (réveil d'un disque,
+  initialisation d'un pilote) : ajoutez `.slow()` (double délai).
+- Plusieurs appels au même outil (par exemple une commande par VM) :
+  utilisez un `ToolSession` — au premier délai dépassé, les appels suivants
+  sont ignorés au lieu d'attendre chacun leur propre limite.
+- Une commande par élément indépendant (un disque, une carte) :
+  `core::parallel::parallel_map` les lance en parallèle, résultats dans
+  l'ordre.
+- Une commande arrêtée pour délai dépassé est consignée automatiquement
+  dans les `notes` du module (« données incomplètes ») ; rien à faire de
+  plus côté module. Traitez simplement l'erreur comme n'importe quel
+  « l'outil n'a pas donné de données ».
 
 ### Règles pour chaque `Finding`
 

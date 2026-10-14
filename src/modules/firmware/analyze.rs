@@ -56,8 +56,9 @@ fn identity_finding(data: &FirmwareRawData) -> Finding {
                         (e.g. some out-of-tree drivers, dual-boot configurations), not \
                         inherently a problem."
             .to_string(),
-        None => " Secure Boot state could not be determined (`mokutil` isn't installed)."
-            .to_string(),
+        None => {
+            " Secure Boot state could not be determined (`mokutil` isn't installed).".to_string()
+        }
     };
 
     let explanation = format!(
@@ -107,54 +108,57 @@ fn identity_finding(data: &FirmwareRawData) -> Finding {
 /// "unsupported hardware" from "BIOS-disabled" (a real, confirmed
 /// ambiguity — see collect.rs).
 fn virt_extensions_finding(data: &FirmwareRawData) -> Finding {
-    let (severity, confidence, explanation, recommendation) =
-        match (data.virt_flag_present, data.kvm_module_loaded, data.dmesg_shows_bios_disabled) {
-            (true, true, _) => (
-                Severity::Info,
-                Confidence::direct_observation(),
-                "Hardware virtualization (Intel VT-x / AMD-V) is supported and \
+    let (severity, confidence, explanation, recommendation) = match (
+        data.virt_flag_present,
+        data.kvm_module_loaded,
+        data.dmesg_shows_bios_disabled,
+    ) {
+        (true, true, _) => (
+            Severity::Info,
+            Confidence::direct_observation(),
+            "Hardware virtualization (Intel VT-x / AMD-V) is supported and \
                  currently active — the kvm_intel/kvm_amd kernel module is loaded."
-                    .to_string(),
-                None,
-            ),
-            (true, false, true) => (
-                Severity::Warning,
-                Confidence::strong_indication(80),
-                "The CPU supports hardware virtualization (Intel VT-x / AMD-V), \
+                .to_string(),
+            None,
+        ),
+        (true, false, true) => (
+            Severity::Warning,
+            Confidence::strong_indication(80),
+            "The CPU supports hardware virtualization (Intel VT-x / AMD-V), \
                  but the BIOS has disabled it — confirmed by a \"disabled by bios\" \
                  message in the current dmesg buffer."
-                    .to_string(),
-                Some(
-                    "Enter BIOS/UEFI Setup and enable the virtualization extension \
+                .to_string(),
+            Some(
+                "Enter BIOS/UEFI Setup and enable the virtualization extension \
                      (often labeled \"Intel VT-x\", \"AMD-V\", \"SVM Mode\", or just \
                      \"Virtualization\", typically under a CPU or Advanced menu)."
-                        .to_string(),
-                ),
+                    .to_string(),
             ),
-            (true, false, false) => (
-                Severity::Info,
-                Confidence::direct_observation(),
-                "The CPU supports hardware virtualization (Intel VT-x / AMD-V). \
+        ),
+        (true, false, false) => (
+            Severity::Info,
+            Confidence::direct_observation(),
+            "The CPU supports hardware virtualization (Intel VT-x / AMD-V). \
                  The kvm_intel/kvm_amd kernel module isn't currently loaded — this \
                  is expected if nothing has needed it yet, not itself a sign of a \
                  problem."
-                    .to_string(),
-                None,
-            ),
-            (false, _, _) => (
-                Severity::Info,
-                Confidence::weak_indication(60),
-                "The CPU doesn't report hardware virtualization support (no \
+                .to_string(),
+            None,
+        ),
+        (false, _, _) => (
+            Severity::Info,
+            Confidence::weak_indication(60),
+            "The CPU doesn't report hardware virtualization support (no \
                  vmx/svm flag in /proc/cpuinfo). This means either the CPU \
                  genuinely lacks Intel VT-x / AMD-V, or the BIOS has disabled it \
                  in a way that hides the flag entirely — the two look identical \
                  from this data alone. Almost all x86_64 CPUs from the last \
                  decade support this, so if you believe this one should, it's \
                  worth checking BIOS Setup."
-                    .to_string(),
-                None,
-            ),
-        };
+                .to_string(),
+            None,
+        ),
+    };
 
     let mut builder = Finding::builder(
         "FIRM002",
@@ -391,7 +395,9 @@ mod tests {
         let findings = analyze(&data, &ctx_x86());
         let f = findings.iter().find(|f| f.id == "FIRM002").unwrap();
         assert_eq!(f.severity, Severity::Info);
-        assert!(f.explanation.contains("look identical from this data alone"));
+        assert!(f
+            .explanation
+            .contains("look identical from this data alone"));
         assert!(f.confidence.percent < 70);
     }
 
@@ -429,7 +435,11 @@ mod tests {
         let mut data = base_data();
         let findings_present = analyze(&data, &ctx_x86());
         assert_eq!(
-            findings_present.iter().find(|f| f.id == "FIRM004").unwrap().severity,
+            findings_present
+                .iter()
+                .find(|f| f.id == "FIRM004")
+                .unwrap()
+                .severity,
             Severity::Info
         );
         data.tpm_present = false;

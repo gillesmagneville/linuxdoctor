@@ -9,6 +9,222 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## 2026-10-14
+
+### Ajouté
+
+- **`schema_version` dans le JSON** : `linuxdoctor audit --output json`
+  commence par `"schema_version": 1`. Règle : ajouter un champ ne change
+  pas la version (les lecteurs ignorent les clés inconnues) ; supprimer,
+  renommer ou changer le sens d'un champ l'incrémente. Les autres champs
+  ne bougent pas. Constante `output::json::SCHEMA_VERSION`, documentée
+  dans `ARCHITECTURE.md` (« Schema version »).
+- **Intégration continue GitHub Actions** (`.github/workflows/ci.yml`),
+  sur chaque push vers `main` et chaque pull request : `cargo fmt
+  --check`, `cargo clippy --all-targets -- -D warnings` (stable), puis
+  `cargo build` et `cargo test` avec Rust 1.75.0 (version minimale) et
+  stable. Tout est lancé avec `--locked` pour respecter les versions
+  figées de `Cargo.lock`. Le format v4 de `Cargo.lock` (Cargo ≥ 1.78) est
+  illisible par Cargo 1.75 : la tâche 1.75 repasse l'en-tête en v3 dans
+  l'exécution de CI uniquement — avec des dépendances 100 % « registry »,
+  le contenu est identique.
+- **Module mémoire entièrement refondu** : 13 contrôles (`MEM001` à
+  `MEM013`) répartis en six thèmes, qui sont aussi les sous-menus du TUI :
+  - *Used memory* : `MEM007` détaille la mémoire utilisée par nature
+    (anonyme des programmes, cache, mémoire partagée, noyau) et les
+    principaux consommateurs par mémoire privée (RssAnon), regroupés par
+    nom de programme ; `MEM004` (vue d'ensemble) et `MEM003` (mémoire
+    critique) sont conservés.
+  - *Page cache* : `MEM008` (cache réellement récupérable, mythe de
+    `drop_caches`, `vfs_cache_pressure`) ; `MEM005` (pages sales).
+  - *Shared memory* : `MEM006` — `Shmem`, remplissage de tmpfs et
+    `/dev/shm`, segments SysV orphelins (`nattch = 0`) avec la commande
+    `ipcrm -m` pour les supprimer.
+  - *Swap* : `MEM001` (swappiness jugé selon le type de swap : zram, SSD,
+    disque rotatif), `MEM002` (activité de swap, programmes les plus
+    swappés, trafic de swap depuis le démarrage), `MEM010` (configuration :
+    absence de swap, priorité zram, taux de compression, algorithme,
+    zswap + zram redondants, `page-cluster`).
+  - *Pressure* : `MEM009` — PSI (`/proc/pressure/memory`), éliminations
+    OOM depuis le démarrage, récupération directe.
+  - *Kernel tuning* : `MEM011` (surallocation et `CommitLimit`),
+    `MEM012` (Transparent Huge Pages, hugepages réservées inutilisées),
+    `MEM013` (slab non récupérable, tables de pages, ZFS ARC,
+    `min_free_kbytes`, ballon).
+- **Recommandations en étapes numérotées**, avec les commandes sur leurs
+  propres lignes (jamais exécutées par l'outil), dimensionnées pour la
+  machine : taille du fichier de swap suggérée, `vm.overcommit_ratio`
+  laissant 20 % de marge, plafond `zfs_arc_max`, etc. Le TUI affiche le
+  titre « Recommendation: » en gras et les commandes en cyan ; la sortie
+  terminal les indente sous un titre en gras.
+- Nouvelles sources de données, toutes facultatives : `/proc/vmstat`,
+  `/proc/pressure/memory`, `/proc/swaps`, `/sys/block/zram*`,
+  `/proc/<pid>/status`, `/proc/sysvipc/shm`, `df -t tmpfs`, fichiers de
+  THP et de `vm.*`, `arcstats` de ZFS. Une source absente supprime
+  seulement les contrôles qui en dépendent. L'audit mémoire reste
+  rapide (~35 ms, ~60 ms avec 2000 processus).
+- `MemoryRawData::from_meminfo()` : construit les données à partir du
+  seul texte de `/proc/meminfo` (utile pour les tests et les exemples).
+- Page d'accueil du module : les problèmes (Warning et plus) passent
+  en premier, la vue d'ensemble `MEM004` ferme la page.
+
+### Changé
+
+- `Cargo.toml` déclare `rust-version = "1.75"` : une chaîne d'outils plus
+  ancienne s'arrête avec un message clair au lieu d'erreurs de compilation
+  obscures. Les scripts de construction ne sont pas affectés (ils ne
+  réécrivent que la ligne `version = ` en début de ligne).
+- **Mise en forme et Clippy sur tout le projet** : `cargo fmt` appliqué à
+  l'ensemble du code (19 fichiers reformatés, sans changement de
+  comportement) et les 7 avertissements Clippy qui restaient corrigés
+  (`trim()` inutile avant `split_whitespace()`, `splitn(2, …)` remplacé
+  par `split_once`, `format!` sans argument, fermeture inutile dans
+  `cli.rs`). `cargo clippy --all-targets -- -D warnings` passe sans
+  avertissement ; la mention « avertissements Clippy » de la section
+  « Limites connues » ci-dessous est donc réglée.
+- **Sémantique de « Cached » corrigée** : la ligne `Cached` de
+  `/proc/meminfo` contient la mémoire partagée (`Shmem`) ; le cache
+  « de fichiers » est désormais calculé sans elle, et la mémoire
+  récupérable compte buffers, cache de fichiers et slab récupérable.
+- Les seuils de pages sales sont calculés sur la mémoire « dirtyable »
+  (libre + cache de fichiers) et non sur la RAM totale, avec trois zones :
+  écriture en arrière-plan (Info), ralentissement des écritures
+  (Warning), blocage (Error). Les réglages `dirty_*_bytes` l'emportent
+  sur les ratios. Une limite en pourcentage qui dépasse 4 GiB sur un
+  gros serveur est signalée en Info avec des plafonds optionnels.
+- Un swap rempli à 80 % ou plus est maintenant un Warning (avant : Info
+  même à 97 %).
+- La mémoire partagée attachée à des segments SysV (PostgreSQL, Oracle…)
+  est considérée comme légitime et n'entre plus dans le jugement en
+  pourcentage.
+- `src/modules/memory/analyze.rs` n'est plus qu'un coordinateur : la
+  logique vit dans `used`, `cache`, `shared`, `swap`, `pressure`,
+  `tuning`, `kernel` et `format`.
+
+### Corrigé
+
+- `tests/hung_tools.rs` : les faux outils définissent aussi `docker` et
+  `podman` (sortie 127). Avec un vrai `docker` lent, le test pouvait
+  dépasser la limite de 1 s et échouer de façon intermittente.
+
+### Tests
+
+- 4 tests unitaires pour l'enveloppe JSON (`schema_version` présent,
+  numérique, premier champ, seul ajout au niveau supérieur) et 2 tests de
+  bout en bout avec le vrai binaire (`tests/json_schema.rs`).
+- 219 tests unitaires pour le module mémoire, dont des invariants vérifiés sur huit scénarios : confiance
+  d'au moins 60 %, étapes numérotées pour tout résultat au-dessus d'Info,
+  aucun `{}` résiduel, pas d'unités MiB/GiB, JSON sérialisable. 10 tests
+  d'intégration (`tests/memory_module.rs`) : serveur sain de 64 Go,
+  poste saturé, zram mal priorisé, segments SysV orphelins, ZFS ARC,
+  rendu terminal et JSON. Total : 567 tests de bibliothèque, 7 CLI,
+  45 d'intégration (619, tous verts).
+- Vérifié sur un système réel : segment SysV orphelin, fichier de 900 Mo
+  dans `/dev/shm`, processus de 3 Go, vraie élimination OOM, vrai swap
+  (fichier de 256 Mo) et rendu dans un vrai terminal (TUI sous tmux).
+
+### Limites connues
+
+- La version minimale de Rust (1.75) n'a pas pu être vérifiée ici (le
+  compilateur local est en 1.97) ; le nouveau code évite les API
+  postérieures connues (par exemple `Option::is_none_or`).
+- Compatibilité avec Rust 1.75 : non vérifiable en local (rustup bloqué dans
+  l'environnement de développement), mais **vérifiée par l'intégration
+  continue** — la tâche « Tests (Rust 1.75.0) » est passée au vert sur la
+  pull request #1, comme les tâches stable, fmt et Clippy.
+
+## 2026-10-07
+
+### Ajouté
+
+- **Délai maximal pour chaque commande externe.** Jusqu'ici, un `virsh`
+  dont le démon ne répondait plus, un `smartctl` sur un disque en
+  difficulté ou un `nvidia-smi` bloqué figeait tout l'audit — et le TUI
+  avec lui, sans message. Chaque commande lancée via
+  `core::command::command()` a maintenant une limite de **10 s** par
+  défaut, réglable avec `--timeout <secondes>` (1 à 3600, avant ou après
+  la sous-commande). `smartctl`, `nvidia-smi` et `docker/podman stats`
+  disposent du double (réveil d'un disque en veille, initialisation du
+  pilote). Au-delà, la commande est tuée et l'audit continue.
+- **Données incomplètes visibles, jamais silencieuses.** Un délai dépassé
+  est consigné dans un nouveau champ `notes` du résultat de chaque
+  module (présent dans le JSON). Le mode terminal affiche
+  `↳ incomplete data: 'virsh list --all --name' did not finish within
+  10s and was stopped` sous le module ; le TUI affiche un bandeau jaune
+  sur la page du module, avec le rappel de `--timeout`. Un module avec
+  des notes reçoit un ⚠ au lieu d'un ✓ : une coche verte affirmerait plus
+  que ce que les données permettent. Les notes sont rattachées au bon
+  module même quand les modules tournent en parallèle (suivi par thread).
+- **Garde-fou par outil (`ToolSession`).** Les ~9 appels `virsh` faits
+  pour chaque VM, et les 3 appels `nvidia-smi`, partagent une session :
+  au premier délai dépassé, les appels suivants sont ignorés. Un
+  `libvirtd` bloqué coûte une limite, pas (nombre de VM × 9) limites.
+- **Modules exécutés en parallèle** (`std::thread::scope`, aucune
+  dépendance ajoutée) : un module lent ne retarde plus que lui-même.
+  L'ordre du menu et des résultats est inchangé. Une erreur **ou une
+  panique** dans un module est isolée dans son `error` ; si le système
+  refuse un thread, le module tourne en ligne plutôt que d'être perdu.
+- **Requêtes SMART en parallèle** (`core::parallel::parallel_map`, 8 à la
+  fois au plus, résultats dans l'ordre des disques) : un serveur à une
+  douzaine de disques n'attend plus chaque `smartctl` l'un après l'autre.
+- Tests : 33 nouveaux tests unitaires (30 bibliothèque + 3 CLI : limite de temps, sortie
+  volumineuse sans interblocage, petit-enfant gardant le tube ouvert,
+  ordre des résultats, concurrence réelle et plafond de threads,
+  isolation d'une panique, attribution des notes au bon module,
+  progression, `--timeout`, rendus terminal/TUI) et 3 tests de bout en
+  bout (`tests/hung_tools.rs`) qui lancent le vrai binaire contre de
+  faux `virsh` qui se bloquent. Contrôle par mutation : sans le
+  garde-fou de session, le test « blocage en cours de route » échoue
+  (6,1 s au lieu de 1,2 s).
+
+### Changé
+
+- `core::command::command()` renvoie désormais un `Cmd` (même usage :
+  `arg`, `args`, `output`, plus `timeout` et `slow`) au lieu d'un
+  `std::process::Command`. Une commande trop lente renvoie une erreur
+  `ErrorKind::TimedOut` ; « outil absent » reste `NotFound`.
+- Le rappel de progression est maintenant
+  `on_progress(terminés, total, en_cours)`. L'écran de démarrage/
+  rafraîchissement du TUI affiche par exemple
+  `10/11 done — waiting for virtualization` : avec des modules
+  simultanés il n'y a plus un seul « module courant ».
+- Le JSON gagne un champ `notes` par module (ajout compatible : les
+  champs existants ne bougent pas).
+
+### Mesures (honnêtes)
+
+Binaire release, mêmes faux outils lents (`virsh`, `smartctl` sur 6
+disques, `mokutil`, `dmesg`, 1 s chacun) :
+
+| Version | Durée de l'audit |
+|---|---|
+| avant (séquentiel) | 10,1 s |
+| modules en parallèle seulement | 6,1 s |
+| + SMART en parallèle | **2,0 s** |
+
+Avec les outils réels de cette machine d'essai (rapides, pas de disque
+physique ni de GPU), la durée est la même, ~0,1 s : le gain n'apparaît
+que lorsque des outils sont réellement lents, ce qui est précisément le
+cas qui posait problème. Le reste de ces 2 s est le module `firmware`,
+qui enchaîne `mokutil` puis `dmesg` en interne.
+
+### Limites connues
+
+- Seul le processus lancé est tué à l'échéance, pas ses éventuels
+  descendants ; ils n'empêchent toutefois jamais l'audit de continuer
+  (les tubes sont abandonnés à l'échéance).
+- Un processus bloqué en attente d'E/S non interruptible (montage NFS
+  mort, disque défaillant) ne peut pas être tué par le noyau avant le
+  retour de l'E/S : l'audit continue sans l'attendre, mais le processus
+  peut rester en sommeil disque jusqu'à son retour.
+- Le fichier `config.toml` décrit dans ARCHITECTURE.md n'existe toujours
+  pas ; `--timeout` est pour l'instant le seul réglage.
+- Cette étape a été compilée et testée avec `rustc` 1.97 (la 1.75 n'était
+  pas installable dans l'environnement d'essai). Le code nouveau n'utilise
+  que des API stables depuis ≤ 1.75 (`thread::scope`, `spawn_scoped`,
+  `thread_local!` avec `const`, `recv_timeout`), vérifié par relecture ;
+  la CI prévue à l'étape suivante compilera explicitement avec 1.75.
+
 ## 2026-09-14
 
 ### Changé — politique de gestion de version revue

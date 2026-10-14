@@ -41,6 +41,7 @@ fn main() {
         swappiness: 10,
         dirty_ratio: 20,
         dirty_background_ratio: 10,
+        ..Default::default()
     };
     let memory_findings = analyze_memory(&critical_mem_data, &ctx);
 
@@ -126,18 +127,21 @@ fn main() {
                 findings: memory_findings,
                 error: None,
                 skipped: false,
+                notes: Vec::new(),
             },
             ModuleRunResult {
                 module_id: "cpu",
                 findings: cpu_findings,
                 error: None,
                 skipped: false,
+                notes: Vec::new(),
             },
             ModuleRunResult {
                 module_id: "storage",
                 findings: storage_findings,
                 error: None,
                 skipped: false,
+                notes: Vec::new(),
             },
         ],
     };
@@ -149,7 +153,7 @@ fn main() {
 
     println!("--- startup progress screen (mid-scan, module 3 of 9) ---\n");
     terminal
-        .draw(|f| draw_progress_screen(f, 3, 9, "storage"))
+        .draw(|f| draw_progress_screen(f, 3, 9, &["storage", "virtualization"]))
         .unwrap();
     print_buffer(&terminal);
 

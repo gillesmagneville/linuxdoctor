@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::command::command;
+use crate::core::command::ToolSession;
 use crate::core::error::ModuleError;
 use crate::modules::virtualization::collect::lookup_pci_description;
 
@@ -133,7 +133,13 @@ pub fn parse_drm_uevent(text: &str) -> (Option<String>, Option<String>, Option<S
 /// separate CPU/chipset vendor ID, which is *not* a GPU vendor ID and
 /// deliberately not matched here), `0x8086` Intel.
 pub fn classify_vendor(pci_id: &str) -> GpuVendor {
-    match pci_id.split(':').next().unwrap_or("").to_lowercase().as_str() {
+    match pci_id
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
         "10de" => GpuVendor::Nvidia,
         "1002" => GpuVendor::Amd,
         "8086" => GpuVendor::Intel,
@@ -169,7 +175,11 @@ pub fn normalize_pci_address(addr: &str) -> Option<String> {
 /// - `hwmon/hwmon*/fan1_input`: RPM
 fn enrich_amd(gpu: &mut GpuInfo, device_dir: &Path) {
     let read_u64 = |name: &str| -> Option<u64> {
-        fs::read_to_string(device_dir.join(name)).ok()?.trim().parse().ok()
+        fs::read_to_string(device_dir.join(name))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
     };
 
     gpu.vram_total_mb = read_u64("mem_info_vram_total").map(|b| b / 1024 / 1024);
@@ -188,7 +198,11 @@ fn enrich_amd(gpu: &mut GpuInfo, device_dir: &Path) {
 
     if let Some(hwmon_dir) = hwmon_dir {
         let read_hwmon_f64 = |name: &str| -> Option<f64> {
-            fs::read_to_string(hwmon_dir.join(name)).ok()?.trim().parse().ok()
+            fs::read_to_string(hwmon_dir.join(name))
+                .ok()?
+                .trim()
+                .parse()
+                .ok()
         };
         gpu.temperature_c = read_hwmon_f64("temp1_input").map(|m| m / 1000.0);
         gpu.temperature_crit_c = read_hwmon_f64("temp1_crit").map(|m| m / 1000.0);
@@ -217,7 +231,11 @@ pub fn parse_pp_dpm_current_clock(text: &str) -> Option<u64> {
             continue;
         }
         let (_, freq_part) = line.trim_end_matches('*').trim().split_once(':')?;
-        let digits: String = freq_part.trim().chars().take_while(|c| c.is_ascii_digit()).collect();
+        let digits: String = freq_part
+            .trim()
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
         if let Ok(mhz) = digits.parse() {
             return Some(mhz);
         }
@@ -239,7 +257,9 @@ pub fn parse_pp_dpm_current_clock(text: &str) -> Option<u64> {
 /// presenting it as a guaranteed-live snapshot.
 fn enrich_pcie_link_info(gpu: &mut GpuInfo, device_dir: &Path) {
     let read_str = |name: &str| -> Option<String> {
-        fs::read_to_string(device_dir.join(name)).ok().map(|s| s.trim().to_string())
+        fs::read_to_string(device_dir.join(name))
+            .ok()
+            .map(|s| s.trim().to_string())
     };
     gpu.pcie_link_speed_current = read_str("current_link_speed");
     gpu.pcie_link_speed_max = read_str("max_link_speed");
@@ -276,41 +296,6 @@ pub struct NvidiaSample {
     fan_percent: Option<f64>,
     clock_core_mhz: Option<u64>,
     clock_memory_mhz: Option<u64>,
-}
-
-fn run_nvidia_smi_query() -> Option<String> {
-    let output = command("nvidia-smi")
-        .arg(format!("--query-gpu={NVIDIA_QUERY_FIELDS}"))
-        .arg("--format=csv,noheader,nounits")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-/// The plain `nvidia-smi` header (no args) is the *only* place the
-/// maximum-supported CUDA version is exposed — confirmed not present in
-/// `--query-gpu`'s field set.
-fn run_nvidia_smi_header() -> Option<String> {
-    let output = command("nvidia-smi").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-fn run_nvidia_smi_processes() -> Option<String> {
-    let output = command("nvidia-smi")
-        .arg("--query-compute-apps=pid,process_name,used_memory")
-        .arg("--format=csv,noheader,nounits")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// Parse `nvidia-smi --query-gpu=... --format=csv,noheader,nounits`
@@ -471,7 +456,15 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
     let mut nvidia_max_cuda_version = None;
 
     if gpus.iter().any(|g| g.vendor == GpuVendor::Nvidia) {
-        if let Some(csv) = run_nvidia_smi_query() {
+        // One session for the three nvidia-smi calls: when the driver is
+        // wedged the first one times out and the other two are skipped,
+        // so the cost is one time limit, not three. `slow()` because the
+        // first call after boot can take a few seconds to initialize the
+        // driver.
+        let mut nvidia = ToolSession::new("nvidia-smi").slow();
+
+        let query = format!("--query-gpu={NVIDIA_QUERY_FIELDS}");
+        if let Some(csv) = nvidia.run(&[&query, "--format=csv,noheader,nounits"]) {
             let samples = parse_nvidia_smi_csv(&csv);
             for gpu in &mut gpus {
                 if gpu.vendor != GpuVendor::Nvidia {
@@ -499,7 +492,10 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
             }
         }
 
-        if let Some(header) = run_nvidia_smi_header() {
+        // The plain `nvidia-smi` header (no args) is the *only* place the
+        // maximum-supported CUDA version is exposed — confirmed not
+        // present in `--query-gpu`'s field set.
+        if let Some(header) = nvidia.run(&[]) {
             nvidia_max_cuda_version = parse_nvidia_max_cuda_version(&header);
         }
 
@@ -516,7 +512,10 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
             .map(|(i, _)| i)
             .collect();
         if nvidia_indices.len() == 1 {
-            if let Some(proc_text) = run_nvidia_smi_processes() {
+            if let Some(proc_text) = nvidia.run(&[
+                "--query-compute-apps=pid,process_name,used_memory",
+                "--format=csv,noheader,nounits",
+            ]) {
                 gpus[nvidia_indices[0]].processes = parse_nvidia_compute_apps(&proc_text);
             }
         }

@@ -29,9 +29,9 @@ impl Severity {
     /// something this small" call in ARCHITECTURE.md.
     pub fn ansi_color(&self) -> &'static str {
         match self {
-            Severity::Info => "\x1b[32m",     // green
-            Severity::Warning => "\x1b[33m",  // yellow
-            Severity::Error => "\x1b[31m",    // red
+            Severity::Info => "\x1b[32m",       // green
+            Severity::Warning => "\x1b[33m",    // yellow
+            Severity::Error => "\x1b[31m",      // red
             Severity::Critical => "\x1b[1;31m", // bold red
         }
     }

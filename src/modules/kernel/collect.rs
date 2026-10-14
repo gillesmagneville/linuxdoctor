@@ -46,26 +46,128 @@ pub struct TaintBit {
 }
 
 pub const TAINT_BITS: &[TaintBit] = &[
-    TaintBit { bit: 0, code: "P", severity: Severity::Info, description: "a proprietary module was loaded" },
-    TaintBit { bit: 1, code: "F", severity: Severity::Warning, description: "a module was force-loaded (insmod -f)" },
-    TaintBit { bit: 2, code: "S", severity: Severity::Warning, description: "the kernel is running on an out-of-specification hardware configuration" },
-    TaintBit { bit: 3, code: "R", severity: Severity::Warning, description: "a module was force-unloaded (rmmod -f)" },
-    TaintBit { bit: 4, code: "M", severity: Severity::Error, description: "a processor reported a Machine Check Exception (MCE) — possible hardware fault" },
-    TaintBit { bit: 5, code: "B", severity: Severity::Error, description: "a bad page reference or unexpected page flags were found — hardware or kernel bug" },
-    TaintBit { bit: 6, code: "U", severity: Severity::Info, description: "userspace explicitly requested the tainted flag be set" },
-    TaintBit { bit: 7, code: "D", severity: Severity::Error, description: "the kernel died recently (an OOPS or BUG occurred)" },
-    TaintBit { bit: 8, code: "A", severity: Severity::Info, description: "an ACPI table was overridden by the administrator" },
-    TaintBit { bit: 9, code: "W", severity: Severity::Warning, description: "the kernel issued a warning (WARN)" },
-    TaintBit { bit: 10, code: "C", severity: Severity::Info, description: "a staging (not yet fully mainlined) driver was loaded" },
-    TaintBit { bit: 11, code: "I", severity: Severity::Info, description: "the kernel worked around a bug in the platform firmware (BIOS/UEFI)" },
-    TaintBit { bit: 12, code: "O", severity: Severity::Info, description: "an externally-built (\"out-of-tree\") module was loaded" },
-    TaintBit { bit: 13, code: "E", severity: Severity::Info, description: "an unsigned module was loaded" },
-    TaintBit { bit: 14, code: "L", severity: Severity::Error, description: "a soft lockup occurred (a CPU was stuck for an extended period)" },
-    TaintBit { bit: 15, code: "K", severity: Severity::Info, description: "the kernel has been live-patched" },
-    TaintBit { bit: 16, code: "X", severity: Severity::Info, description: "an auxiliary, distribution-defined taint flag is set" },
-    TaintBit { bit: 17, code: "T", severity: Severity::Info, description: "the kernel was built with the struct randomization plugin" },
-    TaintBit { bit: 18, code: "N", severity: Severity::Info, description: "an in-kernel test (e.g. KUnit) has been run" },
-    TaintBit { bit: 19, code: "J", severity: Severity::Warning, description: "userspace used a mutating debug operation via /dev/fwctl" },
+    TaintBit {
+        bit: 0,
+        code: "P",
+        severity: Severity::Info,
+        description: "a proprietary module was loaded",
+    },
+    TaintBit {
+        bit: 1,
+        code: "F",
+        severity: Severity::Warning,
+        description: "a module was force-loaded (insmod -f)",
+    },
+    TaintBit {
+        bit: 2,
+        code: "S",
+        severity: Severity::Warning,
+        description: "the kernel is running on an out-of-specification hardware configuration",
+    },
+    TaintBit {
+        bit: 3,
+        code: "R",
+        severity: Severity::Warning,
+        description: "a module was force-unloaded (rmmod -f)",
+    },
+    TaintBit {
+        bit: 4,
+        code: "M",
+        severity: Severity::Error,
+        description:
+            "a processor reported a Machine Check Exception (MCE) — possible hardware fault",
+    },
+    TaintBit {
+        bit: 5,
+        code: "B",
+        severity: Severity::Error,
+        description:
+            "a bad page reference or unexpected page flags were found — hardware or kernel bug",
+    },
+    TaintBit {
+        bit: 6,
+        code: "U",
+        severity: Severity::Info,
+        description: "userspace explicitly requested the tainted flag be set",
+    },
+    TaintBit {
+        bit: 7,
+        code: "D",
+        severity: Severity::Error,
+        description: "the kernel died recently (an OOPS or BUG occurred)",
+    },
+    TaintBit {
+        bit: 8,
+        code: "A",
+        severity: Severity::Info,
+        description: "an ACPI table was overridden by the administrator",
+    },
+    TaintBit {
+        bit: 9,
+        code: "W",
+        severity: Severity::Warning,
+        description: "the kernel issued a warning (WARN)",
+    },
+    TaintBit {
+        bit: 10,
+        code: "C",
+        severity: Severity::Info,
+        description: "a staging (not yet fully mainlined) driver was loaded",
+    },
+    TaintBit {
+        bit: 11,
+        code: "I",
+        severity: Severity::Info,
+        description: "the kernel worked around a bug in the platform firmware (BIOS/UEFI)",
+    },
+    TaintBit {
+        bit: 12,
+        code: "O",
+        severity: Severity::Info,
+        description: "an externally-built (\"out-of-tree\") module was loaded",
+    },
+    TaintBit {
+        bit: 13,
+        code: "E",
+        severity: Severity::Info,
+        description: "an unsigned module was loaded",
+    },
+    TaintBit {
+        bit: 14,
+        code: "L",
+        severity: Severity::Error,
+        description: "a soft lockup occurred (a CPU was stuck for an extended period)",
+    },
+    TaintBit {
+        bit: 15,
+        code: "K",
+        severity: Severity::Info,
+        description: "the kernel has been live-patched",
+    },
+    TaintBit {
+        bit: 16,
+        code: "X",
+        severity: Severity::Info,
+        description: "an auxiliary, distribution-defined taint flag is set",
+    },
+    TaintBit {
+        bit: 17,
+        code: "T",
+        severity: Severity::Info,
+        description: "the kernel was built with the struct randomization plugin",
+    },
+    TaintBit {
+        bit: 18,
+        code: "N",
+        severity: Severity::Info,
+        description: "an in-kernel test (e.g. KUnit) has been run",
+    },
+    TaintBit {
+        bit: 19,
+        code: "J",
+        severity: Severity::Warning,
+        description: "userspace used a mutating debug operation via /dev/fwctl",
+    },
 ];
 
 /// Thin I/O wrapper: reads /proc/sys/kernel/tainted, and shells out to
@@ -345,9 +447,15 @@ mod tests {
         );
         assert_eq!(
             info.compiler.as_deref(),
-            Some("gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38")
+            Some(
+                "gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38"
+            )
         );
-        assert!(info.build_tag.as_deref().unwrap().starts_with("#101-Ubuntu"));
+        assert!(info
+            .build_tag
+            .as_deref()
+            .unwrap()
+            .starts_with("#101-Ubuntu"));
     }
 
     #[test]
@@ -359,7 +467,8 @@ mod tests {
 
     #[test]
     fn scans_notable_cmdline_flags() {
-        let flags = scan_notable_cmdline_flags("BOOT_IMAGE=/vmlinuz root=/dev/sda1 mitigations=off quiet");
+        let flags =
+            scan_notable_cmdline_flags("BOOT_IMAGE=/vmlinuz root=/dev/sda1 mitigations=off quiet");
         assert_eq!(flags, vec!["mitigations=off"]);
 
         let flags2 = scan_notable_cmdline_flags("root=/dev/sda1 nomodeset quiet splash");

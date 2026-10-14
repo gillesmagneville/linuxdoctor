@@ -60,11 +60,12 @@ linuxdoctor/
 │   │
 │   ├── core/
 │   │   ├── mod.rs
-│   │   ├── command.rs         # Command builder forcing LC_ALL=C/LANG=C —
-│   │   │                      # every collector that shells out and parses
-│   │   │                      # CLI text output uses this, not std::process::Command
+│   │   ├── command.rs         # Command builder forcing LC_ALL=C/LANG=C and a
+│   │   │                      # hard time limit — every collector that shells out
+│   │   │                      # uses this, not std::process::Command
 │   │   ├── context.rs        # shared, read-only system facts
-│   │   ├── engine.rs         # orchestration, failure isolation
+│   │   ├── engine.rs         # concurrent orchestration, failure isolation
+│   │   ├── parallel.rs       # ordered parallel map for per-device work (SMART)
 │   │   └── error.rs
 │   │
 │   ├── models/
@@ -76,7 +77,7 @@ linuxdoctor/
 │   │
 │   ├── modules/
 │   │   ├── mod.rs            # the Module trait + all_modules()
-│   │   ├── memory/
+│   │   ├── memory/           # richest module: see "Memory module layout" below
 │   │   ├── cpu/
 │   │   ├── numa/
 │   │   ├── gpu/
@@ -163,9 +164,10 @@ no diagnostic logic.
 
 ## Core Engine
 
-Orchestrates execution, builds `Context`, isolates per-module failures, aggregates
-`Finding`s into a `Report`. The engine never interprets system data itself — that is
-always a module's job.
+Orchestrates execution, builds `Context`, runs the selected modules concurrently,
+isolates per-module failures, aggregates `Finding`s into a `Report`. The engine never
+interprets system data itself — that is always a module's job. See "Parallel
+Execution" and "Error Handling" below.
 
 ## Context
 
@@ -240,7 +242,8 @@ no direct kernel interface for the fact needed. Every subprocess call uses
 `LC_ALL=C`/`LANG=C` so a translated CLI tool (confirmed real-world case: `virsh
 dominfo` on a French-locale desktop translates its field labels via gettext, silently
 breaking a parser hardcoded to the English "State:" string) can't produce a
-locale-dependent parsing failure. Network is a clean example of the
+locale-dependent parsing failure. Every external command also has a
+**time limit** (next paragraph). Network is a clean example of the
 former: `/proc/net/dev`, `/proc/net/route`, `/sys/class/net/*`, and `/etc/resolv.conf`
 cover its needs with zero subprocess calls. Currently shelling out: `df` (Storage —
 space and inode usage), `systemctl` (Systemd — system state, failed units), `smartctl`
@@ -259,6 +262,19 @@ lookup as Virtualization for the PCI description; AMD's own equivalent needs no
 external tool at all, reading `/sys/class/drm/card*/device/*` and its `hwmon`
 subdirectory directly), and `mokutil` (Firmware — Secure Boot state; the rest of
 Firmware's checks are plain sysfs reads with no external tool at all).
+**Time limit.** `core::command::command()` returns a `Cmd` whose `output()` stops the
+child and returns an `ErrorKind::TimedOut` error if it runs longer than the limit — 10
+seconds by default, changeable with `--timeout <seconds>`. Tools that may legitimately
+take a few seconds on a healthy machine (`smartctl` waking a sleeping disk,
+`nvidia-smi` initializing the driver, `docker stats` over many containers) call
+`.slow()` for twice the allowance. Several calls to the *same* tool that should give
+up together (the nine-or-so per-VM `virsh` calls, the three `nvidia-smi` calls) go
+through a `ToolSession`: after the first timeout the tool is considered hung and the
+remaining calls are skipped, so a wedged daemon costs one limit, not one per call.
+Both pipes are drained on their own threads (no stdout/stderr deadlock on large
+output), the child is killed — not waited on forever — because a process stuck in
+uninterruptible I/O cannot be reaped, and a grandchild that keeps the pipe open cannot
+hold the audit past the deadline.
 `lsblk`, `journalctl`, `ethtool` remain plausible future
 collectors for modules not
 yet built (or, for `ethtool`, already pointed to in a *recommendation* string without
@@ -313,24 +329,32 @@ finding (e.g. CPU's per-socket `CPU004`, Storage's per-filesystem `STOR001`/`STO
 and per-device `STOR004`, NUMA's per-node `NUMA001`, Systemd's per-unit `SYSD002`,
 Network's per-interface `NET001`/`NET002`).
 
-Example:
+Example (abridged; recommendations are numbered steps, commands on their own
+lines — they are suggestions and are never executed):
 
 ```
 MEM002 — Swap Activity
 WARNING · Confidence: 85% (strong indication)
 
 Evidence
-  Swap used:     4.2 GB
-  Free RAM:      420 MB (4.1% of total)
+  swap_used_percent:   49.9
+  mem_available_pct:   5.5
+  vm.swappiness:       60
+  swapped_program_1:   chrome (PID 2100): 2.0 GB
 
 Explanation
-  The system is actively swapping while very little RAM remains free.
-  This commonly indicates memory pressure, not necessarily a problem
-  on its own, but worth investigating if performance feels degraded.
+  The system is actively swapping while relatively little RAM remains free.
+  This commonly indicates memory pressure, though it is not necessarily a
+  problem on its own — worth investigating if performance feels degraded.
 
-Recommendation
-  Identify high-memory processes (ps, smem) and consider whether
-  more RAM or lower memory usage is needed.
+  4.0 GB of 8.0 GB of swap is in use (49.9%).
+
+Recommendation:
+  1. See which programs are in swap (chrome has the most):
+      grep -H VmSwap /proc/[0-9]*/status 2>/dev/null | sort -k2 -n -r | head
+  2. Check whether the machine is swapping right now: ...
+      vmstat 1 5
+  3. Reduce the demand for memory: ...
 ```
 
 A per-instance example, for contrast:
@@ -411,12 +435,14 @@ Compact per-module status line, followed by full detail for anything above INFO:
 
 ## JSON Renderer
 
-Serializes the full `Report` — `context` once, then `results` grouped by module
-(`module_id`, that module's `findings`, and `error`/`skipped` for modules that didn't
-run cleanly):
+Serializes the full `Report` — a `schema_version` first, then `context` once, then
+`results` grouped by module (`module_id`, that module's `findings`, `error`/`skipped`
+for modules that didn't run cleanly, and `notes` for modules whose data may be
+incomplete):
 
 ```json
 {
+  "schema_version": 1,
   "context": { "hostname": "web01", "kernel_version": "6.8.0-31-generic", "...": "..." },
   "results": [
     {
@@ -435,17 +461,38 @@ run cleanly):
         }
       ],
       "error": null,
-      "skipped": false
+      "skipped": false,
+      "notes": []
     },
     {
       "module_id": "systemd",
       "findings": [],
       "error": null,
-      "skipped": true
+      "skipped": true,
+      "notes": []
     }
   ]
 }
 ```
+
+### Schema version
+
+`schema_version` (an integer, `output::json::SCHEMA_VERSION`, currently `1`) names the
+layout of the document so scripts and stored reports can tell what they are reading.
+It is added by a small wrapper in `output/json.rs`, not by `Report` itself, so
+in-memory code and the other renderers never see it.
+
+- **Adding** a field (a new key in a finding, a new note, a new top-level section)
+  does **not** change the version: readers must ignore keys they do not know.
+- **Removing**, renaming or re-typing a field, or changing what a value means
+  (for example the unit of an evidence value), **bumps** it by one, with a
+  `### Changé` entry in `CHANGELOG.md`.
+- Evidence keys and finding ids are part of the contract in the same way: a finding's
+  `id` keeps its meaning forever; a retired id is not reused.
+
+Tests: unit tests in `output/json.rs` and the end-to-end `tests/json_schema.rs` (real
+binary) pin the envelope — `schema_version` is the first key and the only addition to
+the report's top level.
 
 ## Interactive TUI
 
@@ -467,8 +514,9 @@ two — no diagnostic logic lives here either. Its extra behavior:
 - **Startup/refresh progress screen.** `TuiApp` owns its `Report` (not a borrow —
   this is what makes replacing it on refresh possible at all) and is constructed
   only *after* an initial scan that runs behind a progress gauge
-  (`core::engine::run_audit_with_progress`, which takes an `on_progress(index,
-  total, module_id)` callback the TUI uses to redraw between modules). The `r` key
+  (`core::engine::run_audit_with_progress`, which takes an `on_progress(done,
+  total, pending)` callback the TUI uses to redraw each time a module finishes — the
+  label names the modules still running, since they run concurrently). The `r` key
   re-runs the same scan behind the same screen and swaps the result in via
   `TuiApp::replace_report`, preserving the current module selection when it still
   exists in the new report. This exists specifically so a module with a slow
@@ -494,12 +542,28 @@ Allowed:     CPU  →  Context  ←  Storage      (both read the same starting f
 # Parallel Execution
 
 Because v1 modules never depend on each other's output (see Context, above),
-execution is embarrassingly parallel — no dependency graph or scheduler is needed
-yet. Use `std::thread::scope` (stdlib, zero dependencies) once there are enough
-modules for parallelism to matter; an async runtime (`tokio`) is deliberately not
-used, since the actual work is short-lived blocking I/O (`/proc` reads, occasional
-subprocess calls), not high-concurrency networking — pulling in an async runtime for
-that would violate the "every dependency must justify its existence" principle.
+execution is embarrassingly parallel — no dependency graph or scheduler is needed.
+`core::engine::run_modules` starts every selected module on its own thread with
+`std::thread::scope` (stdlib, zero dependencies) and returns the results **in menu
+order**, whichever finishes first. An async runtime (`tokio`) is deliberately not used:
+the work is short-lived blocking I/O (`/proc` reads, subprocess calls), not
+high-concurrency networking, and pulling in a runtime for that would violate the
+"every dependency must justify its existence" principle.
+
+- **Progress.** `on_progress(done, total, pending)` is called on the *calling* thread
+  (never from a worker, so the callback needs no `Send`): once at the start, then each
+  time a module finishes, with the ids of the modules still running. The TUI shows
+  "10/11 done — waiting for virtualization" instead of a single "current" module,
+  because with concurrent modules there is no single current one.
+- **Isolation.** A module's returned error *and* a panic inside it (`catch_unwind`)
+  both become that module's `error`; the others are unaffected. If the OS refuses a
+  thread, that module runs inline on the calling thread instead of being lost.
+- **Inside a module.** Work that is one slow command per independent item uses
+  `core::parallel::parallel_map` — currently `smartctl` per disk, at most 8 at once,
+  results in input order. A server with a dozen disks no longer pays for them one
+  after another.
+- **What does not change.** Output is identical to a sequential run apart from elapsed
+  time: same modules, same order, same findings.
 
 ---
 
@@ -508,6 +572,22 @@ that would violate the "every dependency must justify its existence" principle.
 A collector or module failure never stops the run. Example: SMART unavailable →
 the Storage module continues, SMART findings are simply absent, and the failure is
 recorded (not silently dropped) so the user can see what didn't run and why.
+
+Three distinct things can be recorded, and the output tells them apart:
+
+| Recorded as | Meaning | Example |
+|---|---|---|
+| a `Finding` | something about the *system* | "swap pressure is high" |
+| `error` | the *module* could not run | a required file was unreadable; a module panicked |
+| `notes` | the module ran, but **its data may be incomplete** | `'smartctl -a /dev/sda' did not finish within 20s and was stopped` |
+
+`notes` exists because a timed-out command used to be indistinguishable from "tool
+absent": the finding it would have produced is simply missing, and a green check would
+claim more than the data supports. A module with notes is therefore shown with a
+warning symbol (never a clean ✓) in the terminal and TUI, the notes are listed under
+it (a yellow banner on the module's page in the TUI), and they are present in the JSON
+as `"notes": [...]`. They are collected per thread — each module runs on its own
+thread — so a note is always attributed to the module whose command was stopped.
 
 ---
 
@@ -521,8 +601,48 @@ recorded (not silently dropped) so the user can see what didn't run and why.
 output = "terminal"
 parallel = true
 colors = true
-timeout = 5
+timeout = 10
 ```
+
+The configuration file is not implemented yet. Today the only runtime setting is the
+command-line flag `--timeout <seconds>` (default 10), which overrides the per-command
+time limit described under Collectors.
+
+---
+
+## Memory module layout
+
+The memory module is the largest one, so it is split by topic instead of living in a
+single `analyze.rs`. Each topic file exposes pure functions
+`fn(&MemoryRawData, &Context) -> Option<Finding>` (or a `Vec`) and has its own
+unit tests.
+
+| File | Findings | Topic (TUI submenu) |
+|---|---|---|
+| `collect.rs` | — (all I/O and parsers; `MemoryRawData::from_meminfo()` builds the data from `/proc/meminfo` text alone) | — |
+| `used.rs` | `MEM004` overview, `MEM007` used memory + top consumers, `MEM003` critically low | Used memory |
+| `cache.rs` | `MEM008` page cache, `MEM005` dirty pages | Page cache |
+| `shared.rs` | `MEM006` shared memory, tmpfs, SysV segments | Shared memory |
+| `swap.rs` | `MEM001` swappiness, `MEM002` swap activity, `MEM010` swap configuration (zram/zswap) | Swap |
+| `pressure.rs` | `MEM009` PSI, OOM kills, direct reclaim | Pressure |
+| `tuning.rs` | `MEM011` overcommit, `MEM012` huge pages | Kernel tuning |
+| `kernel.rs` | `MEM013` slab, page tables, ZFS ARC, `min_free_kbytes` | Kernel tuning |
+| `format.rs` | shared helpers: sizes, the numbered `Steps` builder, process grouping, swap/sysctl command snippets | — |
+| `analyze.rs` | coordinator: runs every topic, assigns `instance`, orders the result | — |
+
+Rules the coordinator enforces (and tests check on eight scenarios):
+
+- Every finding gets `instance = Some(topic)` so the TUI shows one submenu per topic —
+  except `MEM004` and anything at Warning or above, which stay on the module's top
+  page so problems are visible immediately. The overview closes that page.
+- Findings are sorted: top page first, then by topic, then by descending severity.
+- Confidence is at least 60%; every finding at Warning or above carries a numbered
+  recommendation; no template placeholders leak into text.
+- `MemoryRawData` has eleven required headline fields (the original contract) plus
+  best-effort extras (`detail`, `vm`, `swap_devices`, `pressure`, `vmstat`,
+  `processes`, `tmpfs_mounts`, `sysv_shm`, `zfs_arc`). Every extra defaults to
+  "absent", and a topic that needs a missing source returns no finding rather than
+  guessing. This keeps old fixtures valid (`..Default::default()`).
 
 ---
 
@@ -539,8 +659,20 @@ malformed/partial input.
 full `collect → analyze` path with an injected fixture instead of live `/proc`.
 
 **End-to-end tests** — run against real systems (Ubuntu, Debian, Fedora, Arch,
-Rocky, AlmaLinux). Not part of `cargo test`; run in CI on real or containerized
-targets.
+Rocky, AlmaLinux). Not part of `cargo test`; run on real or containerized targets.
+(`tests/hung_tools.rs` and `tests/json_schema.rs` are the exception: they run the real
+binary inside `cargo test`, but against fake tools or only the memory module, so they
+need no particular distribution.)
+
+**Continuous integration** — `.github/workflows/ci.yml` runs on every push to `main`
+and every pull request: `cargo fmt --check`, `cargo clippy --all-targets -- -D
+warnings` (stable), and `cargo build` + `cargo test` on both Rust 1.75.0 (the
+minimum supported version, also declared as `rust-version` in `Cargo.toml`) and
+stable. Every job uses `--locked`, because `Cargo.lock` pins dependencies for the old
+toolchain (see README "Toolchain note"). Cargo 1.75 cannot read lockfile format v4
+(Cargo 1.78+), so the 1.75 leg rewrites the header to v3 inside the CI run — with
+registry-only dependencies the content is identical. The same commands are what a
+contributor runs locally before a pull request.
 
 The reason `collect()` and `analyze()` must be separate functions, not just separate
 mental steps inside one method, is entirely for this: `analyze()` needs to be

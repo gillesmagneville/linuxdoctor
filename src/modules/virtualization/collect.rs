@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use crate::core::command::command;
+use crate::core::command::{command, ToolSession};
 use crate::core::error::ModuleError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -246,7 +246,10 @@ pub fn collect() -> Result<VirtualizationRawData, ModuleError> {
         .unwrap_or(false);
 
     let (vm_type, container_type) = if tool_available {
-        (run_detect_virt(&["--vm"]), run_detect_virt(&["--container"]))
+        (
+            run_detect_virt(&["--vm"]),
+            run_detect_virt(&["--container"]),
+        )
     } else {
         (None, None)
     };
@@ -344,10 +347,11 @@ fn collect_vm_inventory() -> ToolInventory<VmInfo> {
         Err(e) => return ToolInventory::unavailable(Some("virsh"), e.to_string()),
     };
     if !list_output.status.success() {
-        let stderr = String::from_utf8_lossy(&list_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&list_output.stderr)
+            .trim()
+            .to_string();
         let reason = if stderr.is_empty() {
-            "could not connect to a hypervisor (no libvirtd running, or no permission)"
-                .to_string()
+            "could not connect to a hypervisor (no libvirtd running, or no permission)".to_string()
         } else {
             stderr
         };
@@ -362,153 +366,123 @@ fn collect_vm_inventory() -> ToolInventory<VmInfo> {
         .map(|d| d.all_isolated_cpus())
         .unwrap_or_default();
 
+    // One session for every per-VM call: if libvirtd stops answering
+    // midway, the first call to time out ends the enrichment instead of
+    // every remaining call (nine or so per VM) each waiting out its own
+    // time limit.
+    let mut virsh = ToolSession::new("virsh");
     let mut vms = Vec::new();
     for name in &names {
-        if let Ok(info_output) = command("virsh").args(["dominfo", name]).output() {
-            if info_output.status.success() {
-                let text = String::from_utf8_lossy(&info_output.stdout);
-                let mut vm = parse_dominfo(name, &text);
-                let sample_start = std::time::Instant::now();
-                let initial_cpu_time = vm.cpu_time_seconds;
+        if virsh.is_hung() {
+            break;
+        }
+        let Some(info_text) = virsh.run(&["dominfo", name]) else {
+            continue;
+        };
+        let mut vm = parse_dominfo(name, &info_text);
+        let sample_start = std::time::Instant::now();
+        let initial_cpu_time = vm.cpu_time_seconds;
 
-                // vCPU pinning, disk inventory, NUMA policy, host device
-                // passthrough, network interfaces, and guest memory are
-                // all best-effort enrichment: a failure in any one of
-                // them shouldn't discard the VM entry we already have
-                // from dominfo.
-                if let Ok(pin_output) = command("virsh").args(["vcpupin", name]).output() {
-                    if pin_output.status.success() {
-                        vm.vcpu_pinning =
-                            parse_vcpupin(&String::from_utf8_lossy(&pin_output.stdout));
-                    }
-                }
+        // vCPU pinning, disk inventory, NUMA policy, host device
+        // passthrough, network interfaces, and guest memory are
+        // all best-effort enrichment: a failure in any one of
+        // them shouldn't discard the VM entry we already have
+        // from dominfo.
+        if let Some(text) = virsh.run(&["vcpupin", name]) {
+            vm.vcpu_pinning = parse_vcpupin(&text);
+        }
 
-                if !host_topology.is_empty() {
-                    vm.numa_nodes_used =
-                        numa_nodes_for_pinning(&vm.vcpu_pinning, &host_topology);
-                }
-                let pinned_cpus: Vec<u32> = vm
-                    .vcpu_pinning
-                    .iter()
-                    .flat_map(|(_, affinity)| crate::modules::cpu::collect::parse_cpu_list(affinity))
-                    .collect();
-                if !host_topology.is_empty() {
-                    vm.cpu_numa_nodes = pinned_cpus
-                        .iter()
-                        .filter_map(|cpu| host_topology.get(cpu).map(|node| (*cpu, *node)))
-                        .collect();
-                }
-                if !host_isolated_cpus.is_empty() {
-                    vm.isolated_cpus_used = host_isolated_cpus
-                        .iter()
-                        .copied()
-                        .filter(|cpu| pinned_cpus.contains(cpu))
-                        .collect();
-                }
+        if !host_topology.is_empty() {
+            vm.numa_nodes_used = numa_nodes_for_pinning(&vm.vcpu_pinning, &host_topology);
+        }
+        let pinned_cpus: Vec<u32> = vm
+            .vcpu_pinning
+            .iter()
+            .flat_map(|(_, affinity)| crate::modules::cpu::collect::parse_cpu_list(affinity))
+            .collect();
+        if !host_topology.is_empty() {
+            vm.cpu_numa_nodes = pinned_cpus
+                .iter()
+                .filter_map(|cpu| host_topology.get(cpu).map(|node| (*cpu, *node)))
+                .collect();
+        }
+        if !host_isolated_cpus.is_empty() {
+            vm.isolated_cpus_used = host_isolated_cpus
+                .iter()
+                .copied()
+                .filter(|cpu| pinned_cpus.contains(cpu))
+                .collect();
+        }
 
-                if let Ok(blk_output) = command("virsh")
-                    .args(["domblklist", name, "--details"])
-                    .output()
-                {
-                    if blk_output.status.success() {
-                        let mut disks =
-                            parse_domblklist(&String::from_utf8_lossy(&blk_output.stdout));
-                        for disk in &mut disks {
-                            // `domblkinfo` takes the guest-visible target
-                            // ("vda"), not the host source path — the
-                            // more universally correct identifier per
-                            // libvirt's own examples, and the one that
-                            // still works for pool-backed/block-type
-                            // disks where "source" may not be a plain
-                            // file path at all. Confirmed working
-                            // against a real (if freshly-created, so
-                            // near-empty) qcow2 image in this sandbox.
-                            if let Ok(info_output) = command("virsh")
-                                .args(["domblkinfo", name, &disk.target])
-                                .output()
-                            {
-                                if info_output.status.success() {
-                                    let (cap, alloc) = parse_domblkinfo(
-                                        &String::from_utf8_lossy(&info_output.stdout),
-                                    );
-                                    disk.capacity_bytes = cap;
-                                    disk.allocation_bytes = alloc;
-                                }
-                            }
-                        }
-                        vm.disks = disks;
-                    }
+        if let Some(text) = virsh.run(&["domblklist", name, "--details"]) {
+            let mut disks = parse_domblklist(&text);
+            for disk in &mut disks {
+                // `domblkinfo` takes the guest-visible target
+                // ("vda"), not the host source path — the
+                // more universally correct identifier per
+                // libvirt's own examples, and the one that
+                // still works for pool-backed/block-type
+                // disks where "source" may not be a plain
+                // file path at all. Confirmed working
+                // against a real (if freshly-created, so
+                // near-empty) qcow2 image in this sandbox.
+                if let Some(text) = virsh.run(&["domblkinfo", name, &disk.target]) {
+                    let (cap, alloc) = parse_domblkinfo(&text);
+                    disk.capacity_bytes = cap;
+                    disk.allocation_bytes = alloc;
                 }
+            }
+            vm.disks = disks;
+        }
 
-                if let Ok(numatune_output) = command("virsh").args(["numatune", name]).output() {
-                    if numatune_output.status.success() {
-                        vm.numa_policy =
-                            parse_numatune(&String::from_utf8_lossy(&numatune_output.stdout));
-                    }
-                }
+        if let Some(text) = virsh.run(&["numatune", name]) {
+            vm.numa_policy = parse_numatune(&text);
+        }
 
-                if let Ok(xml_output) = command("virsh").args(["dumpxml", name]).output() {
-                    if xml_output.status.success() {
-                        let mut devices =
-                            parse_host_devices(&String::from_utf8_lossy(&xml_output.stdout));
-                        for dev in &mut devices {
-                            dev.description = lookup_pci_description(&dev.pci_address);
-                        }
-                        vm.host_devices = devices;
-                    }
-                }
+        if let Some(text) = virsh.run(&["dumpxml", name]) {
+            let mut devices = parse_host_devices(&text);
+            for dev in &mut devices {
+                dev.description = lookup_pci_description(&dev.pci_address);
+            }
+            vm.host_devices = devices;
+        }
 
-                if let Ok(iface_output) = command("virsh").args(["domiflist", name]).output() {
-                    if iface_output.status.success() {
-                        vm.network_interfaces =
-                            parse_domiflist(&String::from_utf8_lossy(&iface_output.stdout));
-                    }
-                }
+        if let Some(text) = virsh.run(&["domiflist", name]) {
+            vm.network_interfaces = parse_domiflist(&text);
+        }
 
-                if vm.state == "running" {
-                    if let Ok(mem_output) = command("virsh").args(["dommemstat", name]).output() {
-                        if mem_output.status.success() {
-                            vm.guest_memory =
-                                parse_dommemstat(&String::from_utf8_lossy(&mem_output.stdout));
-                        }
-                    }
-                }
-
-                // CPU% delta: a second, cheap `dominfo` call after all
-                // the enrichment above, over whatever wall-clock time
-                // that took — not a dedicated fixed-length sample the
-                // way live_stats's host-wide CPU% is (that would mean a
-                // deliberate sleep per VM, working against this tool's
-                // own speed goals). Noisier as a result; presented as an
-                // approximation for exactly that reason.
-                if let (Some(initial), Some(vcpus)) = (initial_cpu_time, vm.vcpus) {
-                    let elapsed = sample_start.elapsed().as_secs_f64();
-                    if elapsed > 0.01 && vcpus > 0 {
-                        if let Ok(resample_output) =
-                            command("virsh").args(["dominfo", name]).output()
-                        {
-                            if resample_output.status.success() {
-                                let resampled = parse_dominfo(
-                                    name,
-                                    &String::from_utf8_lossy(&resample_output.stdout),
-                                );
-                                if let Some(final_cpu_time) = resampled.cpu_time_seconds {
-                                    let delta = final_cpu_time - initial;
-                                    if delta >= 0.0 {
-                                        vm.cpu_percent = Some(
-                                            (delta / (vcpus as f64 * elapsed) * 100.0)
-                                                .min(vcpus as f64 * 100.0),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                vms.push(vm);
+        if vm.state == "running" {
+            if let Some(text) = virsh.run(&["dommemstat", name]) {
+                vm.guest_memory = parse_dommemstat(&text);
             }
         }
+
+        // CPU% delta: a second, cheap `dominfo` call after all
+        // the enrichment above, over whatever wall-clock time
+        // that took — not a dedicated fixed-length sample the
+        // way live_stats's host-wide CPU% is (that would mean a
+        // deliberate sleep per VM, working against this tool's
+        // own speed goals). Noisier as a result; presented as an
+        // approximation for exactly that reason.
+        if let (Some(initial), Some(vcpus)) = (initial_cpu_time, vm.vcpus) {
+            let elapsed = sample_start.elapsed().as_secs_f64();
+            if elapsed > 0.01 && vcpus > 0 {
+                if let Some(text) = virsh.run(&["dominfo", name]) {
+                    let resampled = parse_dominfo(name, &text);
+                    if let Some(final_cpu_time) = resampled.cpu_time_seconds {
+                        let delta = final_cpu_time - initial;
+                        if delta >= 0.0 {
+                            vm.cpu_percent = Some(
+                                (delta / (vcpus as f64 * elapsed) * 100.0)
+                                    .min(vcpus as f64 * 100.0),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        vms.push(vm);
     }
 
     ToolInventory {
@@ -895,7 +869,7 @@ pub fn parse_lspci_output(text: &str) -> Option<String> {
     if line.is_empty() {
         return None;
     }
-    let description = line.splitn(2, ' ').nth(1).unwrap_or(line).trim();
+    let description = line.split_once(' ').map_or(line, |(_, rest)| rest).trim();
     if description.is_empty() {
         None
     } else {
@@ -994,7 +968,9 @@ fn collect_container_inventory() -> ToolInventory<ContainerInfo> {
             Err(e) => return ToolInventory::unavailable(Some(runtime), e.to_string()),
         };
         if !ps_output.status.success() {
-            let stderr = String::from_utf8_lossy(&ps_output.stderr).trim().to_string();
+            let stderr = String::from_utf8_lossy(&ps_output.stderr)
+                .trim()
+                .to_string();
             let reason = if stderr.is_empty() {
                 format!("{runtime} daemon unreachable")
             } else {
@@ -1014,6 +990,7 @@ fn collect_container_inventory() -> ToolInventory<ContainerInfo> {
                 "--format",
                 "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}",
             ])
+            .slow() // samples every running container; grows with their number
             .output()
         {
             if stats_output.status.success() {
@@ -1079,7 +1056,11 @@ pub fn parse_container_stats(
             }
             Some((
                 parts[0].to_string(),
-                (parts[1].to_string(), parts[2].to_string(), parts[3].to_string()),
+                (
+                    parts[1].to_string(),
+                    parts[2].to_string(),
+                    parts[3].to_string(),
+                ),
             ))
         })
         .collect()
@@ -1443,7 +1424,10 @@ Physical:       53687091200
         assert_eq!(interfaces[0].interface_type, "network");
         assert_eq!(interfaces[0].source.as_deref(), Some("default"));
         assert_eq!(interfaces[0].model.as_deref(), Some("virtio"));
-        assert_eq!(interfaces[0].mac_address.as_deref(), Some("52:54:00:12:34:56"));
+        assert_eq!(
+            interfaces[0].mac_address.as_deref(),
+            Some("52:54:00:12:34:56")
+        );
         assert_eq!(interfaces[1].interface_type, "bridge");
         assert_eq!(interfaces[1].model.as_deref(), Some("e1000"));
     }
@@ -1510,11 +1494,17 @@ rss 760452
     fn parses_real_captured_docker_ps_output() {
         let containers = parse_container_ps(FIXTURE_DOCKER_PS);
         assert_eq!(containers.len(), 2);
-        let running = containers.iter().find(|c| c.name == "test-running").unwrap();
+        let running = containers
+            .iter()
+            .find(|c| c.name == "test-running")
+            .unwrap();
         assert_eq!(running.state, "running");
         assert_eq!(running.status, "Up 1 second");
         assert_eq!(running.image, "minitest:latest");
-        let stopped = containers.iter().find(|c| c.name == "test-stopped").unwrap();
+        let stopped = containers
+            .iter()
+            .find(|c| c.name == "test-stopped")
+            .unwrap();
         assert_eq!(stopped.state, "exited");
         assert!(stopped.status.starts_with("Exited (0)"));
     }

@@ -126,11 +126,10 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
     };
 
     let driver_note = match &gpu.driver {
-        Some(d) if d == "nouveau" => format!(
-            ", using the open-source \"nouveau\" driver — a deliberate \
+        Some(d) if d == "nouveau" => ", using the open-source \"nouveau\" driver — a deliberate \
              choice for some, but with known performance/feature gaps \
              versus NVIDIA's proprietary driver on modern cards"
-        ),
+            .to_string(),
         Some(d) => format!(", driver {d}"),
         None => String::new(),
     };
@@ -155,8 +154,7 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
                 conf,
                 format!(
                     " Temperature: {t:.0}\u{b0}C (this card's own critical \
-                     threshold is {crit:.0}\u{b0}C — currently at {:.0}% of it)."
-                    ,
+                     threshold is {crit:.0}\u{b0}C — currently at {:.0}% of it).",
                     ratio * 100.0,
                 ),
             )
@@ -200,7 +198,10 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
 
     let power_note = match (gpu.power_draw_w, gpu.power_limit_w) {
         (Some(draw), Some(limit)) if limit > 0.0 => {
-            format!(" Power: {draw:.1} W of {limit:.1} W limit ({:.0}%).", draw / limit * 100.0)
+            format!(
+                " Power: {draw:.1} W of {limit:.1} W limit ({:.0}%).",
+                draw / limit * 100.0
+            )
         }
         (Some(draw), None) => format!(" Power: {draw:.1} W."),
         _ => String::new(),
@@ -446,7 +447,9 @@ mod tests {
         assert_eq!(gpu002.instance.as_deref(), Some("card0"));
         assert!(gpu002.explanation.contains("AMD Radeon RX 6800"));
         assert!(gpu002.explanation.contains("65\u{b0}C"));
-        assert!(gpu002.explanation.contains("4096 MB used of 16384 MB (25.0%)"));
+        assert!(gpu002
+            .explanation
+            .contains("4096 MB used of 16384 MB (25.0%)"));
     }
 
     #[test]
@@ -489,7 +492,9 @@ mod tests {
         let findings = analyze(&data, &ctx());
         let gpu002 = findings.iter().find(|f| f.id == "GPU002").unwrap();
         assert_eq!(gpu002.severity, Severity::Warning);
-        assert!(gpu002.explanation.contains("no card-specific critical threshold"));
+        assert!(gpu002
+            .explanation
+            .contains("no card-specific critical threshold"));
         // Generic-threshold confidence must read lower than the
         // evidence-based AMD case above.
         assert!(gpu002.confidence.percent < 78);
@@ -552,7 +557,9 @@ mod tests {
         };
         let findings = analyze(&data, &ctx());
         let gpu002 = findings.iter().find(|f| f.id == "GPU002").unwrap();
-        assert!(gpu002.explanation.contains("open-source \"nouveau\" driver"));
+        assert!(gpu002
+            .explanation
+            .contains("open-source \"nouveau\" driver"));
     }
 
     #[test]
@@ -571,7 +578,10 @@ mod tests {
         let findings = analyze(&data, &ctx());
         let gpu002 = findings.iter().find(|f| f.id == "GPU002").unwrap();
         assert!(gpu002.explanation.contains("python3 (pid 4051, 1234 MB)"));
-        assert!(gpu002.evidence.iter().any(|(k, v)| k == "process_count" && v == "1"));
+        assert!(gpu002
+            .evidence
+            .iter()
+            .any(|(k, v)| k == "process_count" && v == "1"));
     }
 
     #[test]
@@ -589,11 +599,15 @@ mod tests {
         };
         let findings = analyze(&data, &ctx());
         let gpu002 = findings.iter().find(|f| f.id == "GPU002").unwrap();
-        assert!(gpu002.explanation.contains("2100 MHz core, 1750 MHz memory"));
         assert!(gpu002
             .explanation
-            .contains("currently 8.0 GT/s PCIe x8, below this card's maximum of 16.0 GT/s PCIe x16"));
-        assert!(gpu002.explanation.contains("checking the physical slot/cable"));
+            .contains("2100 MHz core, 1750 MHz memory"));
+        assert!(gpu002.explanation.contains(
+            "currently 8.0 GT/s PCIe x8, below this card's maximum of 16.0 GT/s PCIe x16"
+        ));
+        assert!(gpu002
+            .explanation
+            .contains("checking the physical slot/cable"));
         assert!(gpu002
             .evidence
             .iter()
@@ -685,9 +699,9 @@ mod tests {
             g
         }] {
             let data = GpuRawData {
-            gpus: vec![gpu],
-            nvidia_max_cuda_version: None,
-        };
+                gpus: vec![gpu],
+                nvidia_max_cuda_version: None,
+            };
             for f in analyze(&data, &ctx()) {
                 assert!(f.confidence.percent >= 60);
             }

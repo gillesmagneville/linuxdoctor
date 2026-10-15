@@ -21,6 +21,20 @@ pub struct Context {
     pub boot_time_unix: u64,
 }
 
+/// The effective user id of this process, from `/proc/self/status`
+/// ("Uid: real effective saved fs"), so no C library call is needed.
+/// `None` if it cannot be read.
+pub fn effective_uid() -> Option<u32> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
 impl Context {
     /// Build a Context from the live system. Any single fact that can't be
     /// read falls back to a placeholder rather than failing the whole run —

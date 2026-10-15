@@ -11,6 +11,44 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **Module Journaux** (`linuxdoctor audit --modules logs`) : lecture seule.
+  Il lit le journal systemd (`journalctl -o json`), avec repli sur
+  `/var/log/auth.log` ou `secure` et sur `dmesg`. Quatre sujets (sous-menus
+  du TUI) :
+  - **Authentification** (`LOG002` à `LOG004`) : échecs de connexion SSH des
+    dernières 24 heures par adresse source et par nom de compte ; une
+    connexion par mot de passe qui suit de nombreux échecs de la même adresse
+    (la signature d'un mot de passe deviné : Critical à partir de 20 échecs,
+    Warning à partir de 5) ; échecs `sudo`, `su` et console, et comptes
+    refusés par `sudo`. Un échec compte une seule fois même si sshd journalise
+    à la fois le compte refusé et la tentative de mot de passe.
+  - **Erreurs système** (`LOG005`) : messages d'erreur depuis le démarrage,
+    regroupés par service, avec le message que chacun répète le plus.
+  - **Messages du noyau** (`LOG006`, `LOG007`) : erreurs de disque et de
+    système de fichiers, système de fichiers passé en lecture seule,
+    erreurs mémoire/PCIe corrigées ou non, tâches bloquées, bridage
+    thermique, fautes du noyau, blocages de processeur, programmes qui
+    plantent. Les arrêts par manque de mémoire (OOM) restent au module Noyau.
+  - **Journal et fichiers de log** (`LOG008`, `LOG009`) : le journal survit-il
+    à un redémarrage, sa taille face au plafond de journald, services dont
+    journald a dû jeter des messages, fichiers de `/var/log` jamais tournés.
+  Un constat de synthèse `LOG001` ouvre la page du module et liste ce qui
+  demande de l'attention **et ce qui n'a pas pu être lu** : un journal
+  illisible (pas de droits, journald absent, conteneur) n'est jamais présenté
+  comme un journal tranquille, et la commande pour rejoindre les groupes
+  `adm` et `systemd-journal` est donnée. Un suspect d'intrusion passe avant
+  tout autre constat de même gravité. Le texte venu des logs (noms de compte
+  choisis par un attaquant, noms de programmes) est débarrassé de ses
+  caractères de contrôle — séquences d'échappement du terminal comprises —,
+  borné en longueur, et n'entre dans une commande suggérée que s'il s'agit
+  d'un simple mot ; les adresses n'y entrent que si ce sont de vraies
+  adresses IP. Les commandes sont seulement proposées, jamais exécutées.
+- `modules::recommend` fournit maintenant aussi la famille de distribution
+  (`Family`, `family_of`) pour choisir entre `apt` et `dnf` ; le module
+  Sécurité l'utilise au lieu de sa propre copie.
+- `core::context::effective_uid()` : identifiant utilisateur effectif lu dans
+  `/proc/self/status`, partagé par les modules Sécurité et Journaux.
+
 - **Module Sécurité** (`linuxdoctor audit --modules security`) : lecture
   seule, utilisable sans root (root ajoute de la visibilité, et chaque
   constat dit ce qu'il n'a pas pu voir). Six sujets (sous-menus du TUI) :
@@ -98,6 +136,21 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Tests
 
+- `tests/logs_module.rs` : 14 tests d'intégration du module Journaux — un
+  serveur tranquille (rien au-dessus d'Info), un serveur en difficulté (tous
+  les constats attendus avec la bonne gravité), l'ordre des pages et les
+  étapes numérotées, les conseils selon la famille de distribution, un
+  contenu hostile (balises HTML/Markdown, séquences d'échappement du
+  terminal, noms pouvant casser une commande) à travers les quatre
+  formats, et le vrai binaire contre un faux `journalctl` placé en tête du
+  `PATH` : journal simulé, code de sortie, journal illisible signalé, journal
+  qui ne répond pas (arrêté après la limite de temps et signalé comme
+  incomplet), et un test sur la machine hôte qui ne vérifie que la présence
+  des constats, jamais leur gravité.
+- 110 tests unitaires pour le module Journaux (analyseurs du journal, de
+  syslog et de `dmesg`, des messages SSH/sudo/PAM, du noyau, de
+  `journald.conf`, logique de repli entre sources, parcours de `/var/log`
+  sans suivre les liens symboliques).
 - `tests/security_module.rs` : 8 tests d'intégration du module Sécurité —
   un serveur bien tenu (rien au-dessus d'Info), un serveur négligé (tous les
   constats attendus avec la bonne gravité), l'ordre des pages et la présence

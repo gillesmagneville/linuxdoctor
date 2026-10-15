@@ -17,6 +17,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::core::command::command;
+use crate::core::context::effective_uid;
 use crate::core::error::ModuleError;
 
 use super::access::{self, AppArmorInfo, HardeningData, MacInfo, SelinuxMode};
@@ -81,19 +82,6 @@ pub fn collect() -> Result<SecurityRawData, ModuleError> {
         accounts: read_accounts(),
         files: read_files(),
     })
-}
-
-/// The effective user id, from /proc/self/status ("Uid: real effective
-/// saved fs"), so no C library call is needed.
-fn effective_uid() -> Option<u32> {
-    let status = fs::read_to_string("/proc/self/status").ok()?;
-    status
-        .lines()
-        .find_map(|l| l.strip_prefix("Uid:"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()
 }
 
 fn read_text(path: &str) -> Option<String> {

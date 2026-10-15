@@ -8,7 +8,7 @@ severity/confidence scales, layout).
 
 ## Status
 
-v1 scaffold, twelve modules shipping end-to-end:
+v1 scaffold, thirteen modules shipping end-to-end:
 
 * **Memory** — the most detailed module, organised in six topics
   (TUI submenu): **Used memory** (breakdown by kind — program memory,
@@ -152,6 +152,30 @@ v1 scaffold, twelve modules shipping end-to-end:
   (for SSH: install a key *before* disabling passwords, validate with
   `sshd -t`, keep a second session open). Commands are only suggested,
   never run.
+* **Logs** — strictly read-only. Four topics (TUI submenu):
+  **Authentication** (failed SSH logins over the last 24 hours by source
+  address and account name; a password login that follows many failures
+  from the same address — the signature of a guessed password, Critical
+  from 20 failures; failed `sudo`, `su` and console logins, and accounts
+  refused by `sudo`), **System errors** (error-level messages since boot,
+  grouped by service, with the message each one repeats most),
+  **Kernel messages** (disk and filesystem errors, a filesystem that
+  switched to read-only, corrected and uncorrected memory or PCIe errors,
+  tasks stuck on I/O, thermal throttling, kernel faults, CPU lockups and
+  crashing programs; out-of-memory kills stay with the Kernel module) and
+  **Journal & log files** (does the journal survive a reboot, its size
+  against journald's own cap, services whose messages journald had to
+  drop, logs in `/var/log` that are never rotated). The source is the
+  systemd journal (`journalctl -o json`), with fallbacks to `auth.log` /
+  `secure` and to `dmesg`. Without root the journal shows only your own
+  entries and the classic files are usually unreadable: the overview then
+  lists every log it could not read, and the group to join, instead of
+  reporting a clean result it could not verify. Text that comes from logs
+  — including account names an attacker chose — is stripped of terminal
+  control characters, and only enters a suggested command when it is a
+  plain word. Every problem comes with numbered steps, the safest first
+  (confirm it was you, cut access, then look for what an intruder leaves);
+  commands are only suggested, never run.
 * **Kernel** — taint status (all 20 bits, transcribed from the kernel's
   own documentation, not guessed) and OOM-kill history via `dmesg`
   (degrades cleanly when unreadable — `kernel.dmesg_restrict` commonly
@@ -297,6 +321,10 @@ files first (`/proc/net/*`, `/etc/ssh/sshd_config*`, `/sys/kernel/security/lsm`,
 and what its rules do. Without root it still reports exposure and
 configuration, but cannot name the program behind another user's socket,
 read `/etc/shadow` or list the firewall rules, and says so.
+Logs prefers `journalctl` (systemd) and falls back to `/var/log/auth.log` or
+`/var/log/secure` and to `dmesg`; to read the whole journal without `sudo`,
+join the `adm` and `systemd-journal` groups
+(`sudo usermod -aG adm,systemd-journal $USER`, then log in again).
 
 ## Quickstart
 
@@ -312,6 +340,7 @@ cargo build --release
 ./target/release/linuxdoctor audit --fail-on warning               # exit 1 on any Warning or worse
 ./target/release/linuxdoctor audit --modules memory
 ./target/release/linuxdoctor audit --modules security   # exposure, firewall, SSH, hardening
+./target/release/linuxdoctor audit --modules logs       # logins, errors, kernel messages, journal
 ./target/release/linuxdoctor tui              # interactive terminal UI, explicitly
 ./target/release/linuxdoctor audit --timeout 30   # allow slow tools 30 s each
 ```
@@ -400,7 +429,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 777 lib unit tests + 14 CLI unit tests + 67 integration tests
+cargo test               # 887 lib unit tests + 14 CLI unit tests + 81 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -465,8 +494,8 @@ linuxdoctor/
     │
     ├── modules/
     │   ├── mod.rs              # the Module trait + all_modules()
-    │   ├── recommend.rs        # numbered-steps builder (Steps) + sysctl snippets, shared
-    │   │                       #   by every module that writes recommendations
+    │   ├── recommend.rs        # numbered-steps builder (Steps), sysctl snippets and the
+    │   │                       #   distribution family, shared by modules that write advice
     │   ├── memory/              # collect.rs (I/O) + analyze.rs + one file per topic (used, cache,
     │   │                        #   shared, swap, pressure, tuning, kernel) + format.rs
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
@@ -478,6 +507,8 @@ linuxdoctor/
     │   ├── network/                    # interfaces, gateway, DNS (zero subprocess calls)
     │   ├── security/                   # collect.rs (I/O) + one pure file per topic (listeners,
     │   │                               #   firewall, ssh, access, accounts) + analyze.rs
+    │   ├── logs/                       # collect.rs (I/O) + journal.rs (parsers) + one pure file
+    │   │                               #   per topic (auth, errors, kernel, health) + analyze.rs
     │   ├── kernel/                       # taint status, OOM history (dmesg)
     │   └── virtualization/                 # systemd-detect-virt, no PID1 gate
     │
@@ -495,7 +526,8 @@ tests/       # fixture-driven integration tests, one file per module,
              # plus hung_tools.rs (real binary vs. fake tools that hang),
              # json_schema.rs and export_and_gate.rs (real binary: report
              # formats, --min-severity, --fail-on and the exit status);
-             # security_module.rs also runs the real binary on the real host
+             # security_module.rs and logs_module.rs also run the real binary
+             # (logs_module.rs against a fake journalctl)
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

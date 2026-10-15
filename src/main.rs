@@ -8,9 +8,10 @@ use std::io::{ErrorKind, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use cli::{AuditArgs, Cli, Command, OutputFormat};
+use cli::{AuditArgs, Cli, Command, DiffArgs, DiffFormat, OutputFormat};
 use linuxdoctor::core;
 use linuxdoctor::core::gate::{self, DEFAULT_FAIL_ON};
+use linuxdoctor::diff;
 use linuxdoctor::models::Severity;
 use linuxdoctor::output;
 use linuxdoctor::output::common::{FilterInfo, RenderMeta};
@@ -23,6 +24,7 @@ fn main() -> ExitCode {
     match cli.resolved_command() {
         Command::Audit(args) => run_audit_command(args),
         Command::Tui(args) => run_tui_command(args.modules),
+        Command::Diff(args) => run_diff_command(args),
         Command::Completions(args) => print_bytes(&cli::completion_script(args.shell)),
         Command::Man => run_man_command(),
     }
@@ -43,13 +45,23 @@ fn run_man_command() -> ExitCode {
 /// Writes `bytes` to standard output. A reader that goes away early
 /// (`linuxdoctor man | head`) is not an error worth reporting.
 fn print_bytes(bytes: &[u8]) -> ExitCode {
+    if write_stdout(bytes) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// `true` when the bytes were written or nobody is reading any more;
+/// `false` (after saying why on stderr) when the write really failed.
+fn write_stdout(bytes: &[u8]) -> bool {
     let mut stdout = std::io::stdout().lock();
     match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Ok(()) => true,
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => true,
         Err(e) => {
             eprintln!("linuxdoctor: could not write the output: {e}");
-            ExitCode::FAILURE
+            false
         }
     }
 }
@@ -101,6 +113,84 @@ fn run_audit_command(args: AuditArgs) -> ExitCode {
             if let Some(message) = gate.message() {
                 eprintln!("linuxdoctor: {message}");
             }
+        }
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+/// Exit status of `diff` when the reports cannot be compared (unreadable,
+/// not a report, written by a newer version). Distinct from 1, which means
+/// "something got worse", so a script can tell the two apart.
+const DIFF_UNUSABLE: u8 = 2;
+
+fn run_diff_command(args: DiffArgs) -> ExitCode {
+    if args.before == "-" && args.after == "-" {
+        eprintln!(
+            "linuxdoctor: only one of the two reports can be read from standard input; \
+             give the other as a file"
+        );
+        return ExitCode::from(DIFF_UNUSABLE);
+    }
+    let read = |source: &str| match diff::report::read(source) {
+        Ok(report) => Some(report),
+        Err(e) => {
+            eprintln!("linuxdoctor: {e}");
+            None
+        }
+    };
+    let Some(before) = read(&args.before) else {
+        return ExitCode::from(DIFF_UNUSABLE);
+    };
+    let Some(after) = read(&args.after) else {
+        return ExitCode::from(DIFF_UNUSABLE);
+    };
+
+    let mut comparison = diff::compare::compare(&before, &after);
+
+    // As for `audit`: the pass/fail decision looks at the whole comparison,
+    // before any display filter, so hiding changes never hides a regression
+    // from the exit status.
+    let threshold = match args.fail_on {
+        Some(level) => level.threshold(),
+        None => Some(DEFAULT_FAIL_ON),
+    };
+    let regressions = threshold.map_or(0, |t| comparison.regressions(t).len());
+
+    if let Some(level) = args.min_severity {
+        comparison.retain_at_or_above(Severity::from(level));
+    }
+
+    let before_name = diff::report::display_name(&args.before);
+    let after_name = diff::report::display_name(&args.after);
+    let labels = diff::render::Labels {
+        before: &before_name,
+        after: &after_name,
+    };
+    let text = match args.output {
+        DiffFormat::Terminal => diff::render::terminal(&comparison, &labels),
+        DiffFormat::Markdown => diff::render::markdown(&comparison, &labels),
+        DiffFormat::Json => match diff::render::json(&comparison, &labels) {
+            Ok(json) => json + "\n",
+            Err(e) => {
+                eprintln!("linuxdoctor: failed to render JSON: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    if !write_stdout(text.as_bytes()) {
+        return ExitCode::FAILURE;
+    }
+
+    if regressions > 0 {
+        // Only an explicit --fail-on explains itself on stderr, as for audit.
+        if let (Some(_), Some(threshold)) = (args.fail_on, threshold) {
+            eprintln!(
+                "linuxdoctor: {regressions} finding(s) appeared or got worse, now at {} or \
+                 above (--fail-on {}); exiting with status 1",
+                threshold,
+                threshold.to_string().to_lowercase()
+            );
         }
         return ExitCode::FAILURE;
     }

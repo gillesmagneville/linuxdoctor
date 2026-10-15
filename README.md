@@ -349,6 +349,7 @@ cargo build --release
 ./target/release/linuxdoctor audit --modules security   # exposure, firewall, SSH, hardening
 ./target/release/linuxdoctor audit --modules logs       # logins, errors, kernel messages, journal
 ./target/release/linuxdoctor tui              # interactive terminal UI, explicitly
+./target/release/linuxdoctor diff before.json after.json   # what changed between two reports
 ./target/release/linuxdoctor audit --timeout 30   # allow slow tools 30 s each
 ./target/release/linuxdoctor man > linuxdoctor.1  # the manual page (see below)
 ./target/release/linuxdoctor completions bash     # shell completion script
@@ -397,6 +398,60 @@ report.json` stays clean. Things worth knowing, for scripts and CI:
 # Nightly job: keep a dated report, fail the job on any Warning or worse
 linuxdoctor audit --output html --fail-on warning > "/var/reports/$(date +%F).html" \
   || echo "LinuxDoctor found something, see the report" >&2
+```
+
+### Comparing two reports
+
+Keep the JSON report of an audit, change something (or wait), audit again, and ask what
+moved:
+
+```bash
+linuxdoctor audit --output json > before.json
+# ... update the kernel, edit sshd_config, add a disk, wait a week ...
+linuxdoctor audit --output json > after.json
+linuxdoctor diff before.json after.json
+```
+
+The result is a summary line, then **Got worse** (findings that appeared or became more
+serious, worst first, with the evidence values that moved), **Got better** (resolved or
+less serious), and **Other changes** (informational findings that appeared or disappeared:
+a new network interface is not a regression). Machine changes (kernel, distribution,
+memory, a reboot) are listed first. `--output markdown` writes the same thing as a
+document for a ticket or a change review; `--output json` is for scripts. `-` reads one of
+the two reports from standard input:
+
+```bash
+linuxdoctor audit --output json | linuxdoctor diff last-week.json -
+```
+
+Two things the comparison refuses to do, because they would make a bad result look good:
+
+- **A finding that is gone is only "resolved" if its module really ran again.** If the
+  module failed, was skipped, or was left out with `--modules`, the module is listed under
+  **Not compared** (with how many findings could not be re-checked) instead of being
+  counted as an improvement. A module whose tools were cut short is flagged `?` and listed
+  under **Incomplete data**.
+- **It says when the comparison may not mean much**: the reports come from different
+  machines, they look reversed (the second was taken at an earlier boot), or one was
+  written with `--min-severity`.
+
+`--min-severity` and `--fail-on` work as for `audit`: the first only hides changes (and
+says how many), the second decides the exit status, judged on the whole comparison.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | No finding appeared or got worse to the `--fail-on` level (default `error`) |
+| 1 | A finding appeared, or got worse, and is now at that level or above |
+| 2 | The reports could not be compared: unreadable file, not a LinuxDoctor report, or written by a newer version; also a usage error |
+
+A finding that is in both reports at the same severity is not a regression, however
+serious (use `audit --fail-on` for that), and modules that were not compared do not change
+the status. The text in the files is treated as untrusted: control characters are removed
+before anything reaches your terminal.
+
+```bash
+# After a change: fail the pipeline if anything Warning or worse appeared
+linuxdoctor diff before.json after.json --fail-on warning --output markdown > review.md
 ```
 
 ### Manual page and shell completions
@@ -459,7 +514,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 887 lib unit tests + 31 CLI unit tests + 92 integration tests
+cargo test               # 931 lib unit tests + 37 CLI unit tests + 117 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -507,7 +562,7 @@ linuxdoctor/
 │
 └── src/
     ├── main.rs                # bin entry point
-    ├── cli.rs                 # argument parsing (audit / tui / completions / man, --output,
+    ├── cli.rs                 # argument parsing (audit / tui / diff / completions / man, --output,
     │                          #   --min-severity, --fail-on, --modules checked against the registry)
     ├── manpage.rs             # the manual page printed by `linuxdoctor man`
     ├── lib.rs                 # library root (also used by examples/ and tests/)
@@ -519,7 +574,13 @@ linuxdoctor/
     │   ├── engine.rs           # runs modules concurrently, isolates failures
     │   ├── gate.rs               # pass/fail decision behind the exit status (--fail-on)
     │   ├── parallel.rs          # ordered parallel map (per-disk SMART queries)
+    │   ├── text.rs               # clean(): control characters out of untrusted text
     │   └── error.rs
+    │
+    ├── diff/
+    │   ├── report.rs            # reads a JSON report file (lenient, size-capped)
+    │   ├── compare.rs            # pure: two reports -> what changed (and what could not be compared)
+    │   └── render.rs              # terminal, Markdown and JSON output of a comparison
     │
     ├── models/
     │   ├── severity.rs        # Severity (4 levels — see ARCHITECTURE.md)
@@ -563,7 +624,8 @@ tests/       # fixture-driven integration tests, one file per module,
              # formats, --min-severity, --fail-on and the exit status);
              # security_module.rs and logs_module.rs also run the real binary
              # (logs_module.rs against a fake journalctl); docs_commands.rs runs
-             # it for `man`, `completions` and the --modules check
+             # it for `man`, `completions` and the --modules check; diff_command.rs
+             # runs it for `diff` (exit status, formats, unreadable and hostile files)
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

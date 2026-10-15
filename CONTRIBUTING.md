@@ -60,6 +60,14 @@ pour que ça n'implique de toucher qu'un seul dossier. Pour un module
 
 Voir `ARCHITECTURE.md` pour le contrat exact (types, sévérité, confiance).
 
+Attention au format JSON : `linuxdoctor diff` relit les rapports que
+`audit --output json` écrit. Ajouter un champ ne casse rien ; renommer ou
+supprimer un champ d'un constat, d'un module ou du contexte (`id`, `title`,
+`severity`, `evidence`, `instance`, `module_id`, `error`, `skipped`, `notes`,
+`hostname`…) change `schema_version` et doit s'accompagner de la mise à jour de
+`src/diff/report.rs` (un test d'intégration relit un vrai rapport pour vous le
+rappeler).
+
 ### Lancer des commandes externes
 
 Passez toujours par `core::command::command()`, jamais par

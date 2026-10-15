@@ -110,6 +110,7 @@ fn completions_print_a_script_for_each_main_shell() {
         assert!(stderr(&o).is_empty(), "{shell}: {}", stderr(&o));
         let script = stdout(&o);
         assert!(script.contains(marker), "{shell}: {script}");
+        assert!(script.contains("diff"), "{shell}: diff is not offered");
         for id in MODULE_IDS {
             assert!(script.contains(id), "{shell}: module {id} is not offered");
         }

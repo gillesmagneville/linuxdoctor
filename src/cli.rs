@@ -2,7 +2,9 @@
 
 use std::io::IsTerminal;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::builder::PossibleValuesParser;
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 
 use linuxdoctor::models::Severity;
 
@@ -36,12 +38,18 @@ pub enum Command {
     /// Interactive terminal UI over the same audit results (also what
     /// runs with no subcommand, when stdin/stdout are a real terminal).
     Tui(TuiArgs),
+    /// Print the shell completion script for bash, zsh, fish, elvish or
+    /// powershell on standard output.
+    Completions(CompletionsArgs),
+    /// Print the manual page (roff, for man(1)) on standard output.
+    Man,
 }
 
 #[derive(Parser)]
 pub struct AuditArgs {
     /// Restrict to specific modules by id (e.g. --modules memory,cpu).
-    #[arg(long, value_delimiter = ',')]
+    /// An unknown id is a usage error, not an empty report.
+    #[arg(long, value_delimiter = ',', value_parser = module_ids())]
     pub modules: Option<Vec<String>>,
 
     /// Output format. `markdown` and `html` produce a complete report
@@ -66,8 +74,47 @@ pub struct AuditArgs {
 #[derive(Parser)]
 pub struct TuiArgs {
     /// Restrict to specific modules by id (e.g. --modules memory,cpu).
-    #[arg(long, value_delimiter = ',')]
+    /// An unknown id is a usage error, not an empty report.
+    #[arg(long, value_delimiter = ',', value_parser = module_ids())]
     pub modules: Option<Vec<String>>,
+}
+
+#[derive(Args)]
+pub struct CompletionsArgs {
+    /// The shell to generate completions for.
+    #[arg(value_enum)]
+    pub shell: Shell,
+}
+
+/// The ids `--modules` accepts, read from the module registry so a new
+/// module is accepted (and completed, and listed in the manual) the moment
+/// it is registered. Before this check, a typo such as `--modules memroy`
+/// selected nothing and produced an empty report that exited 0 -- a clean
+/// result nobody had actually checked.
+fn module_ids() -> PossibleValuesParser {
+    let ids: Vec<&'static str> = linuxdoctor::modules::all_modules()
+        .iter()
+        .map(|module| module.id())
+        .collect();
+    PossibleValuesParser::new(ids)
+}
+
+/// The full command-line definition, as clap sees it. The manual page and
+/// the completion scripts are generated from this, never written by hand,
+/// so they cannot drift from the options the program really accepts.
+pub fn definition() -> clap::Command {
+    Cli::command()
+}
+
+/// The completion script for `shell`. Built in memory because
+/// `clap_complete` panics if a write fails, which a closed pipe
+/// (`linuxdoctor completions bash | head`) would otherwise cause.
+pub fn completion_script(shell: Shell) -> Vec<u8> {
+    let mut command = definition();
+    let name = command.get_name().to_string();
+    let mut script = Vec::new();
+    clap_complete::generate(shell, &mut command, name, &mut script);
+    script
 }
 
 #[derive(Copy, Clone, ValueEnum)]
@@ -362,5 +409,86 @@ mod tests {
         assert!(matches!(a.output, OutputFormat::Html));
         assert_eq!(a.min_severity, Some(SeverityArg::Warning));
         assert_eq!(a.fail_on, Some(FailOnArg::Never));
+    }
+
+    // ----- completions, manual page, module ids --------------------------
+
+    #[test]
+    fn completions_takes_one_shell_and_rejects_the_others() {
+        for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+            let cli = Cli::try_parse_from(["linuxdoctor", "completions", shell]).unwrap();
+            assert!(
+                matches!(cli.command, Some(Command::Completions(_))),
+                "{shell}"
+            );
+        }
+        assert!(Cli::try_parse_from(["linuxdoctor", "completions"]).is_err());
+        assert!(Cli::try_parse_from(["linuxdoctor", "completions", "tcsh"]).is_err());
+    }
+
+    #[test]
+    fn man_is_a_subcommand_without_arguments() {
+        let cli = Cli::try_parse_from(["linuxdoctor", "man"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Man)));
+        assert!(Cli::try_parse_from(["linuxdoctor", "man", "extra"]).is_err());
+    }
+
+    #[test]
+    fn modules_accepts_every_registered_id_alone_or_in_a_list() {
+        for module in linuxdoctor::modules::all_modules() {
+            let a = audit_args(&["--modules", module.id()]);
+            assert_eq!(a.modules.unwrap(), [module.id()]);
+        }
+        let a = audit_args(&["--modules", "security,logs,memory"]);
+        assert_eq!(a.modules.unwrap(), ["security", "logs", "memory"]);
+    }
+
+    #[test]
+    fn modules_rejects_an_unknown_id_and_suggests_the_close_one() {
+        // A typo used to select nothing and print an empty report, exit 0.
+        let error = Cli::try_parse_from(["linuxdoctor", "audit", "--modules", "memroy"])
+            .err()
+            .expect("an unknown module id must not parse");
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        let message = error.to_string();
+        assert!(message.contains("memroy"), "{message}");
+        assert!(message.contains("memory"), "{message}");
+    }
+
+    #[test]
+    fn one_bad_id_in_a_list_rejects_the_whole_list() {
+        assert!(Cli::try_parse_from(["linuxdoctor", "audit", "--modules", "memory,nope"]).is_err());
+        assert!(Cli::try_parse_from(["linuxdoctor", "tui", "--modules", "nope"]).is_err());
+        // Ids are exact: no silent case folding.
+        assert!(Cli::try_parse_from(["linuxdoctor", "audit", "--modules", "Memory"]).is_err());
+    }
+
+    #[test]
+    fn completion_scripts_know_the_commands_and_the_module_ids() {
+        for (shell, marker) in [
+            (Shell::Bash, "_linuxdoctor()"),
+            (Shell::Zsh, "#compdef linuxdoctor"),
+            (Shell::Fish, "complete -c linuxdoctor"),
+        ] {
+            let script = String::from_utf8(completion_script(shell)).unwrap();
+            assert!(script.contains(marker), "{shell}: {marker} missing");
+            for word in ["audit", "tui", "completions", "man", "fail-on", "timeout"] {
+                assert!(script.contains(word), "{shell}: `{word}` missing");
+            }
+            for module in linuxdoctor::modules::all_modules() {
+                assert!(
+                    script.contains(module.id()),
+                    "{shell}: module `{}` is not offered",
+                    module.id()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn completion_scripts_are_deterministic() {
+        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
+            assert_eq!(completion_script(shell), completion_script(shell));
+        }
     }
 }

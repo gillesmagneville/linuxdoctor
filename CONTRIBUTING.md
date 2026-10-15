@@ -51,8 +51,12 @@ pour que ça n'implique de toucher qu'un seul dossier. Pour un module
    - `analyze.rs` — fonctions pures `RawData -> Vec<Finding>`, testables
      sans toucher au système de fichiers.
 2. Ajoutez une ligne dans `all_modules()` (`src/modules/mod.rs`).
-3. Rien d'autre ne doit changer — ni le moteur, ni `Context`, ni les sorties
-   terminal/JSON/TUI.
+3. Ajoutez une ligne de description du module dans `module_summary()`
+   (`src/manpage.rs`) : c'est ce qui apparaît dans la section MODULES de
+   `man linuxdoctor`, et un test échoue tant qu'elle manque.
+4. Rien d'autre ne doit changer — ni le moteur, ni `Context`, ni les sorties
+   terminal/JSON/TUI ; `--modules`, la complétion du shell et la page de
+   manuel connaissent le nouveau module automatiquement.
 
 Voir `ARCHITECTURE.md` pour le contrat exact (types, sévérité, confiance).
 

@@ -11,6 +11,31 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **Page de manuel** : `linuxdoctor man` écrit sur la sortie standard la page
+  `linuxdoctor(1)` (format roff), avec NOM, SYNOPSIS, DESCRIPTION, OPTIONS,
+  COMMANDES (chacune avec ses propres options), MODULES, CODES DE SORTIE,
+  EXEMPLES, VOIR AUSSI. Les options viennent de la définition clap que
+  l'analyseur utilise réellement (via `clap_mangen`) et la liste des modules du
+  registre `all_modules()` : la page ne peut pas contredire le programme. Elle
+  est déterministe (pas de date, seulement la version), et le test
+  d'intégration la fait relire par `groff -ww` quand il est installé, sans le
+  moindre avertissement. Un module enregistré sans ligne de description dans
+  `module_summary()` (`src/manpage.rs`) fait échouer un test.
+- **Complétions du shell** : `linuxdoctor completions <bash|zsh|fish|elvish|
+  powershell>` écrit le script de complétion (via `clap_complete`). Il propose
+  les sous-commandes, les options, les valeurs de `--output`, `--min-severity`
+  et `--fail-on`, et les identifiants de modules pour `--modules`.
+- **Les paquets `.deb` et `.rpm` installent** la page de manuel
+  (`/usr/share/man/man1/linuxdoctor.1.gz`, `gzip -9n`) et les complétions bash,
+  fish et zsh (`vendor-completions` sur Debian/Ubuntu, `site-functions` sur
+  Fedora/RHEL/openSUSE). `build-deb.sh` et `build-rpm.sh` les génèrent avec le
+  binaire qu'ils viennent de compiler ; si une génération échoue, `Cargo.toml`
+  est restauré comme pour les autres étapes.
+- Dépendances : `clap_complete` 4.4.10 et `clap_mangen` 0.2.20 (donc `roff`
+  0.2.2), figées sur ces versions car ce sont les dernières à accepter
+  `clap` 4.4 et une version de Rust inférieure à 1.85. Elles n'ajoutent que
+  trois paquets au `Cargo.lock` et ne changent aucune version existante.
+
 - **Module Journaux** (`linuxdoctor audit --modules logs`) : lecture seule.
   Il lit le journal systemd (`journalctl -o json`), avec repli sur
   `/var/log/auth.log` ou `secure` et sur `dmesg`. Quatre sujets (sous-menus
@@ -126,6 +151,14 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Modifié
 
+- **`--modules` refuse maintenant un identifiant inconnu** (code de sortie 2,
+  avec la suggestion « a similar value exists: 'memory' »), pour `audit` comme
+  pour `tui`. Avant, une faute de frappe (`--modules memroy`) ne sélectionnait
+  aucun module et produisait un rapport vide avec le code 0 : un résultat
+  « propre » que personne n'avait vérifié. Une seule faute dans une liste
+  (`memory,logz`) arrête toute l'exécution. Les identifiants sont ceux de
+  `all_modules()`, donc un nouveau module est accepté (et complété) dès qu'il
+  est enregistré.
 - Le code de sortie passe par `core::gate`. Sans `--fail-on`, le comportement
   est inchangé : code 1 dès qu'un constat Error ou Critical existe (et
   pour une erreur d'exécution), code 2 pour une erreur d'utilisation.
@@ -136,6 +169,15 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Tests
 
+- `tests/docs_commands.rs` : 11 tests d'intégration avec le vrai binaire —
+  `man` (page roff, tous les modules listés, sortie identique d'une exécution à
+  l'autre, relecture par `groff -ww` sans avertissement), `completions`
+  (bash, zsh, fish ; shell inconnu ou absent = erreur d'usage) et le contrôle de
+  `--modules` (faute de frappe seule ou dans une liste, aussi pour `tui`, et un
+  identifiant correct qui s'exécute toujours). Plus 17 tests unitaires
+  (`cli.rs`, `manpage.rs`) : sections dans l'ordre, options communes
+  documentées une seule fois, `help` absent, version dans l'en-tête sans date,
+  scripts de complétion qui connaissent chaque module.
 - `tests/logs_module.rs` : 14 tests d'intégration du module Journaux — un
   serveur tranquille (rien au-dessus d'Info), un serveur en difficulté (tous
   les constats attendus avec la bonne gravité), l'ordre des pages et les

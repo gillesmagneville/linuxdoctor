@@ -208,8 +208,10 @@ v1 scaffold, thirteen modules shipping end-to-end:
 The core, `Module` trait, engine, and three output modes (terminal, JSON,
 interactive TUI) are built and tested. Adding the next module means only
 writing `collect.rs` + `analyze.rs` under `src/modules/<name>/`, then adding
-one line to `all_modules()` in `src/modules/mod.rs`. Nothing else changes —
-all three output modes pick it up automatically.
+one line to `all_modules()` in `src/modules/mod.rs` and one line describing
+the module in `module_summary()` (`src/manpage.rs` — a test fails until it
+exists). Nothing else changes — all three output modes, `--modules`, the shell
+completions and the manual page pick it up automatically.
 
 **Scope note on CPU isolation:** hypervisor-level vCPU pinning (`virsh
 vcpupin`, libvirt `<cputune>`) is a host-side concept with no kernel
@@ -271,6 +273,11 @@ Neither `VERSION` nor `Cargo.toml` ever contain it.
 ./build-deb.sh --patch --yes   # skip the confirmation prompt
 ./build-deb.sh --clean   # remove build artifacts and generated .deb files
 ```
+
+Both packages also install the manual page (`man linuxdoctor`) and the shell
+completions for bash, zsh and fish. The scripts generate them with the binary
+they have just compiled (see "Manual page and shell completions" below), so
+they always match that version's options.
 
 Before first use, edit `MAINTAINER` and `URL` at the top of each script —
 they're placeholders. Both scripts check for their required tools (`fpm`,
@@ -343,6 +350,8 @@ cargo build --release
 ./target/release/linuxdoctor audit --modules logs       # logins, errors, kernel messages, journal
 ./target/release/linuxdoctor tui              # interactive terminal UI, explicitly
 ./target/release/linuxdoctor audit --timeout 30   # allow slow tools 30 s each
+./target/release/linuxdoctor man > linuxdoctor.1  # the manual page (see below)
+./target/release/linuxdoctor completions bash     # shell completion script
 ```
 
 ### Reports, filtering and exit codes
@@ -372,7 +381,7 @@ Two options, kept separate on purpose:
 |---|---|
 | 0 | The audit ran and nothing reached the `--fail-on` level |
 | 1 | A finding reached the level (default `error`: Error and Critical), **or** the audit itself could not run |
-| 2 | Command-line usage error |
+| 2 | Command-line usage error (a mistyped option value, or a `--modules` id that does not exist) |
 
 Without `--fail-on` the behaviour is exactly what it has always been (exit 1 on Error
 or Critical). With it, a short explanation goes to **stderr**, so `--output json >
@@ -389,6 +398,27 @@ report.json` stays clean. Things worth knowing, for scripts and CI:
 linuxdoctor audit --output html --fail-on warning > "/var/reports/$(date +%F).html" \
   || echo "LinuxDoctor found something, see the report" >&2
 ```
+
+### Manual page and shell completions
+
+The `.deb` and `.rpm` packages install the manual page and the completions for
+you. From a source build (`cargo build`, `cargo install`) the program prints both
+itself, so they always match the options of the version you run:
+
+```bash
+linuxdoctor man > linuxdoctor.1 && man ./linuxdoctor.1          # read it without installing
+
+linuxdoctor completions bash > ~/.local/share/bash-completion/completions/linuxdoctor
+linuxdoctor completions fish > ~/.config/fish/completions/linuxdoctor.fish
+mkdir -p ~/.zfunc && linuxdoctor completions zsh > ~/.zfunc/_linuxdoctor
+#   zsh: put  fpath+=~/.zfunc  before  compinit  in ~/.zshrc
+```
+
+Completion offers the commands, the options, the values of `--output`,
+`--min-severity` and `--fail-on`, and the module ids for `--modules` (`elvish` and
+`powershell` scripts are available too). `--modules` itself rejects an id that does
+not exist — `--modules memroy` is a usage error that suggests `memory`, not an empty
+report that exits 0.
 
 ### Speed and slow tools
 
@@ -429,7 +459,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 887 lib unit tests + 14 CLI unit tests + 81 integration tests
+cargo test               # 887 lib unit tests + 31 CLI unit tests + 92 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -439,10 +469,13 @@ cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no re
 ## Toolchain note
 
 This was built and tested against `rustc`/`cargo` 1.75 (Ubuntu 24.04's apt package).
-Two dependencies are pinned for that MSRV:
+Four dependencies are pinned for that MSRV:
 
 * `clap` at `4.4.18` — newer `clap_builder` releases declare `edition2024` in their
   own manifest, which requires Cargo ≥ 1.85 just to parse.
+* `clap_complete` at `4.4.10` and `clap_mangen` at `0.2.20` (which brings `roff`
+  0.2.2) — the last releases that accept `clap` 4.4; the 4.5/0.3 series need it
+  newer and a Rust of 1.85.
 * `unicode-segmentation` (a transitive dependency of `ratatui`) pinned to `1.11.0`
   in `Cargo.lock` for the same reason.
 
@@ -474,7 +507,9 @@ linuxdoctor/
 │
 └── src/
     ├── main.rs                # bin entry point
-    ├── cli.rs                 # argument parsing (audit / tui, --output, --min-severity, --fail-on)
+    ├── cli.rs                 # argument parsing (audit / tui / completions / man, --output,
+    │                          #   --min-severity, --fail-on, --modules checked against the registry)
+    ├── manpage.rs             # the manual page printed by `linuxdoctor man`
     ├── lib.rs                 # library root (also used by examples/ and tests/)
     │
     ├── core/
@@ -527,7 +562,8 @@ tests/       # fixture-driven integration tests, one file per module,
              # json_schema.rs and export_and_gate.rs (real binary: report
              # formats, --min-severity, --fail-on and the exit status);
              # security_module.rs and logs_module.rs also run the real binary
-             # (logs_module.rs against a fake journalctl)
+             # (logs_module.rs against a fake journalctl); docs_commands.rs runs
+             # it for `man`, `completions` and the --modules check
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

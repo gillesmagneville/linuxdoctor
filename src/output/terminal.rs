@@ -3,7 +3,7 @@
 use crate::core::engine::Report;
 use crate::models::Severity;
 
-use super::common::RenderMeta;
+use super::common::{display_safe, RenderMeta};
 
 const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[2m";
@@ -18,6 +18,9 @@ pub fn render(report: &Report) -> String {
 
 /// Like `render`, adding a closing line when `--min-severity` hid findings.
 pub fn render_with(report: &Report, meta: &RenderMeta) -> String {
+    // Text the audited machine chose (a process or VM name, a message from a
+    // tool) must not be able to act on this terminal.
+    let report = &display_safe(report);
     let mut out = String::new();
 
     out.push_str(&format!(
@@ -221,5 +224,26 @@ mod tests {
         let out = render(&report_with(vec![failed]));
         assert!(out.contains("error: could not run command"), "{out}");
         assert!(out.contains("incomplete data: 'virsh list'"), "{out}");
+    }
+
+    #[test]
+    fn text_from_the_audited_machine_cannot_act_on_the_terminal() {
+        use crate::output::common::testkit::{hostile_report, unsafe_char, without_own_colours};
+        let out = render_with(&hostile_report(), &RenderMeta::default());
+        let foreign = without_own_colours(&out);
+        assert_eq!(unsafe_char(&foreign), None, "{foreign:?}");
+        // Neutralised, not removed: the reader still sees something happened.
+        assert!(foreign.contains("?[2J"), "{foreign}");
+        // Everything is shown: the failed module's error, the notes, the
+        // evidence, both forms of recommendation.
+        for shown in [
+            "error ?",
+            "note ?",
+            "key ?",
+            "value ?",
+            "Recommendation: fix ?",
+        ] {
+            assert!(foreign.contains(shown), "{shown} missing from:\n{foreign}");
+        }
     }
 }

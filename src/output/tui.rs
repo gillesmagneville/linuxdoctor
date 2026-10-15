@@ -48,6 +48,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::core::engine::{run_audit_with_progress, ModuleRunResult, Report};
 use crate::models::{Finding, Severity};
+use crate::output::common::make_display_safe;
 use crate::output::live_stats::{self, CpuStatSample, LiveStats};
 
 /// Minimum number of distinct sub-items before a module gets a real,
@@ -75,7 +76,10 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
-    pub fn new(report: Report) -> Self {
+    pub fn new(mut report: Report) -> Self {
+        // Everything the TUI draws comes from this report, and much of it was
+        // chosen by the audited machine: clean it once, here.
+        make_display_safe(&mut report);
         let mut module_state = ListState::default();
         if !report.results.is_empty() {
             module_state.select(Some(0));
@@ -107,7 +111,8 @@ impl TuiApp {
     /// in the new report, and otherwise falls back to the first module —
     /// re-running the same `--modules` filter means the set of modules
     /// normally won't change, but this stays correct even if it did.
-    pub fn replace_report(&mut self, new_report: Report) {
+    pub fn replace_report(&mut self, mut new_report: Report) {
+        make_display_safe(&mut new_report);
         let selected_id = self.selected_module().map(|r| r.module_id);
         self.report = new_report;
 
@@ -1282,5 +1287,48 @@ mod tests {
         assert!(text.contains("Some data may be missing"), "{text}");
         assert!(text.contains("'nvidia-smi' did not finish"), "{text}");
         assert!(text.contains("--timeout"), "{text}");
+    }
+
+    /// Every symbol the TUI draws for the selected module, flattened.
+    fn screen_text(app: &mut TuiApp, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn text_from_the_audited_machine_never_reaches_the_screen() {
+        use crate::output::common::testkit::{hostile_report, unsafe_char};
+        let mut app = TuiApp::new(hostile_report());
+        let modules = app.report.results.len();
+        assert!(modules >= 3);
+        let mut seen_payload = false;
+        for index in 0..modules {
+            app.module_state.select(Some(index));
+            app.submenu_state = ListState::default();
+            let text = screen_text(&mut app, 200, 60);
+            assert_eq!(unsafe_char(&text), None, "module {index}: {text:?}");
+            seen_payload |= text.contains("EVIL");
+        }
+        assert!(
+            seen_payload,
+            "the hostile text was never drawn: the test saw nothing"
+        );
+    }
+
+    #[test]
+    fn a_refreshed_report_is_cleaned_too() {
+        use crate::output::common::testkit::{hostile_report, unsafe_char};
+        let mut app = TuiApp::new(flat_report());
+        app.replace_report(hostile_report());
+        let text = screen_text(&mut app, 200, 60);
+        assert_eq!(unsafe_char(&text), None, "{text:?}");
+        assert_eq!(unsafe_char(&app.report.context.hostname), None);
     }
 }

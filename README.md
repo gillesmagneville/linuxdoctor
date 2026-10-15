@@ -393,6 +393,12 @@ report.json` stays clean. Things worth knowing, for scripts and CI:
 - A module that could not run is reported as such but is **not** a finding, so it does
   not change the exit status; check the report's `error` fields if that matters to you.
 - `linuxdoctor tui` keeps the default threshold and has neither option.
+- Names chosen by the audited machine (a process, a virtual machine, a mount point, a
+  user...) can contain terminal escape sequences. The terminal, Markdown, HTML and TUI
+  reports replace control characters and right-to-left overrides with `?`, so a hostile
+  name cannot clear your screen or rewrite what is printed above it, even when you read a
+  saved report with `cat`. The JSON report keeps the name exactly as observed (JSON
+  escapes it, so it is safe to read as text).
 
 ```bash
 # Nightly job: keep a dated report, fail the job on any Warning or worse
@@ -514,7 +520,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 931 lib unit tests + 37 CLI unit tests + 117 integration tests
+cargo test               # 944 lib unit tests + 37 CLI unit tests + 123 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -574,7 +580,7 @@ linuxdoctor/
     │   ├── engine.rs           # runs modules concurrently, isolates failures
     │   ├── gate.rs               # pass/fail decision behind the exit status (--fail-on)
     │   ├── parallel.rs          # ordered parallel map (per-disk SMART queries)
-    │   ├── text.rs               # clean(): control characters out of untrusted text
+    │   ├── text.rs               # clean(), printable(): control characters out of untrusted text
     │   └── error.rs
     │
     ├── diff/
@@ -625,7 +631,8 @@ tests/       # fixture-driven integration tests, one file per module,
              # security_module.rs and logs_module.rs also run the real binary
              # (logs_module.rs against a fake journalctl); docs_commands.rs runs
              # it for `man`, `completions` and the --modules check; diff_command.rs
-             # runs it for `diff` (exit status, formats, unreadable and hostile files)
+             # runs it for `diff` (exit status, formats, unreadable and hostile files);
+             # hostile_names.rs runs it against escape sequences in names, every format
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

@@ -78,8 +78,9 @@ linuxdoctor/
 │   │
 │   ├── modules/
 │   │   ├── mod.rs            # the Module trait + all_modules()
-│   │   ├── recommend.rs      # shared by modules: the numbered `Steps` builder and
-│   │   │                     # sysctl command snippets (used by memory and security)
+│   │   ├── recommend.rs      # shared by modules: the numbered `Steps` builder, sysctl
+│   │   │                     # command snippets and the distribution family (`Family`,
+│   │   │                     # `family_of`) used to pick `apt` or `dnf` commands
 │   │   ├── memory/           # richest module: see "Memory module layout" below
 │   │   ├── cpu/
 │   │   ├── numa/
@@ -89,6 +90,7 @@ linuxdoctor/
 │   │   ├── ntp/
 │   │   ├── network/
 │   │   ├── security/         # see "Security module layout" below
+│   │   ├── logs/             # see "Logs module layout" below
 │   │   ├── kernel/
 │   │   ├── firmware/
 │   │   └── virtualization/
@@ -121,6 +123,7 @@ linuxdoctor/
     ├── ntp_module.rs
     ├── network_module.rs
     ├── security_module.rs
+    ├── logs_module.rs
     ├── kernel_module.rs
     ├── firmware_module.rs
     └── virtualization_module.rs
@@ -792,6 +795,50 @@ neglected server built from fixtures):
   data: it reaches the renderers unmodified and is escaped there, which the integration
   tests check through the Markdown and HTML renderers with hostile names.
 
+## Logs module layout
+
+Same discipline again: `collect.rs` is the only file that does I/O, and everything else is
+pure parsing and analysis tested against literal fixtures. The one subtlety is *what to use
+when a source is missing*: that decision is `collect::assemble()`, a pure function of
+everything that was read, so it is tested without a journal.
+
+| File | Findings | Topic (TUI submenu) |
+|---|---|---|
+| `collect.rs` | — (`journalctl -o json` queries run in parallel through `core::parallel`, `auth.log`/`secure` tail, `dmesg`, the journal directory and `journald.conf`, a bounded walk of `/var/log`; `assemble()` picks the sources and lists what could not be read) | — |
+| `journal.rs` | — (parsers: journal JSON, classic syslog lines, `dmesg`, all into one `Entry` shape) | — |
+| `text.rs` | — (`clean`, `is_safe_word`, `normalize`, `human_size`, `table`) | — |
+| `auth.rs` | `LOG002` SSH login activity, `LOG003` one finding per login that follows many failures from the same address, `LOG004` failed `sudo`/`su`/console logins | Authentication |
+| `errors.rs` | `LOG005` error-level messages since boot, grouped by service | System errors |
+| `kernel.rs` | `LOG006` storage and hardware errors, `LOG007` crashes and lockups | Kernel messages |
+| `health.rs` | `LOG008` the journal (persistence, size, dropped messages), `LOG009` log files in `/var/log` | Journal & log files |
+| `analyze.rs` | `LOG001` overview; coordinator: runs every topic, assigns `instance`, orders the result | — |
+
+Rules the coordinator enforces (and `tests/logs_module.rs` checks on a quiet and a troubled
+server built from fixtures, and on the real binary against a fake `journalctl`):
+
+- `LOG001` leads the top page, lists what needs attention and — above all — what **could not
+  be read**. A log that was not read is a `Gap` (with the group to join when that would fix
+  it), never an empty list: an unreadable journal must not look like a quiet one. A journal
+  that answers every query with nothing is treated as unavailable, because a running
+  journald always holds at least the kernel's boot messages.
+- Authentication is judged over the last 24 hours (`auth::WINDOW_HOURS`), errors and kernel
+  messages over the current boot. A failed SSH attempt is counted once even though sshd logs
+  both the rejected account and the password attempt (same address and port). Login order
+  matters: a login is "suspicious" only for failures from its own address *before* it.
+- A suspected break-in outranks everything else at equal severity (`ORDER` in `analyze.rs`).
+  Thresholds are named constants (`SOURCE_FLOOD`, `TOTAL_FLOOD`, `SUSPICIOUS_AFTER`,
+  `BREAK_IN_AFTER`, `NOISY_SERVICE`, ...), each with a comment saying why that number.
+- **Log content is untrusted.** Account names are chosen by whoever connects, program names
+  by any local user. Every message passes through `text::clean` on the way in (control
+  characters, including terminal escape sequences and direction overrides, become `?`;
+  length is bounded), and a name only enters a suggested command when `text::is_safe_word`
+  accepts it — otherwise a placeholder such as `<account>` is shown. Addresses go into
+  commands only when they parse as IP addresses.
+- Every finding at Warning or above carries numbered steps, safest first (confirm it was
+  you, cut access, look for what an intruder leaves, then block). Commands are only
+  suggested, never run; the module never rotates, vacuums or truncates anything.
+- Out-of-memory kills are the Kernel module's (`KERN` findings) and are not repeated here.
+
 ---
 
 # Testing Strategy
@@ -808,12 +855,14 @@ full `collect → analyze` path with an injected fixture instead of live `/proc`
 
 **End-to-end tests** — run against real systems (Ubuntu, Debian, Fedora, Arch,
 Rocky, AlmaLinux). Not part of `cargo test`; run on real or containerized targets.
-(`tests/hung_tools.rs`, `tests/json_schema.rs`, `tests/export_and_gate.rs` and one test of
-`tests/security_module.rs` are the exception: they run the real binary inside `cargo test`, but against fake tools or only
-the memory or security module, so they need no particular distribution. Both always
-report at least their Info overview, which is what makes their expectations
-deterministic on any host: the security test only asserts which findings exist, never
-their severity, because that depends on the machine it runs on.)
+(`tests/hung_tools.rs`, `tests/json_schema.rs`, `tests/export_and_gate.rs`, one test of
+`tests/security_module.rs` and `tests/logs_module.rs` are the exception: they run the real
+binary inside `cargo test`, but against fake tools (`logs_module.rs` puts a fake
+`journalctl` first on `PATH`, so a journal can be simulated on any host) or only the memory,
+security or logs module, so they need no particular distribution. Each of those modules
+always reports at least its Info overview, which is what makes their expectations
+deterministic on any host: the host-run security and logs tests only assert which findings
+exist, never their severity, because that depends on the machine it runs on.)
 
 **Continuous integration** — `.github/workflows/ci.yml` runs on every push to `main`
 and every pull request: `cargo fmt --check`, `cargo clippy --all-targets -- -D

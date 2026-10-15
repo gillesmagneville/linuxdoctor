@@ -4,6 +4,7 @@ pub mod cpu;
 pub mod firmware;
 pub mod gpu;
 pub mod kernel;
+pub mod logs;
 pub mod memory;
 pub mod network;
 pub mod ntp;
@@ -49,6 +50,7 @@ pub fn all_modules() -> Vec<Box<dyn Module>> {
         Box::new(ntp::NtpModule),
         Box::new(network::NetworkModule),
         Box::new(security::SecurityModule),
+        Box::new(logs::LogsModule),
         Box::new(kernel::KernelModule),
         Box::new(firmware::FirmwareModule),
         Box::new(virtualization::VirtualizationModule),

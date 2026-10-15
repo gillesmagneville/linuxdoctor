@@ -8,7 +8,7 @@
 use crate::models::{Category, Confidence, Finding, Severity};
 use crate::modules::recommend::Steps;
 
-use super::firewall::{family_of, Family};
+use crate::modules::recommend::{family_of, Family};
 
 // ---------------------------------------------------------------------------
 // Mandatory access control

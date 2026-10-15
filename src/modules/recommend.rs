@@ -68,6 +68,48 @@ pub fn sysctl_commands(setting: &str, file: &str) -> Vec<String> {
     ]
 }
 
+/// The package-manager family of a distribution, for recommendations that
+/// name commands (`apt` or `dnf`). Anything not clearly one of the two is
+/// `Unknown`, and the recommendation then stays neutral rather than guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Family {
+    DebianLike,
+    RedHatLike,
+    Unknown,
+}
+
+pub fn family_of(distro: Option<&str>) -> Family {
+    let Some(name) = distro else {
+        return Family::Unknown;
+    };
+    let name = name.to_lowercase();
+    let any = |words: &[&str]| words.iter().any(|w| name.contains(w));
+    if any(&[
+        "debian",
+        "ubuntu",
+        "mint",
+        "pop!_os",
+        "raspbian",
+        "kali",
+        "elementary",
+        "zorin",
+    ]) {
+        Family::DebianLike
+    } else if any(&[
+        "fedora",
+        "red hat",
+        "rhel",
+        "centos",
+        "rocky",
+        "alma",
+        "oracle linux",
+    ]) {
+        Family::RedHatLike
+    } else {
+        Family::Unknown
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,5 +140,22 @@ mod tests {
     fn empty_steps_report_empty() {
         assert!(Steps::new().is_empty());
         assert_eq!(Steps::new().build(), "");
+    }
+
+    #[test]
+    fn distribution_families() {
+        assert_eq!(
+            family_of(Some("Debian GNU/Linux 12 (bookworm)")),
+            Family::DebianLike
+        );
+        assert_eq!(family_of(Some("Linux Mint 21")), Family::DebianLike);
+        assert_eq!(family_of(Some("Rocky Linux 9.3")), Family::RedHatLike);
+        assert_eq!(
+            family_of(Some("openSUSE Leap 15.5")),
+            Family::Unknown,
+            "firewalld there, but zypper rather than dnf"
+        );
+        assert_eq!(family_of(Some("Arch Linux")), Family::Unknown);
+        assert_eq!(family_of(None), Family::Unknown);
     }
 }

@@ -9,6 +9,13 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.6.0] - 2026-10-15
+
+Deux modules (Sécurité, Journaux), les rapports Markdown et HTML, les options
+`--min-severity` et `--fail-on`, la page de manuel et les complétions du
+shell. Un changement de comportement à connaître : `--modules` refuse
+désormais un identifiant inexistant au lieu de produire un rapport vide.
+
 ### Ajouté
 
 - **Page de manuel** : `linuxdoctor man` écrit sur la sortie standard la page

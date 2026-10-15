@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Operational impact of a finding. See ARCHITECTURE.md "Severity (canonical)"
 /// for why this is four levels and not five.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Info,

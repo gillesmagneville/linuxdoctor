@@ -262,7 +262,7 @@ fn finding_section(f: &Finding) -> String {
 /// asterisk, square brackets and `<` (which could start an HTML tag or an
 /// autolink). Newlines become spaces. Underscores are left alone: inside
 /// words, as in `vm.dirty_ratio`, they are not emphasis.
-fn escape_text(s: &str) -> String {
+pub(crate) fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -316,7 +316,7 @@ fn longest_backtick_run(s: &str) -> usize {
 /// An inline code span that survives any content: the delimiter is one
 /// backtick longer than the longest run inside, with padding spaces when
 /// the content starts or ends with a backtick.
-fn code_span(s: &str) -> String {
+pub(crate) fn code_span(s: &str) -> String {
     let flat: String = s
         .chars()
         .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })

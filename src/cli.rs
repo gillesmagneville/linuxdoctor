@@ -38,6 +38,10 @@ pub enum Command {
     /// Interactive terminal UI over the same audit results (also what
     /// runs with no subcommand, when stdin/stdout are a real terminal).
     Tui(TuiArgs),
+    /// Compare two JSON reports (`audit --output json`) and show what
+    /// changed between them: new findings, resolved ones, and findings
+    /// that got worse or better. Exits 1 when something got worse.
+    Diff(DiffArgs),
     /// Print the shell completion script for bash, zsh, fish, elvish or
     /// powershell on standard output.
     Completions(CompletionsArgs),
@@ -77,6 +81,36 @@ pub struct TuiArgs {
     /// An unknown id is a usage error, not an empty report.
     #[arg(long, value_delimiter = ',', value_parser = module_ids())]
     pub modules: Option<Vec<String>>,
+}
+
+#[derive(Parser)]
+pub struct DiffArgs {
+    /// The earlier report, written with `linuxdoctor audit --output json`.
+    /// `-` reads it from standard input.
+    #[arg(value_name = "BEFORE")]
+    pub before: String,
+
+    /// The later report. `-` reads it from standard input (for one of the
+    /// two reports only).
+    #[arg(value_name = "AFTER")]
+    pub after: String,
+
+    /// Output format. `markdown` produces a complete document (redirect
+    /// it to a file or paste it in a ticket).
+    #[arg(long, value_enum, default_value_t = DiffFormat::Terminal)]
+    pub output: DiffFormat,
+
+    /// Only show changes to findings that were at or above this severity
+    /// in either report. A display filter: it never changes the exit
+    /// status (see --fail-on) and the output says how many changes it hid.
+    #[arg(long, value_enum, value_name = "LEVEL")]
+    pub min_severity: Option<SeverityArg>,
+
+    /// Exit with status 1 when a finding appeared, or got worse, and is now
+    /// at or above this severity; `never` always exits 0 unless the
+    /// reports cannot be compared. Default: error.
+    #[arg(long, value_enum, value_name = "LEVEL")]
+    pub fail_on: Option<FailOnArg>,
 }
 
 #[derive(Args)]
@@ -126,6 +160,16 @@ pub enum OutputFormat {
     Markdown,
     /// A single self-contained HTML page (no scripts, no external files).
     Html,
+}
+
+/// `diff --output` values.
+#[derive(Copy, Clone, ValueEnum)]
+pub enum DiffFormat {
+    Terminal,
+    Json,
+    /// A Markdown document, ready for an issue, a wiki or a ticket.
+    #[value(alias = "md")]
+    Markdown,
 }
 
 /// Severity as typed on the command line. Kept here, not on `Severity`,
@@ -323,6 +367,62 @@ mod tests {
             OutputFormat::Json
         ));
         assert!(Cli::try_parse_from(["linuxdoctor", "audit", "--output", "pdf"]).is_err());
+    }
+
+    // ----- diff ---------------------------------------------------------------
+
+    fn diff_args(args: &[&str]) -> DiffArgs {
+        let mut argv = vec!["linuxdoctor", "diff"];
+        argv.extend_from_slice(args);
+        match Cli::try_parse_from(argv).unwrap().command {
+            Some(Command::Diff(a)) => a,
+            _ => panic!("expected the diff subcommand"),
+        }
+    }
+
+    #[test]
+    fn diff_takes_the_earlier_report_then_the_later_one() {
+        let a = diff_args(&["before.json", "after.json"]);
+        assert_eq!(a.before, "before.json");
+        assert_eq!(a.after, "after.json");
+        assert!(matches!(a.output, DiffFormat::Terminal));
+        assert_eq!(a.min_severity, None);
+        assert_eq!(a.fail_on, None);
+    }
+
+    #[test]
+    fn diff_reads_a_lone_dash_as_standard_input() {
+        let a = diff_args(&["before.json", "-"]);
+        assert_eq!(a.after, "-");
+    }
+
+    #[test]
+    fn diff_needs_both_reports() {
+        assert!(Cli::try_parse_from(["linuxdoctor", "diff"]).is_err());
+        assert!(Cli::try_parse_from(["linuxdoctor", "diff", "only-one.json"]).is_err());
+        assert!(Cli::try_parse_from(["linuxdoctor", "diff", "a", "b", "c"]).is_err());
+    }
+
+    #[test]
+    fn diff_has_the_severity_options_of_audit() {
+        let a = diff_args(&["a", "b", "--min-severity", "warning", "--fail-on", "never"]);
+        assert_eq!(a.min_severity, Some(SeverityArg::Warning));
+        assert_eq!(a.fail_on, Some(FailOnArg::Never));
+    }
+
+    #[test]
+    fn diff_output_has_no_html_format() {
+        assert!(matches!(
+            diff_args(&["a", "b", "--output", "md"]).output,
+            DiffFormat::Markdown
+        ));
+        assert!(matches!(
+            diff_args(&["a", "b", "--output", "json"]).output,
+            DiffFormat::Json
+        ));
+        assert!(
+            Cli::try_parse_from(["linuxdoctor", "diff", "a", "b", "--output", "html"]).is_err()
+        );
     }
 
     #[test]

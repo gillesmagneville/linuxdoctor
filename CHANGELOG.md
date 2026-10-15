@@ -9,6 +9,52 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **Comparaison de rapports** : `linuxdoctor diff avant.json apres.json`
+  compare deux rapports JSON (`audit --output json`) et indique ce qui a
+  changé : constats **apparus**, **résolus**, **aggravés** ou **améliorés**
+  (avec les valeurs de preuve qui ont bougé), les changements d'information
+  seule (« Autres changements ») étant séparés pour qu'une nouvelle interface
+  réseau ne passe pas pour une régression. Les faits de la machine (noyau,
+  distribution, mémoire, CPU, redémarrage) sont listés en premier.
+  - **Une absence n'est jamais une bonne nouvelle** : un constat qui a disparu
+    n'est « résolu » que si son module est réellement allé au bout dans le
+    second rapport. Un module en échec, ignoré ou absent est listé sous
+    « Non comparés » (avec le nombre de constats qu'on n'a pas pu revérifier),
+    et un module dont des commandes ont été interrompues marque les changements
+    concernés d'un `?`.
+  - Avertissements en tête quand la comparaison risque de ne rien valoir :
+    machines différentes, rapports probablement inversés (le second date d'un
+    démarrage antérieur), ou rapport écrit avec `--min-severity`.
+  - `--output terminal|json|markdown` (alias `md`) ; le JSON est un document
+    versionné (`schema_version`, `kind: "comparison"`). `-` lit l'un des deux
+    rapports sur l'entrée standard.
+  - `--min-severity` (filtre d'affichage, qui compte ce qu'il masque) et
+    `--fail-on` (code de sortie, jugé sur la comparaison entière avant tout
+    filtre) fonctionnent comme pour `audit`. Codes de sortie : **0** rien
+    n'est apparu ni n'a empiré au niveau demandé (par défaut `error`), **1**
+    un constat est apparu ou a empiré à ce niveau ou au-dessus, **2** la
+    comparaison n'a pas pu se faire (fichier illisible, pas un rapport
+    LinuxDoctor, format plus récent que le programme) ou erreur d'usage.
+  - Les fichiers lus sont traités comme non fiables : titres, instances,
+    preuves, messages d'erreur et noms de machine passent par
+    `core::text::clean` pour le terminal et sont échappés pour le Markdown ;
+    un fichier hostile ne peut pas envoyer de séquences d'échappement au
+    terminal. Taille limitée à 64 Mio.
+  - La page de manuel (code de sortie, exemples, description) et les
+    complétions du shell connaissent la nouvelle commande.
+- `core::text::clean` : le nettoyage du texte non fiable (caractères de
+  contrôle, séquences d'échappement, contrôles bidirectionnels, troncature),
+  déplacé du module Journaux pour servir aussi à `diff`. Le module Journaux
+  le réexporte, son comportement est inchangé.
+- `Severity` est désormais désérialisable (`serde`), ce que la lecture des
+  rapports exige.
+- Tests : 25 tests d'intégration du binaire réel (`tests/diff_command.rs` :
+  codes de sortie, entrée standard, fichiers illisibles ou hostiles, trois
+  formats, relecture d'un vrai rapport `audit`), 44 tests unitaires dans
+  `src/diff/`, 6 dans la CLI et la page de manuel.
+
 ## [1.6.0] - 2026-10-15
 
 Deux modules (Sécurité, Journaux), les rapports Markdown et HTML, les options

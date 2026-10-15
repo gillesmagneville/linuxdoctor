@@ -56,7 +56,7 @@ linuxdoctor/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs
-│   ├── cli.rs                 # clap definition (audit / tui / completions / man)
+│   ├── cli.rs                 # clap definition (audit / tui / diff / completions / man)
 │   ├── manpage.rs             # `linuxdoctor man`: the page, generated — see
 │   │                          # "Manual Page and Shell Completions"
 │   │
@@ -69,6 +69,7 @@ linuxdoctor/
 │   │   ├── engine.rs         # concurrent orchestration, failure isolation
 │   │   ├── gate.rs           # pass/fail decision behind the exit status (--fail-on)
 │   │   ├── parallel.rs       # ordered parallel map for per-device work (SMART)
+│   │   ├── text.rs           # `clean`: control characters out of untrusted text
 │   │   └── error.rs
 │   │
 │   ├── models/
@@ -77,6 +78,11 @@ linuxdoctor/
 │   │   ├── confidence.rs     # canonical Confidence scale
 │   │   ├── category.rs       # canonical Category enum
 │   │   └── finding.rs        # canonical Finding struct
+│   │
+│   ├── diff/                 # `linuxdoctor diff` — see "Report Diff" below
+│   │   ├── report.rs         # reads a JSON report file, leniently
+│   │   ├── compare.rs        # pure: two reports -> Comparison
+│   │   └── render.rs         # Comparison -> terminal / Markdown / JSON
 │   │
 │   ├── modules/
 │   │   ├── mod.rs            # the Module trait + all_modules()
@@ -130,7 +136,8 @@ linuxdoctor/
     ├── firmware_module.rs
     ├── virtualization_module.rs
     # (one per module, same fixture-driven pattern)
-    └── docs_commands.rs      # the real binary: man, completions, --modules check
+    ├── docs_commands.rs      # the real binary: man, completions, --modules check
+    └── diff_command.rs       # the real binary: diff, its exit status and its formats
 ```
 
 As more modules are added, if `collect.rs` logic starts repeating across modules
@@ -186,6 +193,9 @@ Contains no diagnostic logic.
 `--min-severity info|warning|error|critical`, `--fail-on info|warning|error|critical|never`
 (and the global `--timeout`). The order in `main.rs` matters and is tested: run the
 audit → **decide pass/fail on the whole report** → apply the display filter → render.
+
+`diff <BEFORE> <AFTER>` takes the same `--min-severity` and `--fail-on`, and
+`--output terminal|json|markdown`; see "Report Diff".
 
 ## Core Engine
 
@@ -606,6 +616,116 @@ Both document renderers are verified, beyond unit tests, by parsing real output 
 independent parser (a CommonMark parser for Markdown, a strict HTML5 parser for HTML)
 and by looking at the HTML in a headless browser (light, dark, phone width).
 
+## Report Diff
+
+`linuxdoctor diff before.json after.json` compares two JSON reports (`audit --output
+json`) and says what changed: findings that **appeared**, were **resolved**, got
+**worse** or got **better**. It is the only command that reads reports instead of the
+machine, so it touches no system file and runs no tool. It lives in `src/diff/`, in three
+files that follow the project's collect / analyze / report split:
+
+| File | Role |
+|---|---|
+| `report.rs` | **Reads** a report file. Lenient on purpose: it declares only the fields the comparison needs and ignores every other key (the JSON contract says readers must), a missing `schema_version` reads as 0, and a `schema_version` newer than `output::json::SCHEMA_VERSION` is refused *before* the rest of the document is interpreted, since its shape cannot be trusted. The size is capped (64 MiB) and `-` reads standard input. |
+| `compare.rs` | **Pure**: two parsed reports in, a `Comparison` out. No I/O, so every rule below is a plain unit test. |
+| `render.rs` | **Lays out** a `Comparison`: terminal text, Markdown, or a versioned JSON document. |
+
+### What is compared
+
+Findings are matched by `(module id, finding id, instance)`. When one key has several
+findings on a side, they are paired one to one if they are the only ones, else by equal
+title, then by position, so a group never reports a change that is not there. A pair whose
+severity differs is **worse** or **better** (and carries which evidence values moved); a
+finding on one side only is **new** or **resolved**. Informational findings that appear or
+disappear are inventory changes, not problems, and are listed apart ("Other changes") so a
+new network interface does not look like a regression.
+
+### The rule that matters: absence is not good news
+
+A finding missing from the later report only counts as *resolved* if the module that would
+have reported it **ran to the end** in that report. If the module failed, was skipped, was
+not run (`--modules` left it out), or is absent from one of the files, it is listed under
+**Not compared**, with what each side said and how many findings could not be re-checked —
+never as a quiet improvement. The mirror case holds too: a finding new in the later report
+is not trusted as new when the earlier report's module failed. Smaller cases get a flag
+instead: a module whose commands were cut short (`notes` in the report) may simply not have
+seen a finding, so a *resolved* or *new* one on that side is marked `?` (`doubt` in JSON)
+and the notes are printed under "Incomplete data". This is the diff-side form of the
+project's principle that unchecked is never presented as clean.
+
+Caveats are stated before the changes: the two reports describe different machines (host
+name or architecture differ), the second looks older than the first (a boot time that went
+backwards, so the arguments are probably reversed), or either was written with
+`--min-severity` (so nothing below the stricter floor exists on either side, and the
+comparison says it only compared findings at or above it). Changed machine facts (kernel,
+distribution, memory, CPUs, a reboot) are listed under "Machine changes".
+
+### Exit status and options
+
+| Status | Meaning |
+|---|---|
+| 0 | No finding appeared or got worse to the `--fail-on` level (default `error`) |
+| 1 | A finding appeared, or got worse, and is now at the level or above |
+| 2 | The comparison could not be made: a file is unreadable, is not a report, or comes from a newer format; also a usage error |
+
+`2` differs from `1` on purpose: a script must be able to tell "something got worse" from
+"I could not look". A finding that is in both reports at the same severity is never a
+regression, however serious (that is what `audit --fail-on` is for), and modules that were
+not compared are listed but do not change the status, as a module that fails to run does
+not for `audit`. As for `audit`, `--fail-on` is judged on the **whole comparison before**
+`--min-severity` hides anything (`retain_at_or_above` runs after `regressions`), and only
+an explicit `--fail-on` explains itself on stderr. `--min-severity` keeps a change if the
+finding reached the level in either report, and never hides "Not compared" or "Incomplete
+data".
+
+### Reports are untrusted input
+
+A comparison reads files that may have been written elsewhere, so every string taken from
+them is hostile until proven otherwise: finding titles, instance names, evidence, error
+messages, file names, the host name. The terminal output passes all of it through
+`core::text::clean` (control characters, escape sequences and bidirectional overrides become
+`?`, long text is cut with `…`); the Markdown output also escapes it the way the audit's
+Markdown report does (`escape_text`, `code_span`, `|` in table cells); the JSON output
+escapes it by construction. `tests/diff_command.rs` feeds a report full of escape sequences
+and markup to the real binary and checks all three outputs.
+
+### JSON output
+
+`--output json` prints a document of its own, versioned the same way as the audit report
+(`render::COMPARISON_SCHEMA_VERSION`, currently `1`, first key; adding a key never bumps
+it):
+
+```json
+{
+  "schema_version": 1,
+  "kind": "comparison",
+  "before": { "report": "before.json", "machine": { "hostname": "web01", "...": "..." } },
+  "after":  { "report": "after.json",  "machine": { "...": "..." } },
+  "machine_changes": [ { "fact": "kernel", "before": "6.8.0-31", "after": "6.8.0-40" } ],
+  "rebooted": true,
+  "caveats": [ { "kind": "different_machines", "before": "web01", "after": "db02" } ],
+  "floor": "info",
+  "summary": { "worse": 2, "better": 1, "other": 0, "unchanged": 14, "not_compared": 1 },
+  "changes": [
+    { "section": "worse", "kind": "worse", "module_id": "security", "id": "SEC005",
+      "instance": "sshd", "title": "...", "before": "warning", "after": "error",
+      "evidence": [ { "key": "permit_root_login", "before": "no", "after": "yes" } ] }
+  ],
+  "incomplete": [ { "module_id": "storage", "side": "after", "notes": ["..."] } ],
+  "not_compared": [ { "module_id": "network", "before": { "state": "ran" },
+      "after": { "state": "failed", "error": "..." },
+      "findings_before": 3, "findings_after": 0 } ],
+  "skipped_in_both": ["numa"],
+  "hidden": 0
+}
+```
+
+`kind` is `new`, `resolved`, `worse` or `better`; `section` is where the change is listed
+(`worse`, `better`, `other`); `before` / `after` are the severities (`null` on the side
+where the finding does not exist); `doubt` (`"before"` or `"after"`) appears on a change that
+incomplete data makes uncertain; `hidden_below` appears with `hidden` when `--min-severity`
+was used.
+
 ## Interactive TUI
 
 The third output mode, built on `ratatui`. Consumes the same `Report` as the other
@@ -809,7 +929,7 @@ everything that was read, so it is tested without a journal.
 |---|---|---|
 | `collect.rs` | — (`journalctl -o json` queries run in parallel through `core::parallel`, `auth.log`/`secure` tail, `dmesg`, the journal directory and `journald.conf`, a bounded walk of `/var/log`; `assemble()` picks the sources and lists what could not be read) | — |
 | `journal.rs` | — (parsers: journal JSON, classic syslog lines, `dmesg`, all into one `Entry` shape) | — |
-| `text.rs` | — (`clean`, `is_safe_word`, `normalize`, `human_size`, `table`) | — |
+| `text.rs` | — (`is_safe_word`, `normalize`, `human_size`, `table`; `clean` now lives in `core::text` and is re-exported) | — |
 | `auth.rs` | `LOG002` SSH login activity, `LOG003` one finding per login that follows many failures from the same address, `LOG004` failed `sudo`/`su`/console logins | Authentication |
 | `errors.rs` | `LOG005` error-level messages since boot, grouped by service | System errors |
 | `kernel.rs` | `LOG006` storage and hardware errors, `LOG007` crashes and lockups | Kernel messages |

@@ -238,6 +238,15 @@ fn write_description(page: &mut Page) -> io::Result<()> {
         );
         paragraph(
             r,
+            "To see what changed on a machine, keep the JSON report of an audit (audit --output \
+             json) and compare it with a later one (diff): the comparison lists the findings \
+             that appeared, the ones that were resolved and the ones that got worse or better. \
+             A finding only counts as resolved when the module that would have reported it ran \
+             to the end in the later report; a module that failed, was skipped or was not run \
+             there is listed as not compared instead.",
+        );
+        paragraph(
+            r,
             "Without a command, linuxdoctor opens the interactive interface (tui) when both \
              standard input and standard output are a terminal, and prints a plain-text audit \
              otherwise, so that redirections and pipes keep working.",
@@ -272,18 +281,22 @@ fn write_exit_status(page: &mut Page) -> io::Result<()> {
         for (status, meaning) in [
             (
                 "0",
-                "The audit ran and no finding reached the --fail-on level; or the manual page \
-                 or the completion script was printed.",
+                "audit: the audit ran and no finding reached the --fail-on level. diff: no \
+                 finding appeared or got worse to the --fail-on level. The manual page or the \
+                 completion script was printed.",
             ),
             (
                 "1",
-                "A finding reached the --fail-on level (by default error: Error and Critical \
-                 findings), or the audit itself could not run, or the output could not be \
-                 written.",
+                "audit: a finding reached the --fail-on level (by default error: Error and \
+                 Critical findings), or the audit itself could not run, or the output could not \
+                 be written. diff: a finding appeared, or got worse, and is now at the --fail-on \
+                 level or above.",
             ),
             (
                 "2",
-                "Command-line usage error, including an unknown module id.",
+                "Command-line usage error, including an unknown module id. diff: a report could \
+                 not be read, is not a LinuxDoctor report, or was written by a newer version; \
+                 nothing was compared.",
             ),
         ] {
             r.control("TP", []);
@@ -292,10 +305,13 @@ fn write_exit_status(page: &mut Page) -> io::Result<()> {
         }
         paragraph(
             r,
-            "--fail-on always judges the whole report, before --min-severity filters what is \
-             displayed: hiding findings never turns a failing audit into a passing one. A \
-             module that could not run is reported as such but is not a finding, so it does \
-             not change the exit status.",
+            "--fail-on always judges the whole report (or, for diff, the whole comparison), \
+             before --min-severity filters what is displayed: hiding findings never turns a \
+             failing audit into a passing one. A module that could not run is reported as such \
+             but is not a finding, so it does not change the exit status; likewise, diff lists \
+             the modules it could not compare without failing because of them. A finding that \
+             was already there in both reports is not a regression, however serious: that is \
+             what audit --fail-on is for.",
         );
     })
 }
@@ -320,6 +336,24 @@ fn write_examples(page: &mut Page) -> io::Result<()> {
                 "linuxdoctor audit --fail-on warning --output json > report.json",
                 "For scripts and CI: exit with status 1 on any Warning or worse, and keep the \
                  full JSON report.",
+            ),
+            (
+                "linuxdoctor audit --output json > before.json",
+                "Keep a report to compare with later (the same command, after a change, writes \
+                 after.json).",
+            ),
+            (
+                "linuxdoctor diff before.json after.json",
+                "Show what appeared, was resolved, got worse or got better between the two.",
+            ),
+            (
+                "linuxdoctor diff before.json after.json --fail-on warning --output markdown",
+                "For a change review: a Markdown comparison, and exit status 1 if a Warning or \
+                 worse appeared or got worse.",
+            ),
+            (
+                "linuxdoctor audit --output json | linuxdoctor diff before.json -",
+                "Compare a saved report with a fresh audit, without writing the fresh one to a file.",
             ),
             (
                 "linuxdoctor audit --timeout 30",
@@ -431,7 +465,7 @@ mod tests {
     #[test]
     fn documents_every_visible_command_and_its_options() {
         let page = page();
-        for command in ["audit", "tui", "completions", "man"] {
+        for command in ["audit", "tui", "diff", "completions", "man"] {
             assert!(page.contains(&format!(".SS {command}\n")), "{command}");
         }
         for option in [
@@ -495,6 +529,18 @@ mod tests {
         for status in ["\\fB0\\fR", "\\fB1\\fR", "\\fB2\\fR"] {
             assert!(exit.contains(status), "{status}");
         }
+        // The comparison has its own meaning for 1 and 2.
+        assert!(exit.contains("diff:"), "{exit}");
+    }
+
+    #[test]
+    fn the_examples_show_how_to_compare_two_reports() {
+        let page = page();
+        let examples = &page[page.find(".SH EXAMPLES").unwrap()..];
+        assert!(
+            examples.contains("linuxdoctor diff before.json after.json"),
+            "{examples}"
+        );
     }
 
     #[test]

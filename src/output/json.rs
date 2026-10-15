@@ -13,6 +13,10 @@ use super::common::RenderMeta;
 /// The rule: adding a field never changes it (readers must ignore fields they
 /// do not know); removing, renaming or re-typing a field, or changing what a
 /// value means, bumps it by one. See ARCHITECTURE.md "JSON Renderer".
+///
+/// `linuxdoctor diff` reads this layout back (`src/diff/report.rs`): the fields it
+/// reads are the ones it needs to compare, and `tests/diff_command.rs` feeds it a
+/// report the real `audit` wrote, so a renamed or removed field fails there.
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Present only when `--min-severity` removed findings, so a filtered

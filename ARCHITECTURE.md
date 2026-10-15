@@ -78,6 +78,8 @@ linuxdoctor/
 │   │
 │   ├── modules/
 │   │   ├── mod.rs            # the Module trait + all_modules()
+│   │   ├── recommend.rs      # shared by modules: the numbered `Steps` builder and
+│   │   │                     # sysctl command snippets (used by memory and security)
 │   │   ├── memory/           # richest module: see "Memory module layout" below
 │   │   ├── cpu/
 │   │   ├── numa/
@@ -86,6 +88,7 @@ linuxdoctor/
 │   │   ├── systemd/
 │   │   ├── ntp/
 │   │   ├── network/
+│   │   ├── security/         # see "Security module layout" below
 │   │   ├── kernel/
 │   │   ├── firmware/
 │   │   └── virtualization/
@@ -117,6 +120,7 @@ linuxdoctor/
     ├── systemd_module.rs
     ├── ntp_module.rs
     ├── network_module.rs
+    ├── security_module.rs
     ├── kernel_module.rs
     ├── firmware_module.rs
     └── virtualization_module.rs
@@ -729,7 +733,7 @@ unit tests.
 | `pressure.rs` | `MEM009` PSI, OOM kills, direct reclaim | Pressure |
 | `tuning.rs` | `MEM011` overcommit, `MEM012` huge pages | Kernel tuning |
 | `kernel.rs` | `MEM013` slab, page tables, ZFS ARC, `min_free_kbytes` | Kernel tuning |
-| `format.rs` | shared helpers: sizes, the numbered `Steps` builder, process grouping, swap/sysctl command snippets | — |
+| `format.rs` | shared helpers: sizes, process grouping, swap command snippets; re-exports the numbered `Steps` builder and sysctl snippets, which now live in `modules::recommend` so other modules can use them | — |
 | `analyze.rs` | coordinator: runs every topic, assigns `instance`, orders the result | — |
 
 Rules the coordinator enforces (and tests check on eight scenarios):
@@ -745,6 +749,48 @@ Rules the coordinator enforces (and tests check on eight scenarios):
   `processes`, `tmpfs_mounts`, `sysv_shm`, `zfs_arc`). Every extra defaults to
   "absent", and a topic that needs a missing source returns no finding rather than
   guessing. This keeps old fixtures valid (`..Default::default()`).
+
+## Security module layout
+
+The security module follows the same discipline as memory: `collect.rs` is the only file
+that does I/O, and every topic file holds pure parsing and analysis that is tested against
+literal fixtures. It is strictly read-only and works without root: root only adds
+visibility, and every finding says what it could not see (the program behind another
+user's socket, the firewall rules, `/etc/shadow`).
+
+| File | Findings | Topic (TUI submenu) |
+|---|---|---|
+| `collect.rs` | — (all I/O: `/proc/net/*`, socket owners via `/proc/*/fd` within a 3 s budget, `systemctl`/`nft`/`iptables` through `core::command`, `sshd_config` with `Include` expansion, sysfs/`/proc/sys` reads, `stat` of sensitive files) | — |
+| `listeners.rs` | `SEC002` listening services overview, `SEC003` one finding per exposed risky service (catalogue of ports with a severity and a reason) | Listening services |
+| `firewall.rs` | `SEC004` firewall (ufw, firewalld, nftables, iptables; active / not detected / unknown) | Firewall |
+| `ssh.rs` | `SEC005` effective `sshd_config` (drop-ins, `Match` blocks, weak algorithms) | SSH |
+| `access.rs` | `SEC006` SELinux / AppArmor, `SEC007` kernel and network hardening (19 checks) | Access control, Hardening |
+| `accounts.rs` | `SEC008` accounts (extra UID 0, empty or weak passwords), `SEC009` permissions of sensitive files | Accounts & files |
+| `analyze.rs` | `SEC001` overview; coordinator: runs every topic, assigns `instance`, orders the result | — |
+
+Rules the coordinator enforces (and `tests/security_module.rs` checks on a well-kept and a
+neglected server built from fixtures):
+
+- `SEC001` leads the module's top page and lists what needs attention. Anything at Warning
+  or above stays on that page, worst first; everything else goes to its topic's submenu.
+- Context changes what is reported, and how sure the module is. A risky service only
+  becomes a finding when it is reachable from the network (a service bound to loopback
+  only is listed in `SEC002` but gets no `SEC003`); its severity comes from the catalogue entry, and its confidence from the
+  firewall (89% with no firewall verified, 80% when that could not be verified without
+  root, 70% when a firewall is active, because individual rules are not evaluated). "No
+  firewall" is only a Warning when a non-SSH TCP port is reachable from the network. SSH
+  findings are capped at Warning when sshd is not running.
+- Confidence reflects what could be verified: a conclusion drawn without root, or from
+  rules that could not be listed, gets a lower confidence than one drawn from direct
+  observation.
+- Every finding at Warning or above carries numbered steps, safest action first (install an
+  SSH key before disabling passwords, `sshd -t` before reloading, a second session kept
+  open). Configuration changes go in drop-in files (`/etc/ssh/sshd_config.d/`,
+  `/etc/sysctl.d/`) so the distribution's own files are never edited. Commands are only
+  suggested, never run.
+- Text that comes from the machine (program names, user names, configuration values) is
+  data: it reaches the renderers unmodified and is escaped there, which the integration
+  tests check through the Markdown and HTML renderers with hostile names.
 
 ---
 
@@ -762,11 +808,12 @@ full `collect → analyze` path with an injected fixture instead of live `/proc`
 
 **End-to-end tests** — run against real systems (Ubuntu, Debian, Fedora, Arch,
 Rocky, AlmaLinux). Not part of `cargo test`; run on real or containerized targets.
-(`tests/hung_tools.rs`, `tests/json_schema.rs` and `tests/export_and_gate.rs` are the
-exception: they run the real binary inside `cargo test`, but against fake tools or only
-the memory module, so they need no particular distribution. The memory module always
-reports at least its Info overview, which is what makes their expectations
-deterministic on any host.)
+(`tests/hung_tools.rs`, `tests/json_schema.rs`, `tests/export_and_gate.rs` and one test of
+`tests/security_module.rs` are the exception: they run the real binary inside `cargo test`, but against fake tools or only
+the memory or security module, so they need no particular distribution. Both always
+report at least their Info overview, which is what makes their expectations
+deterministic on any host: the security test only asserts which findings exist, never
+their severity, because that depends on the machine it runs on.)
 
 **Continuous integration** — `.github/workflows/ci.yml` runs on every push to `main`
 and every pull request: `cargo fmt --check`, `cargo clippy --all-targets -- -D

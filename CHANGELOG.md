@@ -11,6 +11,46 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **Module Sécurité** (`linuxdoctor audit --modules security`) : lecture
+  seule, utilisable sans root (root ajoute de la visibilité, et chaque
+  constat dit ce qu'il n'a pas pu voir). Six sujets (sous-menus du TUI) :
+  - **Services à l'écoute** (`SEC002`, `SEC003`) : tous les sockets TCP/UDP
+    de `/proc/net/*`, accessibles du réseau ou seulement de la machine,
+    avec le programme propriétaire quand c'est possible. Un catalogue de
+    services qui ne devraient presque jamais être exposés (Telnet, API
+    Docker non chiffrée, Redis, Memcached, bases de données, VNC, SNMP…)
+    produit un constat par service exposé, avec des étapes pour le
+    vérifier, le restreindre ou le filtrer.
+  - **Pare-feu** (`SEC004`) : ufw, firewalld, nftables ou iptables. Une
+    absence de pare-feu n'est un avertissement que si un port TCP (hors SSH)
+    est réellement joignable ; le constat précise si les règles ont pu être
+    lues.
+  - **SSH** (`SEC005`) : configuration effective de `sshd_config` avec
+    `Include` et blocs `Match` (connexion root, mots de passe vides ou
+    autorisés, protocole 1, confiance par hôte, algorithmes faibles…),
+    plafonnée à Warning quand sshd ne tourne pas. Les étapes mettent
+    l'action sûre en premier : installer une clé avant de désactiver les
+    mots de passe, valider avec `sshd -t`, garder une seconde session
+    ouverte.
+  - **Contrôle d'accès** (`SEC006`) : SELinux (enforcing, permissive,
+    désactivé, et écart avec `/etc/selinux/config`) et AppArmor (profils
+    chargés et appliqués), lus dans sysfs sans outil externe.
+  - **Durcissement** (`SEC007`) : 19 réglages noyau/réseau jugés selon la
+    valeur réellement appliquée, avec les commandes pour les rendre
+    persistants dans `/etc/sysctl.d/` sans toucher aux fichiers de la
+    distribution.
+  - **Comptes et fichiers** (`SEC008`, `SEC009`) : comptes UID 0 supplémentaires,
+    connexions sans mot de passe, hachages faibles (si `/etc/shadow` est
+    lisible), droits de `/etc/passwd`, `/etc/shadow`, `sudoers`, de la
+    configuration SSH et de `/tmp`.
+  Un constat de synthèse `SEC001` ouvre la page du module et liste ce qui
+  demande de l'attention ; tout ce qui est Warning ou plus reste sur cette
+  page, le reste est rangé par sujet. Les commandes ne sont jamais
+  exécutées, seulement proposées.
+- Module `modules::recommend` : le constructeur d'étapes numérotées
+  (`Steps`) et les commandes `sysctl`, extraits du module Mémoire pour être
+  partagés.
+
 - **Rapport Markdown** : `linuxdoctor audit --output markdown` (alias `md`)
   produit un document complet — en-tête (machine, date, version), tableau
   récapitulatif par module, puis chaque constat avec sa gravité, sa
@@ -58,6 +98,18 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Tests
 
+- `tests/security_module.rs` : 8 tests d'intégration du module Sécurité —
+  un serveur bien tenu (rien au-dessus d'Info), un serveur négligé (tous les
+  constats attendus avec la bonne gravité), l'ordre des pages et la présence
+  d'étapes numérotées, les identifiants `SEC001` à `SEC009`, noms hostiles
+  (balises HTML, Markdown, JavaScript) à travers les rendus Markdown et HTML,
+  les quatre formats, et un test du vrai binaire sur la machine hôte qui ne
+  vérifie que la présence des constats, jamais leur gravité (elle dépend de
+  la machine).
+- 139 tests unitaires pour le module Sécurité (analyseurs de `/proc/net/*`,
+  `sshd_config`, `nft`/`iptables`, `passwd`/`shadow`/`group`, SELinux,
+  AppArmor, réglages sysctl) sur des textes d'exemple, y compris les entrées
+  mal formées.
 - `tests/export_and_gate.rs` : 14 tests de bout en bout avec le vrai binaire
   (formats Markdown/HTML, alias `md`, `--min-severity`, `--fail-on`, code de
   sortie pour chaque seuil, le filtre d'affichage ne change jamais le code de

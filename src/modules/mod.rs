@@ -8,6 +8,8 @@ pub mod memory;
 pub mod network;
 pub mod ntp;
 pub mod numa;
+pub mod recommend;
+pub mod security;
 pub mod storage;
 pub mod systemd;
 pub mod virtualization;
@@ -46,6 +48,7 @@ pub fn all_modules() -> Vec<Box<dyn Module>> {
         Box::new(systemd::SystemdModule),
         Box::new(ntp::NtpModule),
         Box::new(network::NetworkModule),
+        Box::new(security::SecurityModule),
         Box::new(kernel::KernelModule),
         Box::new(firmware::FirmwareModule),
         Box::new(virtualization::VirtualizationModule),

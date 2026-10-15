@@ -56,7 +56,9 @@ linuxdoctor/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs
-│   ├── cli.rs
+│   ├── cli.rs                 # clap definition (audit / tui / completions / man)
+│   ├── manpage.rs             # `linuxdoctor man`: the page, generated — see
+│   │                          # "Manual Page and Shell Completions"
 │   │
 │   ├── core/
 │   │   ├── mod.rs
@@ -126,8 +128,9 @@ linuxdoctor/
     ├── logs_module.rs
     ├── kernel_module.rs
     ├── firmware_module.rs
-    └── virtualization_module.rs
+    ├── virtualization_module.rs
     # (one per module, same fixture-driven pattern)
+    └── docs_commands.rs      # the real binary: man, completions, --modules check
 ```
 
 As more modules are added, if `collect.rs` logic starts repeating across modules
@@ -855,7 +858,8 @@ full `collect → analyze` path with an injected fixture instead of live `/proc`
 
 **End-to-end tests** — run against real systems (Ubuntu, Debian, Fedora, Arch,
 Rocky, AlmaLinux). Not part of `cargo test`; run on real or containerized targets.
-(`tests/hung_tools.rs`, `tests/json_schema.rs`, `tests/export_and_gate.rs`, one test of
+(`tests/hung_tools.rs`, `tests/json_schema.rs`, `tests/export_and_gate.rs`,
+`tests/docs_commands.rs` (it only prints generated text), one test of
 `tests/security_module.rs` and `tests/logs_module.rs` are the exception: they run the real
 binary inside `cargo test`, but against fake tools (`logs_module.rs` puts a fake
 `journalctl` first on `PATH`, so a journal can be simulated on any host) or only the memory,
@@ -880,6 +884,43 @@ callable in a unit test with zero I/O.
 
 ---
 
+# Manual Page and Shell Completions
+
+`linuxdoctor man` and `linuxdoctor completions <shell>` print the manual page and the
+completion scripts. Both are **generated at run time from the same `clap::Command` the
+parser uses** (`cli::definition()`), never written by hand, so an option added to
+`cli.rs` appears in `--help`, in the completion scripts and in the manual page at once.
+Packaging (`build-deb.sh`, `build-rpm.sh`) runs the freshly built binary to produce the
+files it installs, which is also why the page carries the version that was built.
+
+`src/manpage.rs` assembles the page from `clap_mangen`'s section renderers plus a few
+sections clap cannot know (description, exit status, examples, see also):
+
+* **Commands** are rendered one by one, each with its own options. The options every
+  command shares (`--timeout`, which is `global`, and the generated `-h`/`-V`) are hidden
+  from those per-command renderings and appear once, under OPTIONS. The generated `help`
+  command is left out.
+* **Modules** are listed from the registry (`all_modules()`) with a one-line summary from
+  `module_summary()`. The summary lives next to the page, not in the `Module` trait, so
+  adding a module does not touch the trait; the unit test `every_registered_module_has_a_summary`
+  fails until the line exists, and a module without one is still listed by id.
+* **Deterministic output**: no date, no host name, so packaging the same source twice gives
+  identical bytes. `clap_mangen` emits a two-line apostrophe preamble per rendered piece;
+  the page keeps the first and drops the rest (`Page::piece`).
+* **Fail loudly on layout drift**: reusing the body of a `clap_mangen` section means
+  stripping its `.SH` heading. The crate is pinned to an exact version and the unit tests
+  render the page, so a changed layout stops the build instead of printing a doubled heading.
+
+`--modules` takes its accepted values from the same registry (`cli::module_ids()`, a clap
+`PossibleValuesParser`). That is what lets shells complete module ids, and it closes a quiet
+failure: an unknown id used to select no module and produce an empty report with exit
+status 0.
+
+`tests/docs_commands.rs` runs the real binary, and — when `groff` is installed — feeds the
+page to `groff -man -ww` and requires no warning at all.
+
+---
+
 # Dependency Philosophy
 
 Prefer the standard library. Add a dependency only when it clearly earns its keep:
@@ -890,6 +931,10 @@ Prefer the standard library. Add a dependency only when it clearly earns its kee
 * `clap` (derive) — CLI parsing; the UX surface (module selection, output format,
   verbosity, filtering) grows quickly enough that hand-rolled parsing stops paying
   off almost immediately
+* `clap_complete` / `clap_mangen` — shell completions and the manual page, generated from
+  the same definition as the parser so they cannot drift from it (a hand-written copy would,
+  the first time an option changed). They add only `roff` to the dependency tree.
+  Pinned to the last releases that accept `clap` 4.4 on Rust 1.75 (README "Toolchain note").
 
 Avoided on purpose: an async runtime (see Parallel Execution), a system-info crate
 like `sysinfo` (reading `/proc`/`/sys` directly is barely more code and keeps every

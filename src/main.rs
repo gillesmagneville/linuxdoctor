@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 mod cli;
+mod manpage;
 
 use clap::Parser;
+use std::io::{ErrorKind, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -21,6 +23,34 @@ fn main() -> ExitCode {
     match cli.resolved_command() {
         Command::Audit(args) => run_audit_command(args),
         Command::Tui(args) => run_tui_command(args.modules),
+        Command::Completions(args) => print_bytes(&cli::completion_script(args.shell)),
+        Command::Man => run_man_command(),
+    }
+}
+
+fn run_man_command() -> ExitCode {
+    let modules = linuxdoctor::modules::all_modules();
+    let ids: Vec<&str> = modules.iter().map(|module| module.id()).collect();
+    match manpage::render(&cli::definition(), &ids) {
+        Ok(page) => print_bytes(&page),
+        Err(e) => {
+            eprintln!("linuxdoctor: could not build the manual page: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes `bytes` to standard output. A reader that goes away early
+/// (`linuxdoctor man | head`) is not an error worth reporting.
+fn print_bytes(bytes: &[u8]) -> ExitCode {
+    let mut stdout = std::io::stdout().lock();
+    match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("linuxdoctor: could not write the output: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 

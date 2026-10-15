@@ -200,6 +200,34 @@ for doc in README.md CHANGELOG.md PROJECT_CONTEXT.md ARCHITECTURE.md LICENSE; do
   [ -f "$PROJECT_DIR/$doc" ] && cp "$PROJECT_DIR/$doc" "$BUILD_DIR/usr/share/doc/$PACKAGE_NAME/"
 done
 
+# Page de manuel et completions : generees par le binaire qu'on vient de
+# compiler (sous-commandes `man` et `completions`), donc toujours d'accord
+# avec les options reelles de cette version.
+#   - page de manuel : compressee en gzip -9n (sans date ni nom de fichier
+#     dans l'en-tete gzip, donc reproductible), comme l'exige la charte
+#     Debian ;
+#   - zsh : Fedora/RHEL/openSUSE : site-functions, deja dans le fpath de zsh.
+# Les commandes sont chainees avec && (et non separees par des retours a la
+# ligne) car `set -e` est ignore dans une condition `if` : sans cela, seule
+# la derniere commande compterait. Si une generation echoue, Cargo.toml est
+# restaure comme pour les autres etapes.
+echo ">>> Generation de la page de manuel et des completions..."
+MAN_DIR="$BUILD_DIR/usr/share/man/man1"
+BASH_COMP_DIR="$BUILD_DIR/usr/share/bash-completion/completions"
+ZSH_COMP_DIR="$BUILD_DIR/usr/share/zsh/site-functions"
+FISH_COMP_DIR="$BUILD_DIR/usr/share/fish/vendor_completions.d"
+if ! {
+  mkdir -p "$MAN_DIR" "$BASH_COMP_DIR" "$ZSH_COMP_DIR" "$FISH_COMP_DIR" &&
+  "$BINARY" man | gzip -9n > "$MAN_DIR/linuxdoctor.1.gz" &&
+  "$BINARY" completions bash > "$BASH_COMP_DIR/linuxdoctor" &&
+  "$BINARY" completions zsh > "$ZSH_COMP_DIR/_linuxdoctor" &&
+  "$BINARY" completions fish > "$FISH_COMP_DIR/linuxdoctor.fish"
+}; then
+  echo "Erreur : impossible de generer la page de manuel ou les completions."
+  sed -i "s/^version = \".*\"/version = \"$CURRENT_VERSION\"/" "$CARGO_TOML"
+  exit 1
+fi
+
 echo ">>> Normalisation des permissions..."
 find "$BUILD_DIR" -type d -exec chmod 755 {} +
 find "$BUILD_DIR" -type f -exec chmod 644 {} +

@@ -393,6 +393,8 @@ report.json` stays clean. Things worth knowing, for scripts and CI:
 - A module that could not run is reported as such but is **not** a finding, so it does
   not change the exit status; check the report's `error` fields if that matters to you.
 - `linuxdoctor tui` keeps the default threshold and has neither option.
+- A reader that goes away early (`linuxdoctor audit | head -1`) is not an error and does
+  not change the verdict: the exit status is still the audit's own.
 - Names chosen by the audited machine (a process, a virtual machine, a mount point, a
   user...) can contain terminal escape sequences. The terminal, Markdown, HTML and TUI
   reports replace control characters and right-to-left overrides with `?`, so a hostile
@@ -520,7 +522,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 944 lib unit tests + 37 CLI unit tests + 123 integration tests
+cargo test               # 944 lib unit tests + 37 CLI unit tests + 128 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

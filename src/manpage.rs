@@ -311,7 +311,8 @@ fn write_exit_status(page: &mut Page) -> io::Result<()> {
              but is not a finding, so it does not change the exit status; likewise, diff lists \
              the modules it could not compare without failing because of them. A finding that \
              was already there in both reports is not a regression, however serious: that is \
-             what audit --fail-on is for.",
+             what audit --fail-on is for. A reader that closes the pipe early (audit | head) is not \
+             an error and does not change the status.",
         );
     })
 }

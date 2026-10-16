@@ -530,6 +530,10 @@ keeps stdout clean, so `--output json > report.json` stays parseable.
 
 A module that fails to run (`error` in the JSON, `✗ ... (error: ...)` in the terminal)
 does not count as a finding; check for it separately in CI if it matters.
+
+The report is written to standard output with `write_stdout` (not `print!`, which panics
+when the reader has gone away): a closed pipe (`audit | head`) is not an error and the
+status stays the audit's verdict; any other write failure is reported and exits 1.
 `tui` keeps the default gate and has neither option.
 
 ## Terminal Renderer

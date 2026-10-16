@@ -114,7 +114,11 @@ pub fn display_safe(report: &Report) -> Report {
 /// field to `Context`, `Finding`, `Confidence` or `ModuleRunResult` stops
 /// this function from compiling until the new field is dealt with here.
 pub fn make_display_safe(report: &mut Report) {
-    let Report { context, results } = report;
+    let Report {
+        context,
+        results,
+        profile: _,
+    } = report;
 
     let crate::core::context::Context {
         hostname,
@@ -448,6 +452,7 @@ pub(crate) mod testkit {
         let mut incomplete = result("numa", vec![finding("N", Severity::Info, true)]);
         incomplete.notes = vec![format!("note {PAYLOAD}"), format!("other {PAYLOAD}")];
         Report {
+            profile: None,
             context: Context {
                 hostname: format!("host {PAYLOAD}"),
                 kernel_version: format!("kernel {PAYLOAD}"),

@@ -184,6 +184,20 @@ fn caveat_text(caveat: &Caveat) -> String {
                 name(after)
             )
         }
+        Caveat::DifferentProfiles { before, after } => {
+            // From files: untrusted text, like the versions above.
+            let name = |profile: &Option<String>| match profile {
+                Some(profile) => clean(profile, MAX_NAME),
+                None => "none".to_string(),
+            };
+            format!(
+                "These reports were written with different profiles ({} and {}): a profile \
+                 lowers the severity of readings that are normal for a kind of machine, so a \
+                 finding that got better or worse may come from the profile, not from the machine.",
+                name(before),
+                name(after)
+            )
+        }
     }
 }
 
@@ -951,6 +965,84 @@ mod tests {
             &by_version(report(vec![]), &long),
             &by_version(report(vec![]), "1.9.0"),
         );
+        assert!(terminal(&c, &LABELS).len() < 3_000);
+    }
+
+    // ----- the profile caveat -----------------------------------------------------
+
+    fn no_profile_then_hpc() -> Comparison {
+        compare(
+            &report(vec![module("m", &[("A", None, "warning")])]),
+            &with_profile(report(vec![module("m", &[("A", None, "info")])]), "hpc"),
+        )
+    }
+
+    #[test]
+    fn the_terminal_says_the_reports_were_written_with_different_profiles() {
+        let text = strip_ansi(&terminal(&no_profile_then_hpc(), &LABELS));
+        let caveat = text
+            .find("different profiles (none and hpc)")
+            .expect("caveat shown");
+        assert!(text.contains("not from the machine"), "{text}");
+        assert!(caveat < text.find("Summary").unwrap(), "{text}");
+        // Between two profiles, both are named.
+        let c = compare(
+            &with_profile(report(vec![]), "hpc"),
+            &with_profile(report(vec![]), "server"),
+        );
+        assert!(strip_ansi(&terminal(&c, &LABELS)).contains("different profiles (hpc and server)"));
+    }
+
+    #[test]
+    fn markdown_quotes_the_profile_caveat_like_the_others() {
+        let md = markdown(&no_profile_then_hpc(), &LABELS);
+        assert!(
+            md.contains("> ⚠ These reports were written with different profiles (none and hpc)"),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn json_records_the_profile_caveat_with_both_profiles() {
+        let v: serde_json::Value =
+            serde_json::from_str(&json(&no_profile_then_hpc(), &LABELS).unwrap()).unwrap();
+        assert_eq!(
+            v["caveats"],
+            j!([{"kind": "different_profiles", "before": null, "after": "hpc"}])
+        );
+    }
+
+    #[test]
+    fn the_same_profile_gets_no_caveat_in_any_format() {
+        let c = compare(
+            &with_profile(report(vec![]), "hpc"),
+            &with_profile(report(vec![]), "hpc"),
+        );
+        assert!(!strip_ansi(&terminal(&c, &LABELS)).contains("different profiles"));
+        assert!(!markdown(&c, &LABELS).contains("different profiles"));
+        let v: serde_json::Value = serde_json::from_str(&json(&c, &LABELS).unwrap()).unwrap();
+        assert_eq!(v["caveats"], j!([]));
+    }
+
+    #[test]
+    fn a_profile_read_from_a_file_cannot_act_on_the_terminal_through_the_caveat() {
+        let evil = "h\u{1b}[2J\u{1b}]0;pwned\u{7}\u{202e}pc";
+        let c = compare(
+            &with_profile(report(vec![]), evil),
+            &with_profile(report(vec![]), "<b>2|0</b>"),
+        );
+        let plain = strip_ansi(&terminal(&c, &LABELS));
+        assert_no_control_characters(&plain);
+        assert!(
+            plain.contains("different profiles (h?[2J?]0;pwned??pc and"),
+            "{plain}"
+        );
+        let md = markdown(&c, &LABELS);
+        assert_no_control_characters(&md);
+        assert!(md.contains("\\<b>2|0\\</b>"), "{md}");
+        // A very long name is cut, not printed whole.
+        let long = "p".repeat(5_000);
+        let c = compare(&with_profile(report(vec![]), &long), &report(vec![]));
         assert!(terminal(&c, &LABELS).len() < 3_000);
     }
 

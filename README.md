@@ -370,6 +370,7 @@ cargo build --release
 ./target/release/linuxdoctor audit --output html > report.html     # one self-contained page
 ./target/release/linuxdoctor audit --min-severity warning          # show Warning and above only
 ./target/release/linuxdoctor audit --fail-on warning               # exit 1 on any Warning or worse
+./target/release/linuxdoctor audit --profile hpc                   # a compute node: busy CPUs are normal
 ./target/release/linuxdoctor audit --modules memory
 ./target/release/linuxdoctor audit --modules security   # exposure, firewall, SSH, hardening
 ./target/release/linuxdoctor audit --modules logs       # logins, errors, kernel messages, journal
@@ -427,8 +428,8 @@ report.json` stays clean. Things worth knowing, for scripts and CI:
   display: hiding findings can never make a failing audit pass.
 - A module that could not run is reported as such but is **not** a finding, so it does
   not change the exit status; check the report's `error` fields if that matters to you.
-- `linuxdoctor tui` keeps the default threshold and has neither option (it only reads
-  `timeout` from the configuration file, see below).
+- `linuxdoctor tui` keeps the default threshold and has neither option (it reads
+  `timeout` and `profile` from the configuration file, see below).
 - A reader that goes away early (`linuxdoctor audit | head -1`) is not an error and does
   not change the verdict: the exit status is still the audit's own.
 - Names chosen by the audited machine (a process, a virtual machine, a mount point, a
@@ -443,6 +444,45 @@ report.json` stays clean. Things worth knowing, for scripts and CI:
 linuxdoctor audit --output html --fail-on warning > "/var/reports/$(date +%F).html" \
   || echo "LinuxDoctor found something, see the report" >&2
 ```
+
+### Profiles
+
+The checks judge a machine in general, and some readings mean something else on a
+particular kind of machine. A load average at the number of CPUs is contention on a
+desktop; on a compute node it is the node doing its job. A **profile** tells LinuxDoctor
+what kind of machine this is:
+
+```bash
+linuxdoctor audit --profile hpc
+```
+
+or `profile = "hpc"` at the top of the [configuration file](#the-configuration-file).
+What a profile does is deliberately narrow:
+
+- **You choose it; it is never guessed from the machine.** With no profile, every finding
+  keeps the severity its check gave it.
+- **It only lowers.** A profile caps the severity of readings that are normal for that
+  kind of machine. It never raises one, so it cannot make an audit that passes today
+  fail, and it never removes a finding or touches the evidence.
+- **It says what it did.** An adjusted finding carries the reason in its explanation and
+  `severity_before_profile` / `profile` in its evidence, so nobody has to wonder why it
+  is Info. The report names the profile it was written with (the first line of the
+  terminal report, the Markdown and HTML headers, the interactive UI, and a top-level
+  `profile` key in JSON, which is absent when none was chosen).
+- **It applies before the exit status.** `--fail-on` and the default exit status judge the
+  severities the report shows, so under `hpc` a busy node no longer makes the audit fail.
+  Everything else still does: a full disk or an exposed service is reported and fails
+  exactly as without a profile.
+
+| Profile | For | What it changes |
+|---|---|---|
+| `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence |
+
+One thing to keep in mind: under `hpc`, a node that is oversubscribed *by mistake* looks
+the same as one that is working. The profile removes the alarm, not the number.
+
+`linuxdoctor diff` has no `--profile`; it reads the profile each report recorded, and warns
+when the two differ.
 
 ### Comparing two reports
 
@@ -477,9 +517,10 @@ Two things the comparison refuses to do, because they would make a bad result lo
   under **Incomplete data**.
 - **It says when the comparison may not mean much**: the reports come from different
   machines, they look reversed (the second was taken at an earlier boot), one was
-  written with `--min-severity`, or they were written by different versions of LinuxDoctor
+  written with `--min-severity`, they were written by different versions of LinuxDoctor
   (checks are added between versions, so a finding can appear or disappear because the
-  program changed, not the machine).
+  program changed, not the machine), or with different [profiles](#profiles) (a finding
+  that got better under `hpc` got better on paper only).
 
 `--min-severity` and `--fail-on` work as for `audit`: the first only hides changes (and
 says how many), the second decides the exit status, judged on the whole comparison.
@@ -521,6 +562,11 @@ fail_on = "warning"
 # Only show findings from this severity up (--min-severity).
 min_severity = "warning"
 
+# The kind of machine, for audit and tui (--profile): hpc. A profile only
+# lowers findings that are normal for that kind of machine; without one,
+# every finding keeps the severity its check gave it.
+profile = "hpc"
+
 [audit]
 # terminal, json, markdown or html (--output).
 output = "markdown"
@@ -542,7 +588,8 @@ mkdir -p ~/.config/linuxdoctor && editor ~/.config/linuxdoctor/config.toml
   typing something: `--output terminal` beats `output = "markdown"`.
 - **The words are the ones of the command line**, read by the same parser, so `"md"`
   works wherever `--output md` does. The top-level `timeout`, `fail_on` and
-  `min_severity` apply to `audit` and `diff` (`timeout` to every command); the
+  `min_severity` apply to `audit` and `diff` (`timeout` to every command), and the
+  top-level `profile` to `audit` and `tui`; the
   `[audit]` and `[diff]` sections hold `output` — it cannot be set at the top, because
   the two commands do not accept the same formats (`diff` has no `html`) — and may
   repeat the other two for their own command.
@@ -556,7 +603,7 @@ mkdir -p ~/.config/linuxdoctor && editor ~/.config/linuxdoctor/config.toml
 - `--modules` cannot be set in the file on purpose: a file that quietly narrowed every
   audit would produce clean-looking reports of checks that were never made.
 - `man` and `completions` never read the file, so a broken file cannot stop you from
-  printing them; `tui` reads only `timeout`.
+  printing them; `tui` reads only `timeout` and `profile`.
 - The file is untrusted text like any other: it must be a regular file of at most
   64 KiB, and whatever is quoted from it in an error message has its control characters
   replaced.
@@ -631,7 +678,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1050 lib unit tests + 76 CLI unit tests + 162 integration tests
+cargo test               # 1084 lib unit tests + 88 CLI unit tests + 177 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -689,6 +736,7 @@ linuxdoctor/
     │                          #   --min-severity, --fail-on, --modules checked against the registry)
     ├── config.rs              # the optional configuration file (~/.config/linuxdoctor/config.toml)
     ├── manpage.rs             # the manual page printed by `linuxdoctor man`
+    ├── profile.rs             # machine profiles (--profile): severity caps for a kind of machine
     ├── lib.rs                 # library root (also used by examples/ and tests/)
     │
     ├── core/
@@ -755,7 +803,8 @@ tests/       # fixture-driven integration tests, one file per module,
              # config_file.rs runs it with real configuration files (the command line
              # wins, exit status 2 for a bad file) and checks that every test that
              # starts the binary keeps it away from the reader's own file;
-             # hostile_names.rs runs it against escape sequences in names, every format
+             # hostile_names.rs runs it against escape sequences in names, every format;
+             # profile_option.rs runs the real CPU module and the real binary with profiles
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

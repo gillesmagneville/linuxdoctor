@@ -12,6 +12,7 @@ use crate::core::context::Context;
 use crate::core::error::CoreError;
 use crate::models::Finding;
 use crate::modules::{all_modules, Module};
+use crate::profile::{self, Profile};
 
 /// One module's outcome: either the findings it produced, or a note that it
 /// failed / was skipped. Kept separate from `Finding` so a collector failure
@@ -45,6 +46,15 @@ impl ModuleRunResult {
 pub struct Report {
     pub context: Context,
     pub results: Vec<ModuleRunResult>,
+    /// The profile that was applied to this report, if one was
+    /// ([`crate::profile::apply`] is the only thing that sets it). It lives
+    /// on the report, not beside it, so that what a report says it was
+    /// judged as and what was done to its findings cannot differ.
+    ///
+    /// Not part of the serialized `Report`: the JSON renderer writes it in
+    /// its own place, next to the version, and only when there is one.
+    #[serde(skip)]
+    pub profile: Option<Profile>,
 }
 
 impl Report {
@@ -204,8 +214,15 @@ pub fn run_modules(
 ///
 /// See [`run_modules`] for the concurrency and for what `on_progress`
 /// receives. The plain `run_audit()` below passes a no-op callback.
+///
+/// `profile` is the kind of machine the person said this is, if they did
+/// (see [`crate::profile`]). It is a parameter of the only functions that
+/// build a report, not a step the caller has to remember: a report never
+/// leaves the engine half-way between "judged in general" and "judged as a
+/// compute node", so what is recorded and what was applied cannot disagree.
 pub fn run_audit_with_progress(
     selected_ids: Option<&[String]>,
+    profile: Option<Profile>,
     on_progress: impl FnMut(usize, usize, &[&'static str]),
 ) -> Result<Report, CoreError> {
     let context = Context::detect()?;
@@ -220,14 +237,37 @@ pub fn run_audit_with_progress(
         })
         .collect();
 
-    let results = run_modules(&selected, &context, on_progress);
-    Ok(Report { context, results })
+    Ok(audit_of(&selected, context, profile, on_progress))
+}
+
+/// The report of running `modules`, with the profile (if any) applied to
+/// the finished result -- before anything decides an exit status or filters
+/// what is shown, which happen in the caller, after this returns.
+pub fn audit_of(
+    modules: &[&dyn Module],
+    context: Context,
+    profile: Option<Profile>,
+    on_progress: impl FnMut(usize, usize, &[&'static str]),
+) -> Report {
+    let results = run_modules(modules, &context, on_progress);
+    let mut report = Report {
+        profile: None,
+        context,
+        results,
+    };
+    if let Some(profile) = profile {
+        profile::apply(&mut report, profile);
+    }
+    report
 }
 
 /// Plain entry point for the non-interactive `audit` command, which has
 /// no progress screen to update.
-pub fn run_audit(selected_ids: Option<&[String]>) -> Result<Report, CoreError> {
-    run_audit_with_progress(selected_ids, |_, _, _| {})
+pub fn run_audit(
+    selected_ids: Option<&[String]>,
+    profile: Option<Profile>,
+) -> Result<Report, CoreError> {
+    run_audit_with_progress(selected_ids, profile, |_, _, _| {})
 }
 
 #[cfg(test)]
@@ -235,11 +275,14 @@ mod tests {
     use super::*;
     use crate::core::command::command;
     use crate::core::error::ModuleError;
-    use crate::models::Category;
+    use crate::models::{Category, Confidence, Severity};
     use std::time::{Duration, Instant};
 
     enum Behavior {
         Findings,
+        /// Findings of a heavily loaded machine: the two a compute-node
+        /// profile caps, and one it has nothing to say about.
+        Loaded,
         Fail,
         Panic,
         Unavailable,
@@ -276,6 +319,23 @@ mod tests {
             thread::sleep(self.delay);
             match self.behavior {
                 Behavior::Findings | Behavior::Unavailable => Ok(Vec::new()),
+                Behavior::Loaded => Ok([
+                    ("CPU002", Severity::Error),
+                    ("CPU003", Severity::Critical),
+                    ("STO001", Severity::Error),
+                ]
+                .into_iter()
+                .map(|(id, severity)| {
+                    Finding::builder(
+                        id,
+                        "t",
+                        Category::Cpu,
+                        severity,
+                        Confidence::direct_observation(),
+                    )
+                    .build()
+                })
+                .collect()),
                 Behavior::Fail => Err(ModuleError::Parse {
                     what: "fixture".into(),
                     reason: "broken on purpose".into(),
@@ -307,6 +367,76 @@ mod tests {
     fn run(mods: &[Fake]) -> Vec<ModuleRunResult> {
         let refs: Vec<&dyn Module> = mods.iter().map(|m| m as &dyn Module).collect();
         run_modules(&refs, &ctx(), |_, _, _| {})
+    }
+
+    fn audit_of_loaded(profile: Option<Profile>) -> Report {
+        let fake = Fake::new("cpu", 0, Behavior::Loaded);
+        audit_of(&[&fake as &dyn Module], ctx(), profile, |_, _, _| {})
+    }
+
+    fn severities(report: &Report) -> Vec<(String, Severity)> {
+        report
+            .all_findings()
+            .map(|f| (f.id.clone(), f.severity))
+            .collect()
+    }
+
+    #[test]
+    fn without_a_profile_the_report_is_what_the_modules_gave() {
+        let report = audit_of_loaded(None);
+        assert_eq!(
+            severities(&report),
+            [
+                ("CPU002".to_string(), Severity::Error),
+                ("CPU003".to_string(), Severity::Critical),
+                ("STO001".to_string(), Severity::Error),
+            ]
+        );
+        assert!(report
+            .all_findings()
+            .all(|f| f.evidence.iter().all(|(k, _)| k != "profile")));
+        assert_eq!(report.profile, None);
+    }
+
+    #[test]
+    fn the_engine_applies_the_profile_to_the_finished_report() {
+        let report = audit_of_loaded(Some(Profile::Hpc));
+        assert_eq!(report.profile, Some(Profile::Hpc));
+        assert_eq!(
+            severities(&report),
+            [
+                ("CPU002".to_string(), Severity::Info),
+                ("CPU003".to_string(), Severity::Info),
+                // Nothing to say about this one.
+                ("STO001".to_string(), Severity::Error),
+            ]
+        );
+        // And the report says so, in the findings themselves.
+        let cpu003 = report.all_findings().find(|f| f.id == "CPU003").unwrap();
+        assert!(cpu003
+            .evidence
+            .iter()
+            .any(|(k, v)| k == "severity_before_profile" && v == "critical"));
+    }
+
+    #[test]
+    fn the_profile_is_applied_before_the_gate_can_look_at_the_report() {
+        // The caller gets the report only after the profile was applied, so
+        // whatever it decides from the report -- the exit status first --
+        // follows the severities the report shows.
+        use crate::core::gate::{evaluate, DEFAULT_FAIL_ON};
+        let without = audit_of_loaded(None);
+        let with = audit_of_loaded(Some(Profile::Hpc));
+        assert_eq!(
+            evaluate(&without, Some(DEFAULT_FAIL_ON)).failing,
+            3,
+            "all three are Error or worse"
+        );
+        assert_eq!(
+            evaluate(&with, Some(DEFAULT_FAIL_ON)).failing,
+            1,
+            "only the storage finding is left at Error"
+        );
     }
 
     #[test]
@@ -464,6 +594,7 @@ mod report_filter_tests {
         let mut noted = result("gpu", vec![finding("G1", Severity::Info)]);
         noted.notes = vec!["nvidia-smi did not finish".into()];
         Report {
+            profile: None,
             context: Context {
                 hostname: "h".into(),
                 kernel_version: "6".into(),

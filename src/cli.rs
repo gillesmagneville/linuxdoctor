@@ -8,6 +8,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell;
 
 use linuxdoctor::models::Severity;
+use linuxdoctor::profile::Profile;
 
 /// Longest `--timeout` accepted, on the command line and in the
 /// configuration file alike.
@@ -95,6 +96,14 @@ pub struct AuditArgs {
     /// fails. Default: error, i.e. Error and Critical findings fail.
     #[arg(long, value_enum, value_name = "LEVEL")]
     pub fail_on: Option<FailOnArg>,
+
+    /// The kind of machine being audited. Without it, every check judges the
+    /// machine as a general-purpose one. A profile only ever lowers the
+    /// severity of a reading that is normal for that kind of machine, says so
+    /// in the finding, and is recorded in the report. It is chosen here or
+    /// in the configuration file, never detected.
+    #[arg(long, value_enum, value_name = "PROFILE")]
+    pub profile: Option<ProfileArg>,
 }
 
 #[derive(Parser)]
@@ -103,6 +112,14 @@ pub struct TuiArgs {
     /// An unknown id is a usage error, not an empty report.
     #[arg(long, value_delimiter = ',', value_parser = module_ids())]
     pub modules: Option<Vec<String>>,
+
+    /// The kind of machine being audited. Without it, every check judges the
+    /// machine as a general-purpose one. A profile only ever lowers the
+    /// severity of a reading that is normal for that kind of machine, says so
+    /// in the finding, and is recorded in the report. It is chosen here or
+    /// in the configuration file, never detected.
+    #[arg(long, value_enum, value_name = "PROFILE")]
+    pub profile: Option<ProfileArg>,
 }
 
 #[derive(Parser)]
@@ -215,6 +232,23 @@ impl From<SeverityArg> for Severity {
     }
 }
 
+/// `--profile` values. Kept here, not on `Profile`, so the library does not
+/// depend on the argument parser; a test checks every word here is a profile.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum ProfileArg {
+    /// A compute node, where fully used CPUs are the normal state:
+    /// load-average findings are reported as informational.
+    Hpc,
+}
+
+impl From<ProfileArg> for Profile {
+    fn from(arg: ProfileArg) -> Self {
+        match arg {
+            ProfileArg::Hpc => Profile::Hpc,
+        }
+    }
+}
+
 /// `--fail-on` values: the four severities, or `never`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum FailOnArg {
@@ -263,13 +297,17 @@ impl Cli {
     /// the interactive branch — this can, deterministically, for both.
     fn resolved_command_with(self, interactive: bool) -> Command {
         self.command.unwrap_or(if interactive {
-            Command::Tui(TuiArgs { modules: None })
+            Command::Tui(TuiArgs {
+                modules: None,
+                profile: None,
+            })
         } else {
             Command::Audit(AuditArgs {
                 modules: None,
                 output: None,
                 min_severity: None,
                 fail_on: None,
+                profile: None,
             })
         })
     }
@@ -315,6 +353,7 @@ mod tests {
                 output: Some(OutputFormat::Json),
                 min_severity: None,
                 fail_on: None,
+                profile: None,
             })),
             timeout: None,
             config: None,
@@ -332,6 +371,7 @@ mod tests {
         let cli = Cli {
             command: Some(Command::Tui(TuiArgs {
                 modules: Some(vec!["memory".to_string()]),
+                profile: None,
             })),
             timeout: None,
             config: None,
@@ -545,6 +585,74 @@ mod tests {
     fn severity_options_only_exist_on_audit() {
         assert!(Cli::try_parse_from(["linuxdoctor", "tui", "--fail-on", "error"]).is_err());
         assert!(Cli::try_parse_from(["linuxdoctor", "tui", "--min-severity", "error"]).is_err());
+    }
+
+    #[test]
+    fn profile_is_unset_unless_chosen() {
+        assert_eq!(audit_args(&[]).profile, None);
+        let cli = Cli::try_parse_from(["linuxdoctor", "tui"]).unwrap();
+        let Some(Command::Tui(args)) = cli.command else {
+            panic!("expected tui");
+        };
+        assert_eq!(args.profile, None);
+    }
+
+    #[test]
+    fn profile_is_accepted_by_audit_and_tui() {
+        assert_eq!(
+            audit_args(&["--profile", "hpc"]).profile,
+            Some(ProfileArg::Hpc)
+        );
+        let cli = Cli::try_parse_from(["linuxdoctor", "tui", "--profile", "hpc"]).unwrap();
+        let Some(Command::Tui(args)) = cli.command else {
+            panic!("expected tui");
+        };
+        assert_eq!(args.profile, Some(ProfileArg::Hpc));
+    }
+
+    #[test]
+    fn profile_is_not_an_option_of_diff() {
+        // A comparison works from the profiles the two reports record.
+        assert!(Cli::try_parse_from([
+            "linuxdoctor",
+            "diff",
+            "a.json",
+            "b.json",
+            "--profile",
+            "hpc"
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn profile_rejects_unknown_words_and_is_case_sensitive() {
+        for word in ["desktop", "HPC", "Hpc", ""] {
+            assert!(
+                Cli::try_parse_from(["linuxdoctor", "audit", "--profile", word]).is_err(),
+                "{word:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_profile_word_is_a_profile_and_every_profile_has_a_word() {
+        // The library knows the profiles; the command line spells them. The
+        // two lists must stay the same list.
+        let words: Vec<String> = ProfileArg::value_variants()
+            .iter()
+            .map(|arg| arg.to_possible_value().unwrap().get_name().to_string())
+            .collect();
+        for word in &words {
+            let profile = Profile::from_name(word).unwrap_or_else(|| panic!("{word}"));
+            assert_eq!(profile.name(), word);
+        }
+        for profile in Profile::ALL {
+            let name = profile.name().to_string();
+            assert!(words.contains(&name), "{name}");
+            let arg = ProfileArg::from_str(profile.name(), false).unwrap();
+            assert_eq!(Profile::from(arg), profile);
+        }
+        assert_eq!(words.len(), Profile::ALL.len());
     }
 
     #[test]

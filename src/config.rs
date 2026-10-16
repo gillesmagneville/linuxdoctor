@@ -34,7 +34,9 @@ use serde::de::{self, Deserializer};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::cli::{DiffFormat, FailOnArg, OutputFormat, SeverityArg, MAX_TIMEOUT_SECONDS};
+use crate::cli::{
+    DiffFormat, FailOnArg, OutputFormat, ProfileArg, SeverityArg, MAX_TIMEOUT_SECONDS,
+};
 
 /// The file as the manual page and the README show it. Kept here, next to
 /// the parser, and read by a test, so that what is documented is a file the
@@ -52,6 +54,11 @@ fail_on = "warning"
 
 # Only show findings from this severity up (--min-severity).
 min_severity = "warning"
+
+# The kind of machine, for audit and tui (--profile): hpc. A profile only
+# lowers findings that are normal for that kind of machine; without one,
+# every finding keeps the severity its check gave it.
+profile = "hpc"
 
 [audit]
 # terminal, json, markdown or html (--output).
@@ -124,6 +131,9 @@ pub struct Config {
     /// The file the settings were read from; `None` when there was none.
     pub source: Option<PathBuf>,
     pub timeout: Option<u64>,
+    /// The kind of machine, for `audit` and `tui` (`diff` compares reports
+    /// that already say which profile they were written with).
+    pub profile: Option<ProfileArg>,
     pub audit: Settings<OutputFormat>,
     pub diff: Settings<DiffFormat>,
 }
@@ -270,6 +280,7 @@ impl<F> Default for Section<F> {
 #[serde(deny_unknown_fields)]
 struct FileShape {
     timeout: Option<Seconds>,
+    profile: Option<Word<ProfileArg>>,
     fail_on: Option<Word<FailOnArg>>,
     min_severity: Option<Word<SeverityArg>>,
     /// Never present: deserializing it is an error (see `Misplaced`).
@@ -290,6 +301,7 @@ pub fn parse(source: &str) -> Result<Config, String> {
     Ok(Config {
         source: None,
         timeout: file.timeout.map(|seconds| seconds.0),
+        profile: file.profile.map(|word| word.0),
         audit: Settings {
             fail_on: audit.fail_on.map(|word| word.0).or(top_fail_on),
             min_severity: audit.min_severity.map(|word| word.0).or(top_min_severity),
@@ -496,6 +508,7 @@ fail_on = "never"
             "the section wins"
         );
         assert_eq!(config.diff.output, Some(DiffFormat::Markdown));
+        assert_eq!(config.profile, Some(ProfileArg::Hpc));
     }
 
     #[test]
@@ -554,6 +567,11 @@ fail_on = "never"
             let config = parsed(&format!("[diff]\noutput = \"{word}\""));
             assert_eq!(config.diff.output, Some(*variant), "{word}");
         }
+        for variant in ProfileArg::value_variants() {
+            let word = word_of(*variant);
+            let config = parsed(&format!("profile = \"{word}\""));
+            assert_eq!(config.profile, Some(*variant), "profile = {word}");
+        }
         // Aliases too, as on the command line.
         assert_eq!(
             parsed("[audit]\noutput = \"md\"").audit.output,
@@ -563,6 +581,33 @@ fail_on = "never"
             parsed("[diff]\noutput = \"md\"").diff.output,
             Some(DiffFormat::Markdown)
         );
+    }
+
+    #[test]
+    fn no_profile_line_means_no_profile() {
+        assert_eq!(parsed("").profile, None);
+        assert_eq!(parsed("timeout = 5\nfail_on = \"never\"\n").profile, None);
+    }
+
+    #[test]
+    fn the_profile_is_a_top_level_line_only() {
+        // It is the kind of machine, not a setting of one command: the same
+        // for every audit, in the terminal or the interactive UI.
+        let message = error_of("[audit]\nprofile = \"hpc\"\n");
+        assert!(message.contains("unknown field `profile`"), "{message}");
+        let message = error_of("[diff]\nprofile = \"hpc\"\n");
+        assert!(message.contains("unknown field `profile`"), "{message}");
+    }
+
+    #[test]
+    fn an_unknown_profile_lists_the_ones_that_exist() {
+        let message = error_of("profile = \"desktop\"\n");
+        assert!(message.contains("line 1"), "{message}");
+        assert!(message.contains("`desktop` is not one of"), "{message}");
+        assert!(message.contains("hpc"), "{message}");
+        // Exact, like every other word.
+        assert!(parse("profile = \"HPC\"").is_err());
+        assert!(parse("profile = 3").is_err());
     }
 
     #[test]

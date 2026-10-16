@@ -120,6 +120,7 @@ fn main() {
     let storage_findings = analyze_storage(&storage_data, &ctx);
 
     let report = Report {
+        profile: None,
         context: ctx,
         results: vec![
             ModuleRunResult {

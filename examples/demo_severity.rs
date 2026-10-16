@@ -39,6 +39,7 @@ fn main() {
 
     let findings = analyze(&critical_data, &ctx);
     let report = Report {
+        profile: None,
         context: ctx,
         results: vec![ModuleRunResult {
             module_id: "memory",

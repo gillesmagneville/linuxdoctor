@@ -11,6 +11,49 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **Profils de machine : `--profile hpc`** (ou `profile = "hpc"` en tête du fichier
+  de configuration). Les vérifications jugent une machine « en général » ; certaines
+  mesures veulent dire autre chose sur un type de machine précis. Une charge égale au
+  nombre de CPU est de la contention sur un poste de travail, et un nœud de calcul qui
+  fait son travail. Un profil le dit une fois, à un seul endroit (`src/profile.rs`),
+  au lieu que chaque module devine. Pour `audit` et `tui` (`diff` n'en a pas : il lit
+  celui que chaque rapport a enregistré).
+  - **Choisi, jamais deviné.** Aucune détection : deux machines semblables ne doivent
+    pas être jugées différemment pour une raison que personne ne voit. Sans profil,
+    rien ne change, pas une sévérité.
+  - **Un profil ne fait que baisser.** Chaque règle est un plafond : une constatation
+    au-dessus est rapportée au plafond, une constatation en dessous est laissée telle
+    quelle, et aucune règle ne peut rien relever. Ce n'est pas un détail de style : le
+    code de sortie suit les sévérités, donc un profil qui aggraverait des
+    constatations ferait échouer des audits qui passent aujourd'hui, à cause d'un
+    réglage. Il ne supprime aucune constatation, ne touche ni aux preuves ni à la
+    confiance, et n'a rien à dire d'un disque plein ou d'un service exposé (vérifié
+    avec le vrai binaire : mêmes constatations, même code de sortie).
+  - **Il dit ce qu'il a fait, dans la constatation.** Une constatation ajustée reçoit
+    `severity_before_profile` et `profile` dans ses preuves, et un dernier paragraphe
+    d'explication avec la raison (« Profile hpc: reported as info instead of
+    critical. … »). Le rapport nomme aussi le profil : première ligne du rapport
+    terminal, en-tête Markdown et HTML, bandeau de la TUI, et une clé `profile` en
+    haut du JSON, **absente quand aucun profil n'a été choisi** (champ ajouté,
+    `schema_version` reste 1).
+  - **Appliqué au rapport terminé, avant le code de sortie et avant le filtre
+    d'affichage** : `--fail-on` et le code de sortie par défaut jugent les sévérités
+    que le rapport montre.
+  - **`hpc`** (nœud de calcul, où des CPU pleinement occupés sont l'état normal) :
+    `CPU002` (charge) et `CPU003` (surcharge soutenue, Critique sur toute autre
+    machine) sont rapportées comme Info au plus ; les chiffres de charge restent dans
+    les preuves. **À savoir** : sous `hpc`, un nœud sur-souscrit par erreur ressemble à
+    un nœud qui travaille. Le profil retire l'alarme, pas le chiffre.
+  - **`diff` prévient** quand deux rapports ont été écrits avec des profils
+    différents, y compris *aucun* contre un profil (sans cela, une constatation
+    « améliorée » entre un rapport sans profil et un rapport `hpc` le serait sur le
+    papier seulement) : avertissement `different_profiles` en JSON, avant la liste des
+    changements, sans jamais modifier un changement ni le code de sortie.
+  - La page de manuel a une section `PROFILES` (générée depuis le code, donc toujours
+    à jour) et décrit la clé `profile` du fichier de configuration ; l'exemple du
+    fichier de configuration, dans le README comme dans la page de manuel, la montre.
+  - Prévu ensuite, sans rien promettre : un profil `server` avec ses propres
+    vérifications, et des vérifications propres à `hpc`.
 - **Le module GPU donne maintenant des détails sur les GPU Intel** (pilotes `i915`
   et `xe`). Ils étaient reconnus mais sans aucune mesure, contrairement à AMD et
   NVIDIA. Lecture directe de sysfs, sans outil externe, dans le même `GPU002`.

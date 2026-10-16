@@ -58,6 +58,7 @@ mod tests {
 
     fn report(severities: &[Severity]) -> Report {
         Report {
+            profile: None,
             context: Context {
                 hostname: "h".into(),
                 kernel_version: "6".into(),

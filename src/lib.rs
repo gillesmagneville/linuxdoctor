@@ -11,3 +11,4 @@ pub mod diff;
 pub mod models;
 pub mod modules;
 pub mod output;
+pub mod profile;

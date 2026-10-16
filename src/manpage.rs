@@ -17,6 +17,8 @@ use clap::Command;
 use clap_mangen::roff::{bold, roman, Roff};
 use clap_mangen::Man;
 
+use linuxdoctor::profile::{self, Profile};
+
 use crate::config;
 
 /// What each module is for, in one line. A module id without an entry is
@@ -185,6 +187,7 @@ pub fn render(root: &Command, module_ids: &[&str]) -> io::Result<Vec<u8>> {
     }
 
     write_modules(&mut page, module_ids)?;
+    write_profiles(&mut page)?;
     write_exit_status(&mut page)?;
     write_files(&mut page)?;
     write_examples(&mut page)?;
@@ -280,6 +283,47 @@ fn write_modules(page: &mut Page, module_ids: &[&str]) -> io::Result<()> {
     })
 }
 
+fn write_profiles(page: &mut Page) -> io::Result<()> {
+    page.roff(|r| {
+        r.control("SH", ["PROFILES"]);
+        paragraph(
+            r,
+            "A profile says what kind of machine is being audited, for the readings that mean \
+             something else on that kind of machine. It is chosen with --profile (audit and \
+             tui) or with profile in the configuration file, never detected: without one, every \
+             finding keeps the severity its check gave it. A profile only lowers severities, \
+             never raises them, so it cannot make an audit that passes fail; it never removes \
+             a finding, and it says what it did in the finding itself (the severity it had \
+             before is kept in the evidence as severity_before_profile). The report records the \
+             profile it was written with, and diff warns when two reports were written with \
+             different ones.",
+        );
+        for profile in Profile::ALL {
+            r.control("TP", ["16"]);
+            r.text([bold(profile.name())]);
+            r.text([roman(format!("{}.", capitalized(profile.description())))]);
+            for rule in profile::rules(profile) {
+                r.control("br", []);
+                r.text([roman(format!(
+                    "{} is reported as {} at most.",
+                    rule.id,
+                    rule.cap.to_string().to_lowercase()
+                ))]);
+            }
+        }
+    })
+}
+
+/// `text` with its first letter in capitals, for a sentence made from a
+/// description that starts in the middle of one.
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 fn write_exit_status(page: &mut Page) -> io::Result<()> {
     page.roff(|r| {
         r.control("SH", ["EXIT STATUS"]);
@@ -337,6 +381,7 @@ fn write_files(page: &mut Page) -> io::Result<()> {
             r,
             "The file is TOML. Top-level lines apply to both audit and diff: timeout (seconds, \
              as --timeout), fail_on (as --fail-on) and min_severity (as --min-severity). The \
+             top-level line profile (as --profile) applies to audit and tui. The \
              sections [audit] and [diff] hold output (as --output, with the formats of that \
              command) and may repeat fail_on and min_severity, which then win over the \
              top-level lines for that command. Words are written as on the command line.",
@@ -488,6 +533,30 @@ mod tests {
     }
 
     #[test]
+    fn every_profile_and_every_rule_of_it_is_listed_in_the_page() {
+        let page = page();
+        let profiles = section(&page, ".SH PROFILES", ".SH \"EXIT STATUS\"");
+        for profile in Profile::ALL {
+            assert!(
+                profiles.contains(&format!("\\fB{}\\fR\n", profile.name())),
+                "{} missing from the PROFILES section",
+                profile.name()
+            );
+            assert!(!profile::rules(profile).is_empty(), "{}", profile.name());
+            for rule in profile::rules(profile) {
+                assert!(
+                    profiles.contains(&format!("{} is reported as", rule.id)),
+                    "{} missing from the PROFILES section",
+                    rule.id
+                );
+            }
+        }
+        // The two properties a reader relies on are stated.
+        assert!(profiles.contains("never raises"), "{profiles}");
+        assert!(profiles.contains("never detected"), "{profiles}");
+    }
+
+    #[test]
     fn has_the_standard_sections_in_order() {
         let page = page();
         let mut at = 0;
@@ -498,6 +567,7 @@ mod tests {
             ".SH OPTIONS",
             ".SH COMMANDS",
             ".SH MODULES",
+            ".SH PROFILES",
             ".SH \"EXIT STATUS\"",
             ".SH FILES",
             ".SH EXAMPLES",

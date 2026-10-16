@@ -24,6 +24,21 @@ fn vendor_label(vendor: GpuVendor) -> &'static str {
     }
 }
 
+/// Bound to `vfio-pci`: handed over to a virtual machine, not used by the
+/// host.
+fn is_passthrough(gpu: &GpuInfo) -> bool {
+    gpu.driver.as_deref() == Some("vfio-pci")
+}
+
+/// Does a missing kernel driver deserve a warning for this GPU? Yes for
+/// NVIDIA, AMD and Intel, whose drivers are normally expected to bind (and
+/// for anything the kernel exposes a graphics card for). A device found only
+/// on the PCI bus from another vendor -- typically the basic video chip of a
+/// server's management controller -- often runs without one on purpose.
+fn driver_missing_matters(gpu: &GpuInfo) -> bool {
+    gpu.driver.is_none() && (gpu.drm_card || gpu.vendor != GpuVendor::Other)
+}
+
 /// GPU001 — always reported, same "always present" reasoning as
 /// STOR003/CPU005/KERN002: a missing per-GPU finding should never be
 /// ambiguous between "no GPU" and "didn't check".
@@ -31,9 +46,10 @@ fn summary_finding(data: &GpuRawData) -> Finding {
     let count = data.gpus.len();
 
     let mut explanation = if count == 0 {
-        "No GPU detected under /sys/class/drm. This is expected on a \
-         headless server or minimal VM with no graphics hardware exposed \
-         — not itself a problem."
+        "No GPU detected: no DRM card under /sys/class/drm and no display \
+         controller on the PCI bus. This is expected on a headless server \
+         or minimal VM with no graphics hardware exposed — not itself a \
+         problem."
             .to_string()
     } else {
         let mut vendor_counts: Vec<(&str, usize)> = Vec::new();
@@ -64,6 +80,19 @@ fn summary_finding(data: &GpuRawData) -> Finding {
         Confidence::direct_observation(),
     )
     .evidence("gpu_count", count.to_string());
+
+    let reserved = data.gpus.iter().filter(|g| is_passthrough(g)).count();
+    if reserved > 0 {
+        explanation.push_str(&format!(
+            " {reserved} of {count} {verb} bound to vfio-pci, reserved for \
+             passthrough to a virtual machine: the host does not drive \
+             {pronoun}, so there is nothing to measure on {pronoun_obj}.",
+            verb = if reserved == 1 { "is" } else { "are" },
+            pronoun = if reserved == 1 { "it" } else { "them" },
+            pronoun_obj = if reserved == 1 { "it" } else { "them" },
+        ));
+        builder = builder.evidence("passthrough_count", reserved.to_string());
+    }
 
     if let Some(v) = &data.nvidia_max_cuda_version {
         explanation.push_str(&format!(
@@ -334,10 +363,26 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
         _ => String::new(),
     };
 
-    let no_driver_note = if gpu.driver.is_none() {
+    let no_driver_note = if driver_missing_matters(gpu) {
         " No kernel driver is bound to this GPU — if this is unexpected, \
          a proprietary driver (NVIDIA) may need installing, or the \
          open-source driver failed to bind (check `dmesg`)."
+    } else if gpu.driver.is_none() {
+        " No kernel driver is bound to this display adapter. For a vendor \
+         other than NVIDIA, AMD or Intel (often the video chip of a \
+         server's management controller) that is frequently deliberate, \
+         so it is not flagged."
+    } else {
+        ""
+    };
+
+    let passthrough_note = if is_passthrough(gpu) {
+        " Bound to vfio-pci: this GPU is reserved for passthrough to a \
+         virtual machine, so the host does not drive it and has no \
+         temperature or load to report. That is expected on a \
+         virtualization host."
+    } else if !gpu.drm_card {
+        " Found on the PCI bus: the kernel exposes no DRM card for it."
     } else {
         ""
     };
@@ -347,14 +392,14 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
         .unwrap_or_default();
 
     let explanation = format!(
-        "{model_prefix}{model}{driver_note}{driver_version_note}.{temp_note}{util_note}{vram_note}{power_note}{fan_note}{clock_note}{idle_note}{range_note}{throttle_note}{pcie_note}{no_driver_note}{processes_note}"
+        "{model_prefix}{model}{driver_note}{driver_version_note}.{temp_note}{util_note}{vram_note}{power_note}{fan_note}{clock_note}{idle_note}{range_note}{throttle_note}{pcie_note}{passthrough_note}{no_driver_note}{processes_note}"
     );
 
     // A missing driver is a distinct, always-worth-flagging concern,
     // layered on top of (not overriding) whatever the temperature check
     // already decided — e.g. a hot card with no driver bound stays at
     // whichever severity is higher.
-    let severity = if gpu.driver.is_none() {
+    let severity = if driver_missing_matters(gpu) {
         severity.max(Severity::Warning)
     } else {
         severity
@@ -371,6 +416,9 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
     .evidence("vendor", vendor.to_string())
     .evidence("pci_address", gpu.pci_address.clone());
 
+    if !gpu.drm_card {
+        builder = builder.evidence("drm_card", "false");
+    }
     if let Some(d) = &gpu.driver {
         builder = builder.evidence("driver", d.clone());
     }
@@ -447,7 +495,7 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
     builder = builder.explanation(explanation);
 
     if severity > Severity::Info {
-        let recommendation = if gpu.driver.is_none() {
+        let recommendation = if driver_missing_matters(gpu) {
             "Check `dmesg` and `lspci -k` for why no driver bound to this \
              device. For NVIDIA cards, install the proprietary driver \
              package for your distro; for AMD/Intel, the in-tree \
@@ -493,6 +541,7 @@ mod tests {
             name: "card0".to_string(),
             pci_address: "0000:01:00.0".to_string(),
             vendor: GpuVendor::Amd,
+            drm_card: true,
             description: Some("Radeon RX 6800".to_string()),
             driver: Some("amdgpu".to_string()),
             driver_version: None,
@@ -1009,5 +1058,124 @@ mod tests {
         for word in ["Throttling", "Frequency cap", "Highest frequency", "idle"] {
             assert!(!f.explanation.contains(word), "{word}");
         }
+    }
+
+    // ----- GPUs found on the PCI bus instead of under /sys/class/drm -----
+
+    /// A GPU the kernel exposes no DRM card for: nothing measured but the
+    /// identity, named by its PCI address.
+    fn pci_only_gpu(vendor: GpuVendor, driver: Option<&str>) -> GpuInfo {
+        GpuInfo::new(
+            "0000:04:00.0".to_string(),
+            "0000:04:00.0".to_string(),
+            vendor,
+            Some("GP102 [TITAN X Pascal]".to_string()),
+            driver.map(str::to_string),
+            false,
+        )
+    }
+
+    #[test]
+    fn a_card_reserved_for_passthrough_is_reported_and_is_not_a_problem() {
+        let f = gpu002_of(pci_only_gpu(GpuVendor::Nvidia, Some("vfio-pci")));
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.title.contains("0000:04:00.0"), "{}", f.title);
+        assert!(f.explanation.contains("driver vfio-pci"));
+        assert!(f.explanation.contains("reserved for passthrough"));
+        assert!(f.explanation.contains("expected on a virtualization host"));
+        assert!(!f.explanation.contains("No kernel driver"));
+        assert!(f.recommendation.is_none());
+        assert_eq!(evidence(&f, "drm_card"), Some("false"));
+        assert_eq!(evidence(&f, "driver"), Some("vfio-pci"));
+    }
+
+    #[test]
+    fn the_summary_counts_the_cards_reserved_for_passthrough() {
+        let mut gpus = vec![
+            base_gpu(),
+            pci_only_gpu(GpuVendor::Nvidia, Some("vfio-pci")),
+        ];
+        let summary = |gpus: Vec<GpuInfo>| {
+            analyze(
+                &GpuRawData {
+                    gpus,
+                    nvidia_max_cuda_version: None,
+                },
+                &ctx(),
+            )
+            .into_iter()
+            .find(|f| f.id == "GPU001")
+            .unwrap()
+        };
+        let one = summary(gpus.clone());
+        assert!(one
+            .explanation
+            .contains("2 GPUs detected: 1 AMD, 1 NVIDIA."));
+        assert!(one
+            .explanation
+            .contains("1 of 2 is bound to vfio-pci, reserved for passthrough"));
+        assert!(one.explanation.contains("nothing to measure on it"));
+        assert_eq!(evidence(&one, "passthrough_count"), Some("1"));
+
+        gpus.push(pci_only_gpu(GpuVendor::Amd, Some("vfio-pci")));
+        let two = summary(gpus);
+        assert!(two.explanation.contains("2 of 3 are bound to vfio-pci"));
+        assert!(two.explanation.contains("nothing to measure on them"));
+
+        let none = summary(vec![base_gpu()]);
+        assert!(!none.explanation.contains("vfio"));
+        assert_eq!(evidence(&none, "passthrough_count"), None);
+    }
+
+    #[test]
+    fn an_nvidia_card_with_no_driver_is_now_seen_and_warned_about() {
+        // Before, a card with no driver had no DRM card and was invisible.
+        let f = gpu002_of(pci_only_gpu(GpuVendor::Nvidia, None));
+        assert_eq!(f.severity, Severity::Warning);
+        assert!(f
+            .explanation
+            .contains("No kernel driver is bound to this GPU"));
+        assert!(f.explanation.contains("Found on the PCI bus"));
+        assert!(f.recommendation.is_some());
+    }
+
+    #[test]
+    fn an_unbound_adapter_from_another_vendor_is_listed_but_not_flagged() {
+        // The video chip of a server's management controller, say.
+        let f = gpu002_of(pci_only_gpu(GpuVendor::Other, None));
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.explanation.contains("frequently deliberate"));
+        assert!(f.explanation.contains("not flagged"));
+        assert!(f.recommendation.is_none());
+    }
+
+    #[test]
+    fn the_same_adapter_with_a_drm_card_and_no_driver_is_still_a_warning() {
+        let mut gpu = pci_only_gpu(GpuVendor::Other, None);
+        gpu.drm_card = true;
+        let f = gpu002_of(gpu);
+        assert_eq!(f.severity, Severity::Warning);
+        assert_eq!(evidence(&f, "drm_card"), None);
+        assert!(!f.explanation.contains("Found on the PCI bus"));
+    }
+
+    #[test]
+    fn a_compute_gpu_without_a_graphics_card_says_where_it_was_found() {
+        let f = gpu002_of(pci_only_gpu(GpuVendor::Nvidia, Some("nvidia")));
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.explanation.contains("driver nvidia"));
+        assert!(f.explanation.contains("Found on the PCI bus"));
+        assert!(!f.explanation.contains("reserved for passthrough"));
+    }
+
+    #[test]
+    fn the_empty_summary_names_both_places_it_looked() {
+        let data = GpuRawData {
+            gpus: vec![],
+            nvidia_max_cuda_version: None,
+        };
+        let f = &analyze(&data, &ctx())[0];
+        assert!(f.explanation.contains("no DRM card under /sys/class/drm"));
+        assert!(f.explanation.contains("PCI bus"));
     }
 }

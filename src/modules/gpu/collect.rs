@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,10 +25,18 @@ pub struct GpuProcess {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GpuInfo {
-    /// DRM card name, e.g. "card0" — used as the `.instance()` key.
+    /// DRM card name, e.g. "card0" — used as the `.instance()` key. For a GPU
+    /// the kernel exposes no DRM card for (`drm_card == false`), its PCI
+    /// address instead.
     pub name: String,
     pub pci_address: String,
     pub vendor: GpuVendor,
+    /// Whether the kernel exposes a DRM card (`/sys/class/drm/cardN`) for
+    /// this GPU. `false` for a GPU only found on the PCI bus: one reserved
+    /// for VM passthrough (`vfio-pci`), one with no driver, or a compute
+    /// GPU whose driver registers no graphics card. Such a GPU has no
+    /// sysfs readings beyond its PCIe link.
+    pub drm_card: bool,
     /// From `lspci` (or, failing that, NVIDIA's own reported name).
     pub description: Option<String>,
     /// Kernel driver bound to this device ("nvidia", "amdgpu", "i915",
@@ -94,6 +102,50 @@ pub struct GpuInfo {
     /// see `collect()` for why multi-GPU systems don't get per-process
     /// attribution here.
     pub processes: Vec<GpuProcess>,
+}
+
+impl GpuInfo {
+    /// A GPU with its identity and nothing measured yet.
+    pub fn new(
+        name: String,
+        pci_address: String,
+        vendor: GpuVendor,
+        description: Option<String>,
+        driver: Option<String>,
+        drm_card: bool,
+    ) -> GpuInfo {
+        GpuInfo {
+            name,
+            pci_address,
+            vendor,
+            drm_card,
+            description,
+            driver,
+            driver_version: None,
+            vram_total_mb: None,
+            vram_used_mb: None,
+            utilization_percent: None,
+            memory_utilization_percent: None,
+            temperature_c: None,
+            temperature_crit_c: None,
+            power_draw_w: None,
+            power_limit_w: None,
+            fan_percent: None,
+            fan_rpm: None,
+            clock_core_mhz: None,
+            clock_memory_mhz: None,
+            clock_hw_max_mhz: None,
+            clock_limit_mhz: None,
+            idle: None,
+            throttled: None,
+            throttle_reasons: Vec::new(),
+            pcie_link_speed_current: None,
+            pcie_link_speed_max: None,
+            pcie_link_width_current: None,
+            pcie_link_width_max: None,
+            processes: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -632,6 +684,93 @@ pub fn parse_nvidia_compute_apps(text: &str) -> Vec<GpuProcess> {
         .collect()
 }
 
+/// A display-class PCI device as found on the PCI bus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PciDisplayDevice {
+    /// Canonical "DDDD:BB:SS.F" address.
+    pub address: String,
+    pub vendor: GpuVendor,
+    /// Kernel driver bound to it (the `driver` symlink's target name), or
+    /// `None` when nothing is bound.
+    pub driver: Option<String>,
+    /// `/sys/bus/pci/devices/<address>`.
+    pub dir: PathBuf,
+}
+
+/// Parse a PCI device's `class` file: `0x` and six hex digits, e.g.
+/// `0x030000` (confirmed format of the kernel's PCI sysfs).
+pub fn parse_pci_class(text: &str) -> Option<u32> {
+    u32::from_str_radix(text.trim().strip_prefix("0x")?, 16).ok()
+}
+
+/// Is this PCI class a display controller? Base class `0x03`: VGA
+/// (`0x0300`), 3D controller (`0x0302`, what NVIDIA's compute-only cards
+/// report) and other display controller (`0x0380`). Audio functions
+/// (`0x04xx`) and bridges (`0x06xx`) on the same card are not.
+pub fn is_display_class(class: u32) -> bool {
+    class >> 16 == 0x03
+}
+
+/// Every display-class PCI device under `pci_root` (normally
+/// `/sys/bus/pci/devices`), sorted by address. SR-IOV virtual functions
+/// (they have a `physfn` link) are left out: a host sharing one GPU among
+/// many virtual functions would otherwise report each as a GPU of its own.
+pub fn scan_pci_display_devices(pci_root: &Path) -> Vec<PciDisplayDevice> {
+    let Ok(entries) = fs::read_dir(pci_root) else {
+        return Vec::new();
+    };
+    let mut devices: Vec<PciDisplayDevice> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let dir = entry.path();
+            let address = normalize_pci_address(entry.file_name().to_str()?)?;
+            let class = parse_pci_class(&fs::read_to_string(dir.join("class")).ok()?)?;
+            if !is_display_class(class) || dir.join("physfn").exists() {
+                return None;
+            }
+            let vendor = read_trimmed(&dir.join("vendor"))
+                .map(|v| classify_vendor(v.strip_prefix("0x").unwrap_or(&v)))
+                .unwrap_or(GpuVendor::Other);
+            let driver = fs::read_link(dir.join("driver"))
+                .ok()
+                .and_then(|target| target.file_name()?.to_str().map(str::to_string));
+            Some(PciDisplayDevice {
+                address,
+                vendor,
+                driver,
+                dir,
+            })
+        })
+        .collect();
+    devices.sort_by(|a, b| a.address.cmp(&b.address));
+    devices
+}
+
+/// The display devices that no already-known GPU accounts for, by PCI
+/// address.
+pub fn devices_without_drm_card<'a>(
+    known: &[GpuInfo],
+    devices: &'a [PciDisplayDevice],
+) -> Vec<&'a PciDisplayDevice> {
+    let known: HashSet<String> = known
+        .iter()
+        .filter_map(|g| normalize_pci_address(&g.pci_address))
+        .collect();
+    devices
+        .iter()
+        .filter(|d| !known.contains(&d.address))
+        .collect()
+}
+
+/// Can `nvidia-smi` see this GPU? It lists what the proprietary `nvidia`
+/// driver manages. A card reserved for `vfio-pci`, or with no driver, is not
+/// among them: counting it would make a one-card system look like a
+/// multi-card one and switch off per-process attribution. Every NVIDIA card
+/// with a DRM card counts, as before (a `nouveau` one simply gets no answer).
+pub fn nvidia_smi_may_see(gpu: &GpuInfo) -> bool {
+    gpu.vendor == GpuVendor::Nvidia && (gpu.drm_card || gpu.driver.as_deref() == Some("nvidia"))
+}
+
 /// Thin I/O wrapper: enumerates DRM cards, classifies each by vendor from
 /// its own `uevent`, then applies vendor-specific enrichment — AMD and
 /// Intel via direct sysfs reads (no external tool needed), NVIDIA via one
@@ -658,36 +797,7 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
         let vendor = classify_vendor(&pci_id);
         let description = lookup_pci_description(&pci_address);
 
-        let mut gpu = GpuInfo {
-            name: card.clone(),
-            pci_address,
-            vendor,
-            description,
-            driver,
-            driver_version: None,
-            vram_total_mb: None,
-            vram_used_mb: None,
-            utilization_percent: None,
-            memory_utilization_percent: None,
-            temperature_c: None,
-            temperature_crit_c: None,
-            power_draw_w: None,
-            power_limit_w: None,
-            fan_percent: None,
-            fan_rpm: None,
-            clock_core_mhz: None,
-            clock_memory_mhz: None,
-            clock_hw_max_mhz: None,
-            clock_limit_mhz: None,
-            idle: None,
-            throttled: None,
-            throttle_reasons: Vec::new(),
-            pcie_link_speed_current: None,
-            pcie_link_speed_max: None,
-            pcie_link_width_current: None,
-            pcie_link_width_max: None,
-            processes: Vec::new(),
-        };
+        let mut gpu = GpuInfo::new(card.clone(), pci_address, vendor, description, driver, true);
 
         // Generic PCI feature, applied uniformly regardless of vendor —
         // see enrich_pcie_link_info's doc comment for the known
@@ -703,9 +813,28 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
         gpus.push(gpu);
     }
 
+    // GPUs the kernel exposes no DRM card for: reserved for passthrough
+    // (`vfio-pci`), with no driver at all, or compute GPUs whose driver
+    // registers no graphics card. Invisible to the loop above, so found on
+    // the PCI bus instead. Only the PCIe link can be read for these.
+    let pci_devices = scan_pci_display_devices(Path::new("/sys/bus/pci/devices"));
+    for device in devices_without_drm_card(&gpus, &pci_devices) {
+        let description = lookup_pci_description(&device.address);
+        let mut gpu = GpuInfo::new(
+            device.address.clone(),
+            device.address.clone(),
+            device.vendor,
+            description,
+            device.driver.clone(),
+            false,
+        );
+        enrich_pcie_link_info(&mut gpu, &device.dir);
+        gpus.push(gpu);
+    }
+
     let mut nvidia_max_cuda_version = None;
 
-    if gpus.iter().any(|g| g.vendor == GpuVendor::Nvidia) {
+    if gpus.iter().any(nvidia_smi_may_see) {
         // One session for the three nvidia-smi calls: when the driver is
         // wedged the first one times out and the other two are skipped,
         // so the cost is one time limit, not three. `slow()` because the
@@ -758,7 +887,7 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
         let nvidia_indices: Vec<usize> = gpus
             .iter()
             .enumerate()
-            .filter(|(_, g)| g.vendor == GpuVendor::Nvidia)
+            .filter(|(_, g)| nvidia_smi_may_see(g))
             .map(|(i, _)| i)
             .collect();
         if nvidia_indices.len() == 1 {
@@ -979,36 +1108,14 @@ MODALIAS=pci:v00001002d000067DFsv00001DA2sd0000E387bc03sc00i00
     }
 
     fn blank_gpu(driver: &str) -> GpuInfo {
-        GpuInfo {
-            name: "card0".to_string(),
-            pci_address: "0000:00:02.0".to_string(),
-            vendor: GpuVendor::Intel,
-            description: None,
-            driver: Some(driver.to_string()),
-            driver_version: None,
-            vram_total_mb: None,
-            vram_used_mb: None,
-            utilization_percent: None,
-            memory_utilization_percent: None,
-            temperature_c: None,
-            temperature_crit_c: None,
-            power_draw_w: None,
-            power_limit_w: None,
-            fan_percent: None,
-            fan_rpm: None,
-            clock_core_mhz: None,
-            clock_memory_mhz: None,
-            clock_hw_max_mhz: None,
-            clock_limit_mhz: None,
-            idle: None,
-            throttled: None,
-            throttle_reasons: Vec::new(),
-            pcie_link_speed_current: None,
-            pcie_link_speed_max: None,
-            pcie_link_width_current: None,
-            pcie_link_width_max: None,
-            processes: Vec::new(),
-        }
+        GpuInfo::new(
+            "card0".to_string(),
+            "0000:00:02.0".to_string(),
+            GpuVendor::Intel,
+            None,
+            Some(driver.to_string()),
+            true,
+        )
     }
 
     /// An i915 card with the per-GT layout, every throttle flag at 0 except
@@ -1310,5 +1417,207 @@ MODALIAS=pci:v00001002d000067DFsv00001DA2sd0000E387bc03sc00i00
         assert_eq!(gpu.clock_hw_max_mhz, None, "a zero maximum is no maximum");
         assert_eq!(gpu.clock_limit_mhz, None);
         let _ = fs::remove_dir_all(card);
+    }
+
+    // ----- GPUs found on the PCI bus instead of under /sys/class/drm -----
+
+    /// One entry of a fake `/sys/bus/pci/devices`.
+    fn pci_device(root: &Path, address: &str, class: &str, vendor: &str, driver: Option<&str>) {
+        put(root, &format!("{address}/class"), class);
+        put(root, &format!("{address}/vendor"), vendor);
+        if let Some(driver) = driver {
+            let target = root.join("drivers").join(driver);
+            fs::create_dir_all(&target).unwrap();
+            std::os::unix::fs::symlink(&target, root.join(address).join("driver")).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_pci_class_is_the_kernels_0x_and_six_hex_digits() {
+        assert_eq!(parse_pci_class("0x030000\n"), Some(0x030000));
+        assert_eq!(parse_pci_class("0x038000"), Some(0x038000));
+        for odd in ["030000", "0x", "", "0xzz", "class"] {
+            assert_eq!(parse_pci_class(odd), None, "{odd:?}");
+        }
+    }
+
+    #[test]
+    fn only_display_controllers_count_as_gpus() {
+        // VGA, 3D controller (NVIDIA compute cards), other display controller.
+        for class in [0x030000, 0x030200, 0x038000] {
+            assert!(is_display_class(class), "{class:#x}");
+        }
+        // The card's audio function, a bridge, USB, a NIC, nothing.
+        for class in [0x040300, 0x060400, 0x0c0330, 0x020000, 0x000000] {
+            assert!(!is_display_class(class), "{class:#x}");
+        }
+    }
+
+    #[test]
+    fn the_pci_scan_finds_display_devices_with_their_vendor_and_driver() {
+        let root = fake_card("pci-scan");
+        pci_device(
+            &root,
+            "0000:04:00.0",
+            "0x030000\n",
+            "0x10de\n",
+            Some("vfio-pci"),
+        );
+        pci_device(
+            &root,
+            "0000:02:00.0",
+            "0x030000\n",
+            "0x10DE\n",
+            Some("nvidia"),
+        );
+        pci_device(&root, "0000:0b:00.0", "0x030000\n", "0x1a03\n", None);
+        pci_device(
+            &root,
+            "0000:3b:00.0",
+            "0x030200\n",
+            "0x10de\n",
+            Some("nvidia"),
+        );
+        // Not GPUs: the card's audio function, a bridge.
+        pci_device(
+            &root,
+            "0000:04:00.1",
+            "0x040300\n",
+            "0x10de\n",
+            Some("snd_hda_intel"),
+        );
+        pci_device(
+            &root,
+            "0000:00:01.0",
+            "0x060400\n",
+            "0x8086\n",
+            Some("pcieport"),
+        );
+
+        let found = scan_pci_display_devices(&root);
+        let summary: Vec<(&str, GpuVendor, Option<&str>)> = found
+            .iter()
+            .map(|d| (d.address.as_str(), d.vendor, d.driver.as_deref()))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("0000:02:00.0", GpuVendor::Nvidia, Some("nvidia")),
+                ("0000:04:00.0", GpuVendor::Nvidia, Some("vfio-pci")),
+                ("0000:0b:00.0", GpuVendor::Other, None),
+                ("0000:3b:00.0", GpuVendor::Nvidia, Some("nvidia")),
+            ],
+            "sorted by address; the `drivers` directory is not a device"
+        );
+        assert_eq!(found[1].dir, root.join("0000:04:00.0"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_sriov_virtual_function_is_not_counted_as_a_gpu_of_its_own() {
+        let root = fake_card("pci-vf");
+        pci_device(
+            &root,
+            "0000:05:00.0",
+            "0x030200\n",
+            "0x10de\n",
+            Some("nvidia"),
+        );
+        pci_device(
+            &root,
+            "0000:05:00.4",
+            "0x030200\n",
+            "0x10de\n",
+            Some("vfio-pci"),
+        );
+        std::os::unix::fs::symlink(root.join("0000:05:00.0"), root.join("0000:05:00.4/physfn"))
+            .unwrap();
+        let found = scan_pci_display_devices(&root);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].address, "0000:05:00.0");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unreadable_entries_are_skipped_and_an_unreadable_vendor_is_other() {
+        let root = fake_card("pci-odd");
+        put(&root, "0000:06:00.0/class", "garbage\n");
+        fs::create_dir_all(root.join("0000:07:00.0")).unwrap(); // no class file
+        put(&root, "0000:08:00.0/class", "0x030000\n"); // no vendor file
+        let found = scan_pci_display_devices(&root);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].address, "0000:08:00.0");
+        assert_eq!(found[0].vendor, GpuVendor::Other);
+        assert_eq!(found[0].driver, None);
+        let _ = fs::remove_dir_all(root);
+        assert!(
+            scan_pci_display_devices(&std::env::temp_dir().join("no-such-pci-root")).is_empty()
+        );
+    }
+
+    #[test]
+    fn a_device_already_known_through_its_drm_card_is_not_listed_twice() {
+        let known = [GpuInfo::new(
+            "card0".to_string(),
+            "0000:0B:00.0".to_string(), // upper case, as a driver might print it
+            GpuVendor::Nvidia,
+            None,
+            Some("nvidia".to_string()),
+            true,
+        )];
+        let device = |address: &str| PciDisplayDevice {
+            address: address.to_string(),
+            vendor: GpuVendor::Nvidia,
+            driver: None,
+            dir: PathBuf::from("/nonexistent"),
+        };
+        let devices = [device("0000:0b:00.0"), device("0000:04:00.0")];
+        let left: Vec<&str> = devices_without_drm_card(&known, &devices)
+            .iter()
+            .map(|d| d.address.as_str())
+            .collect();
+        assert_eq!(left, ["0000:04:00.0"]);
+    }
+
+    #[test]
+    fn nvidia_smi_is_only_expected_to_see_cards_the_nvidia_driver_manages() {
+        let gpu = |vendor, driver: Option<&str>, drm_card| {
+            GpuInfo::new(
+                "x".to_string(),
+                "0000:01:00.0".to_string(),
+                vendor,
+                None,
+                driver.map(str::to_string),
+                drm_card,
+            )
+        };
+        assert!(nvidia_smi_may_see(&gpu(
+            GpuVendor::Nvidia,
+            Some("nvidia"),
+            true
+        )));
+        assert!(nvidia_smi_may_see(&gpu(
+            GpuVendor::Nvidia,
+            Some("nouveau"),
+            true
+        )));
+        // A compute GPU with no graphics card is still the driver's.
+        assert!(nvidia_smi_may_see(&gpu(
+            GpuVendor::Nvidia,
+            Some("nvidia"),
+            false
+        )));
+        // Reserved for a VM, or with nothing bound: not visible to nvidia-smi.
+        assert!(!nvidia_smi_may_see(&gpu(
+            GpuVendor::Nvidia,
+            Some("vfio-pci"),
+            false
+        )));
+        assert!(!nvidia_smi_may_see(&gpu(GpuVendor::Nvidia, None, false)));
+        assert!(!nvidia_smi_may_see(&gpu(
+            GpuVendor::Amd,
+            Some("amdgpu"),
+            true
+        )));
     }
 }

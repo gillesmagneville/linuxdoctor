@@ -85,6 +85,17 @@ v1 scaffold, thirteen modules shipping end-to-end:
   raises severity. CUDA core count is deliberately not included — not
   exposed by `nvidia-smi` at all, and would otherwise need a model→specs
   lookup table that goes stale the moment a new card ships.
+  GPUs the kernel exposes no DRM card for are found on the PCI bus
+  (display controllers, class `0x03`) rather than missed: a card reserved
+  for VM passthrough (`vfio-pci`, reported as expected on a
+  virtualization host and counted in the summary), a GPU with no driver
+  bound, or a compute GPU whose driver registers no graphics card. Only
+  the PCIe link is read for these (plus `nvidia-smi` for NVIDIA cards the
+  `nvidia` driver manages). A missing driver is a Warning for NVIDIA, AMD
+  and Intel, but only a note for an adapter from another vendor found
+  solely on the PCI bus — typically a server's management-controller
+  video chip, often left unbound on purpose. SR-IOV virtual functions
+  aren't counted as GPUs of their own.
   Severity is driven by temperature — utilization/VRAM/power near their
   limits are normal signs of a card doing real work, not flagged on their
   own — compared against the card's own critical-temperature reading when
@@ -620,7 +631,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1036 lib unit tests + 76 CLI unit tests + 161 integration tests
+cargo test               # 1050 lib unit tests + 76 CLI unit tests + 162 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

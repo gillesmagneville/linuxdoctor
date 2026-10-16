@@ -43,6 +43,31 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     deux pilotes, l'ancienne disposition d'`i915`, les valeurs absentes ou
     absurdes, et un périphérique Intel confié à un autre pilote. Ils échouent
     quand on casse le code (21 casseurs essayés).
+- **Le module GPU voit les cartes que le noyau n'expose pas dans `/sys/class/drm`.**
+  Il ne regardait que ces cartes-là : une carte réservée à une machine virtuelle
+  (`vfio-pci`), un GPU sans pilote, ou un GPU de calcul dont le pilote n'enregistre
+  pas de carte graphique n'apparaissaient pas, et un serveur de calcul pouvait
+  afficher « No GPU detected » alors qu'il en contient. Le module cherche maintenant
+  aussi les contrôleurs d'affichage (classe PCI `0x03`) sur le bus PCI.
+  - **Carte sous `vfio-pci`** : listée en Info, avec une phrase disant qu'elle est
+    réservée au passage à une machine virtuelle et que c'est attendu sur un hôte de
+    virtualisation. Le résumé `GPU001` les compte (« 1 of 3 is bound to vfio-pci »).
+  - **GPU sans pilote** : un GPU NVIDIA, AMD ou Intel est un **Avertissement**, comme
+    pour une carte DRM (avant, il était invisible). Un adaptateur d'un autre fabricant
+    trouvé seulement sur le bus PCI (typiquement la puce vidéo du contrôleur de gestion
+    d'un serveur, souvent laissée sans pilote exprès) est listé en Info, sans alerte.
+    Le comportement des cartes DRM ne change pas.
+  - **Ce qui est lu** pour ces cartes : le lien PCIe, et `nvidia-smi` pour les cartes
+    NVIDIA que le pilote `nvidia` gère. Rien d'autre : sans carte DRM, sysfs n'offre
+    pas de mesure. La preuve `drm_card: false` l'indique.
+  - **`nvidia-smi` ne compte plus que les cartes qu'il voit.** Sans cela, une carte
+    réservée à `vfio-pci` à côté d'une carte utilisée aurait fait croire à un
+    système multi-cartes et supprimé l'attribution des processus à la carte utilisée.
+  - Les fonctions virtuelles SR-IOV ne sont pas comptées comme des GPU à part
+    entière.
+  - Tests : 15 nouveaux (faux bus PCI, fusion avec les cartes DRM, analyse, et le cas
+    complet d'un hôte avec une carte utilisée, une carte réservée et une puce de
+    gestion). Ils échouent quand on casse le code (18 casseurs essayés).
 - **Une limite de puissance connue s'affiche même quand la consommation ne l'est
   pas** (« Power limit: 190.0 W. »), pour tous les fabricants. Jusque-là, elle
   n'apparaissait que dans les preuves.

@@ -58,7 +58,18 @@ v1 scaffold, thirteen modules shipping end-to-end:
   when 2+ are present) plus an always-present inventory summary
   (`GPU001`). AMD entirely via direct sysfs reads (VRAM, busy%,
   temperature, power, fan, core/memory clocks via `pp_dpm_sclk`/
-  `pp_dpm_mclk` — no external tool); NVIDIA via one combined
+  `pp_dpm_mclk` — no external tool); Intel (`i915` and `xe` drivers)
+  likewise via direct sysfs reads: current and maximum frequency (with a
+  note when the allowed maximum has been capped below what the hardware
+  can reach), whether the GPU is asleep in its power-saving state, and
+  whether the driver reports it is being throttled right now and why
+  (`pl1`, `thermal`, ...); discrete Intel cards also give temperature,
+  fan and power limit through the driver's hwmon chip. Utilization and
+  VRAM aren't read for Intel: the drivers don't provide them through
+  sysfs. These interfaces are taken from the kernel's own sources and ABI
+  documentation and have not yet been checked on real Intel hardware, so
+  anything a given kernel doesn't provide is simply left out; NVIDIA via
+  one combined
   `nvidia-smi --query-gpu` call covering every NVIDIA card at once
   (core/memory clocks included), plus per-process GPU memory when
   exactly one NVIDIA card is present (skipped with 2+, rather than risk
@@ -74,11 +85,14 @@ v1 scaffold, thirteen modules shipping end-to-end:
   raises severity. CUDA core count is deliberately not included — not
   exposed by `nvidia-smi` at all, and would otherwise need a model→specs
   lookup table that goes stale the moment a new card ships.
-  Severity is driven by temperature alone — utilization/VRAM/power near
-  their limits are normal signs of a card doing real work, not flagged on
-  their own — compared against each AMD card's own critical-temperature
-  reading when available, or a more conservative generic threshold (with
-  correspondingly lower confidence) for vendors without that exact figure.
+  Severity is driven by temperature — utilization/VRAM/power near their
+  limits are normal signs of a card doing real work, not flagged on their
+  own — compared against the card's own critical-temperature reading when
+  available (AMD, recent Intel), or a more conservative generic threshold
+  (with correspondingly lower confidence) for vendors without that exact
+  figure. An Intel driver stating outright that heat is throttling the GPU
+  is a Warning too, even for an integrated GPU that has no temperature
+  reading; throttling by a power limit is explained but stays Info.
 * **Systemd** — overall system state, one finding per failed unit. Skips
   cleanly on systems where systemd isn't PID 1 (checks
   `/run/systemd/system`, not just whether `systemctl` is installed).
@@ -606,7 +620,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1004 lib unit tests + 76 CLI unit tests + 160 integration tests
+cargo test               # 1036 lib unit tests + 76 CLI unit tests + 161 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -695,7 +709,7 @@ linuxdoctor/
     │   │                        #   shared, swap, pressure, tuning, kernel) + format.rs
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
     │   ├── numa/                  # per-node topology, cross-node imbalance
-    │   ├── gpu/                     # AMD sysfs, NVIDIA via nvidia-smi
+    │   ├── gpu/                     # AMD and Intel sysfs, NVIDIA via nvidia-smi
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode

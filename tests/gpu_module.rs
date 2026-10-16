@@ -51,6 +51,11 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         fan_rpm: Some(1200),
         clock_core_mhz: None,
         clock_memory_mhz: None,
+        clock_hw_max_mhz: None,
+        clock_limit_mhz: None,
+        idle: None,
+        throttled: None,
+        throttle_reasons: vec![],
         pcie_link_speed_current: None,
         pcie_link_speed_max: None,
         pcie_link_width_current: None,
@@ -77,6 +82,11 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         fan_rpm: None,
         clock_core_mhz: Some(2520),
         clock_memory_mhz: Some(10501),
+        clock_hw_max_mhz: None,
+        clock_limit_mhz: None,
+        idle: None,
+        throttled: None,
+        throttle_reasons: vec![],
         pcie_link_speed_current: Some("16.0 GT/s PCIe".to_string()),
         pcie_link_speed_max: Some("16.0 GT/s PCIe".to_string()),
         pcie_link_width_current: Some(16),
@@ -119,4 +129,59 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
     // own, push severity any higher than the temperature check already
     // set it to.
     assert_eq!(nvidia_finding.severity, Severity::Warning);
+}
+
+/// An integrated Intel GPU reports no temperature at all, only what the
+/// driver says about frequency and throttling -- and that is enough to raise
+/// a Warning when the driver itself says heat is slowing the GPU down.
+#[test]
+fn intel_integrated_gpu_throttled_by_heat_is_a_warning() {
+    let intel = GpuInfo {
+        name: "card0".to_string(),
+        pci_address: "0000:00:02.0".to_string(),
+        vendor: GpuVendor::Intel,
+        description: Some("Alder Lake-P GT2 [Iris Xe Graphics]".to_string()),
+        driver: Some("i915".to_string()),
+        driver_version: None,
+        vram_total_mb: None,
+        vram_used_mb: None,
+        utilization_percent: None,
+        memory_utilization_percent: None,
+        temperature_c: None,
+        temperature_crit_c: None,
+        power_draw_w: None,
+        power_limit_w: None,
+        fan_percent: None,
+        fan_rpm: None,
+        clock_core_mhz: Some(400),
+        clock_memory_mhz: None,
+        clock_hw_max_mhz: Some(1400),
+        clock_limit_mhz: Some(1400),
+        idle: Some(false),
+        throttled: Some(true),
+        throttle_reasons: vec!["thermal".to_string(), "pl1".to_string()],
+        pcie_link_speed_current: None,
+        pcie_link_speed_max: None,
+        pcie_link_width_current: None,
+        pcie_link_width_max: None,
+        processes: vec![],
+    };
+    let data = GpuRawData {
+        gpus: vec![intel],
+        nvidia_max_cuda_version: None,
+    };
+    let findings = analyze(&data, &test_context());
+
+    let gpu001 = findings.iter().find(|f| f.id == "GPU001").unwrap();
+    assert!(gpu001.explanation.contains("1 Intel"));
+
+    let gpu002 = findings.iter().find(|f| f.id == "GPU002").unwrap();
+    assert_eq!(gpu002.severity, Severity::Warning);
+    assert!(gpu002.explanation.contains("Thermal throttling"));
+    assert!(gpu002.explanation.contains("Clock: 400 MHz core."));
+    assert!(gpu002.recommendation.is_some());
+    assert!(gpu002
+        .evidence
+        .iter()
+        .any(|(k, v)| k == "throttle_reasons" && v == "thermal,pl1"));
 }

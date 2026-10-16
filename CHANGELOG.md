@@ -9,6 +9,48 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **Le module GPU donne maintenant des détails sur les GPU Intel** (pilotes `i915`
+  et `xe`). Ils étaient reconnus mais sans aucune mesure, contrairement à AMD et
+  NVIDIA. Lecture directe de sysfs, sans outil externe, dans le même `GPU002`.
+  - **Fréquence** : fréquence réelle, maximum du matériel, et maximum autorisé. Si
+    ce dernier est plus bas que ce que le matériel peut atteindre, le rapport le
+    signale (un plafond a été posé par quelqu'un ou quelque chose ; le programme ne
+    sait pas qui). Un GPU qui rapporte 0 MHz est dit « idle » (endormi dans son état
+    d'économie d'énergie), pas « cadencé à 0 MHz ».
+  - **Bridage** : le pilote dit si le GPU est retenu sous sa fréquence cible en ce
+    moment et pourquoi (`pl1`, `pl2`, `pl4`, `thermal`, `ratl`, `prochot`, ...).
+    Un bridage dû à la température est un **Avertissement**, même sur un GPU
+    intégré qui n'a aucune mesure de température, avec une recommandation sur le
+    refroidissement ; un bridage dû à une limite de puissance est expliqué mais
+    reste une information (atteindre sa limite sous charge n'est pas une panne).
+    Un nom de cause que le programme ne connaît pas est montré tel que le noyau le
+    donne, sans explication inventée.
+  - **Cartes dédiées** : température, ventilateur et limite de puissance, par la
+    puce hwmon du pilote (choisie par son nom, pas par sa position). Avec `xe`, la
+    température du boîtier et sa valeur critique (noyau 7.0) permettent de juger la
+    température par rapport à la limite de la carte elle-même.
+  - **Ce qui n'est volontairement pas lu** : l'utilisation et la VRAM (les pilotes
+    Intel ne les donnent pas par sysfs), et `cur_freq` de `xe` (le noyau réveille le
+    GPU pour y répondre, ce qu'un audit en lecture seule n'a pas à faire).
+  - **Limite à connaître** : les chemins, unités et formats viennent des sources du
+    noyau et de sa documentation ; ils n'ont pas encore été vérifiés sur un vrai
+    GPU Intel. Chaque lecture est facultative : un fichier absent ou illisible
+    laisse la mesure de côté, jamais une valeur devinée. Seul le premier GT
+    graphique (`gt0`) est lu.
+  - Tests : 33 nouveaux, dont des arborescences sysfs factices reproduisant les
+    deux pilotes, l'ancienne disposition d'`i915`, les valeurs absentes ou
+    absurdes, et un périphérique Intel confié à un autre pilote. Ils échouent
+    quand on casse le code (21 casseurs essayés).
+- **Une limite de puissance connue s'affiche même quand la consommation ne l'est
+  pas** (« Power limit: 190.0 W. »), pour tous les fabricants. Jusque-là, elle
+  n'apparaissait que dans les preuves.
+
+### Modifié
+
+- Le message sur l'absence de pilote cite maintenant `amdgpu`, `i915` ou `xe`.
+
 ## [1.9.0] - 2026-10-16
 
 Chaque sortie dit quelle version de LinuxDoctor l'a produite, la TUI se filtre et

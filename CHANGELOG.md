@@ -9,6 +9,12 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.8.0] - 2026-10-16
+
+Un fichier de configuration pour garder ses options sans les retaper, et la
+correction du plantage de `audit | head`. Le format du rapport JSON ne change
+pas (`schema_version` reste 1).
+
 ### Ajouté
 
 - **Un fichier de configuration, `~/.config/linuxdoctor/config.toml`** (sous

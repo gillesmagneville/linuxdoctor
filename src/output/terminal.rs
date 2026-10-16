@@ -24,8 +24,8 @@ pub fn render_with(report: &Report, meta: &RenderMeta) -> String {
     let mut out = String::new();
 
     out.push_str(&format!(
-        "{BOLD}LinuxDoctor{RESET} — {}\n",
-        report.context.hostname
+        "{BOLD}LinuxDoctor {}{RESET} — {}\n",
+        meta.tool_version, report.context.hostname
     ));
     out.push_str(&format!(
         "{DIM}kernel {} · {} · {} CPUs · {} MB RAM{RESET}\n\n",
@@ -163,6 +163,26 @@ mod tests {
             skipped: false,
             notes: notes.iter().map(|n| n.to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn the_first_line_says_which_version_and_which_machine() {
+        let meta = RenderMeta {
+            tool_version: "9.9.9",
+            ..RenderMeta::default()
+        };
+        let out = render_with(&report_with(vec![]), &meta);
+        let first = out.lines().next().unwrap();
+        assert_eq!(first, format!("{BOLD}LinuxDoctor 9.9.9{RESET} — host"));
+        // Without metadata, the version of this build.
+        let out = render(&report_with(vec![]));
+        assert!(
+            out.starts_with(&format!(
+                "{BOLD}LinuxDoctor {}{RESET} — host",
+                crate::VERSION
+            )),
+            "{out}"
+        );
     }
 
     #[test]

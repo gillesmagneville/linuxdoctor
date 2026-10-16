@@ -33,6 +33,10 @@ struct FilterJson {
 #[derive(Serialize)]
 struct Envelope<'a> {
     schema_version: u32,
+    /// The version of the program that wrote the report. Not part of the
+    /// layout (`schema_version` is), but a record of where the findings came
+    /// from: checks are added and thresholds change between versions.
+    linuxdoctor_version: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     filter: Option<FilterJson>,
     #[serde(flatten)]
@@ -50,6 +54,7 @@ pub fn render(report: &Report) -> serde_json::Result<String> {
 pub fn render_with(report: &Report, meta: &RenderMeta) -> serde_json::Result<String> {
     serde_json::to_string_pretty(&Envelope {
         schema_version: SCHEMA_VERSION,
+        linuxdoctor_version: meta.tool_version,
         filter: meta.filter.map(|f| FilterJson {
             min_severity: f.min_severity,
             hidden_findings: f.hidden,
@@ -149,12 +154,28 @@ mod tests {
         assert_eq!(json["filter"]["hidden_findings"], 12);
         assert_eq!(json["schema_version"], serde_json::json!(SCHEMA_VERSION));
         assert!(json["results"].is_array(), "report fields are still there");
-        let second_key = text.lines().nth(2).unwrap().trim();
-        assert!(second_key.starts_with("\"filter\":"), "{second_key}");
+        // `schema_version`, then who wrote the report, then the filter.
+        let third_key = text.lines().nth(3).unwrap().trim();
+        assert!(third_key.starts_with("\"filter\":"), "{third_key}");
     }
 
     #[test]
-    fn exactly_one_new_top_level_key() {
+    fn the_report_says_which_version_wrote_it_right_after_the_layout_version() {
+        let meta = RenderMeta {
+            tool_version: "9.9.9",
+            ..RenderMeta::default()
+        };
+        let text = render_with(&report(), &meta).unwrap();
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        assert!(lines[1].starts_with("\"schema_version\":"), "{}", lines[1]);
+        assert_eq!(lines[2], "\"linuxdoctor_version\": \"9.9.9\",");
+        // And by default it is the version of this build.
+        let json = parsed(&report());
+        assert_eq!(json["linuxdoctor_version"], crate::VERSION);
+    }
+
+    #[test]
+    fn only_the_two_version_keys_are_added_to_the_report() {
         let json = parsed(&report());
         let mut keys: Vec<&str> = json
             .as_object()
@@ -163,6 +184,14 @@ mod tests {
             .map(String::as_str)
             .collect();
         keys.sort_unstable();
-        assert_eq!(keys, ["context", "results", "schema_version"]);
+        assert_eq!(
+            keys,
+            [
+                "context",
+                "linuxdoctor_version",
+                "results",
+                "schema_version"
+            ]
+        );
     }
 }

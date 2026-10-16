@@ -34,7 +34,7 @@ pub struct RenderMeta {
 impl Default for RenderMeta {
     fn default() -> Self {
         RenderMeta {
-            tool_version: env!("CARGO_PKG_VERSION"),
+            tool_version: crate::VERSION,
             generated_at_unix: 0,
             filter: None,
         }

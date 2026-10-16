@@ -46,7 +46,16 @@ fn json_report_keeps_the_documented_top_level_shape() {
         .map(String::as_str)
         .collect();
     keys.sort_unstable();
-    assert_eq!(keys, ["context", "results", "schema_version"]);
+    assert_eq!(
+        keys,
+        [
+            "context",
+            "linuxdoctor_version",
+            "results",
+            "schema_version"
+        ]
+    );
+    assert_eq!(json["linuxdoctor_version"], linuxdoctor::VERSION);
     let first = &json["results"][0];
     for key in ["module_id", "findings", "error", "skipped", "notes"] {
         assert!(first.get(key).is_some(), "missing {key} in module result");

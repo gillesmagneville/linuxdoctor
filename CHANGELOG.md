@@ -9,6 +9,38 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **La version de LinuxDoctor s'affiche en tête de chaque sortie.** Première
+  ligne du rapport terminal (`LinuxDoctor 1.8.0 — machine`), première ligne sous
+  le titre du rapport Markdown, premier fait de l'en-tête du rapport HTML,
+  en-tête de la TUI et son écran de chargement, et en-tête de la comparaison
+  produite par `diff`. Dans les rapports Markdown et HTML elle figurait déjà,
+  mais en fin d'en-tête (« Generated … by LinuxDoctor ») ; elle est maintenant
+  la première information, et la ligne « Generated » ne donne plus que la date.
+  - **Le rapport JSON l'enregistre** : `linuxdoctor_version`, juste après
+    `schema_version`. Ce n'est pas une modification de la disposition
+    (`schema_version` reste 1) : un lecteur qui ignore les clés inconnues n'est
+    pas touché. Les contrôles évoluent d'une version à l'autre ; un rapport
+    conservé ne se comprend pleinement qu'avec la version qui l'a écrit.
+  - **`diff` montre trois versions** : celle qui compare (titre du texte,
+    « Compared with LinuxDoctor … » en Markdown, `linuxdoctor_version` en JSON)
+    et celle qui a écrit chacun des deux rapports (entre parenthèses en
+    terminal, colonne « Written by » en Markdown, `before` / `after` en JSON).
+    Un rapport d'avant la 1.8.0 ne l'enregistre pas : il est présenté comme
+    « LinuxDoctor version not recorded » (`null` en JSON). Cette version vient
+    d'un fichier, donc d'un texte non fiable : elle est nettoyée comme le reste
+    (terminal) et échappée (Markdown).
+  - Une seule source : la constante `linuxdoctor::VERSION` (celle de
+    `--version`).
+  - Tests : `tests/version_shown.rs` lance le vrai binaire et vérifie la version
+    en tête de chaque format, dans `diff` (dont un rapport sans version et un
+    rapport dont la version contient des séquences d'échappement), et que le
+    fichier `VERSION` et `Cargo.toml` s'accordent (une release qui n'en met à
+    jour qu'un des deux échoue). Des tests unitaires couvrent chaque rendu,
+    l'en-tête et l'écran de chargement de la TUI. Ils échouent quand on retire
+    l'affichage ou le nettoyage.
+
 ## [1.8.0] - 2026-10-16
 
 Un fichier de configuration pour garder ses options sans les retaper, et la

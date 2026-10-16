@@ -462,6 +462,14 @@ Supported now: Terminal, JSON, Markdown, HTML, interactive TUI.
 Output formatters only render `Finding`s — they never compute severity, confidence,
 or evidence themselves.
 
+Every output says which version of LinuxDoctor produced it, up front, from one constant
+(`linuxdoctor::VERSION`, which is `CARGO_PKG_VERSION` and so what `--version` prints): the
+first line of the terminal report, the first line under the title in Markdown, the first
+fact of the HTML header (and its `generator` meta tag and footer), the second key of the
+JSON document, the TUI header and its loading screen, and the header of a comparison.
+`tests/version_shown.rs` checks each with the real binary, and that `VERSION` and
+`Cargo.toml` agree.
+
 Non-interactive renderers receive the report plus a `RenderMeta`
 (`output/common.rs`): the tool version, the generation time (passed in, never read
 inside a renderer, so output is deterministic and testable) and, when `--min-severity`
@@ -543,7 +551,9 @@ status stays the audit's verdict; any other write failure is reported and exits 
 
 ## Terminal Renderer
 
-Compact per-module status line, followed by full detail for anything above INFO:
+The first line names the program, its version and the machine
+(`LinuxDoctor 1.8.0 — web01`); then a compact per-module status line, followed by full
+detail for anything above INFO:
 
 ```
 ✓ memory
@@ -555,7 +565,8 @@ Compact per-module status line, followed by full detail for anything above INFO:
 
 ## JSON Renderer
 
-Serializes the full `Report` — a `schema_version` first, then `context` once, then
+Serializes the full `Report` — a `schema_version` first, then the `linuxdoctor_version`
+that wrote it, then `context` once, then
 `results` grouped by module (`module_id`, that module's `findings`, `error`/`skipped`
 for modules that didn't run cleanly, and `notes` for modules whose data may be
 incomplete):
@@ -563,6 +574,7 @@ incomplete):
 ```json
 {
   "schema_version": 1,
+  "linuxdoctor_version": "1.8.0",
   "context": { "hostname": "web01", "kernel_version": "6.8.0-31-generic", "...": "..." },
   "results": [
     {
@@ -613,10 +625,16 @@ in-memory code and the other renderers never see it.
 
 Tests: unit tests in `output/json.rs` and the end-to-end `tests/json_schema.rs` (real
 binary) pin the envelope — `schema_version` is the first key and, on an unfiltered
-report, the only addition to the report's top level.
+report, the two version keys are the only additions to the report's top level.
 
-When `--min-severity` was used, the document also carries (right after
-`schema_version`) a `filter` object, absent otherwise:
+`linuxdoctor_version` (a string, `linuxdoctor::VERSION`) is **not** part of the layout —
+`schema_version` is — but a record of where the findings came from: checks are added and
+thresholds move between versions, so a stored report is only fully understood with the
+version that wrote it. It was added in 1.8.0 without a bump, as the rule allows; reports
+written before it simply lack the key, and `diff` says "version not recorded" for them.
+
+When `--min-severity` was used, the document also carries (right after the two version
+keys) a `filter` object, absent otherwise:
 
 ```json
 "filter": { "min_severity": "warning", "hidden_findings": 12 }
@@ -738,6 +756,16 @@ Markdown report does (`escape_text`, `code_span`, `|` in table cells); the JSON 
 escapes it by construction. `tests/diff_command.rs` feeds a report full of escape sequences
 and markup to the real binary and checks all three outputs.
 
+### Which versions are involved
+
+A comparison involves three: the version that made it (the title of the terminal text,
+"Compared with LinuxDoctor …" in Markdown, top-level `linuxdoctor_version` in JSON) and
+the versions that wrote the two reports (in parentheses after each report in the terminal
+text, a "Written by" column in Markdown, `before.linuxdoctor_version` /
+`after.linuxdoctor_version` in JSON — `null` for a report from before 1.8.0, shown as
+"LinuxDoctor version not recorded"). The versions of the reports come from files and are
+untrusted text like the rest: cleaned for the terminal, escaped for Markdown.
+
 ### JSON output
 
 `--output json` prints a document of its own, versioned the same way as the audit report
@@ -748,8 +776,11 @@ it):
 {
   "schema_version": 1,
   "kind": "comparison",
-  "before": { "report": "before.json", "machine": { "hostname": "web01", "...": "..." } },
-  "after":  { "report": "after.json",  "machine": { "...": "..." } },
+  "linuxdoctor_version": "1.8.0",
+  "before": { "report": "before.json", "linuxdoctor_version": null,
+              "machine": { "hostname": "web01", "...": "..." } },
+  "after":  { "report": "after.json", "linuxdoctor_version": "1.8.0",
+              "machine": { "...": "..." } },
   "machine_changes": [ { "fact": "kernel", "before": "6.8.0-31", "after": "6.8.0-40" } ],
   "rebooted": true,
   "caveats": [ { "kind": "different_machines", "before": "web01", "after": "db02" } ],
@@ -785,6 +816,8 @@ two — no diagnostic logic lives here either. Its extra behavior:
   to move through whichever list — modules or, once drilled in, that module's
   instances — is currently focused; `↑`/`↓` scroll the detail pane). Below 2
   instances, a module's findings are shown flat, exactly as Terminal/JSON always do.
+- **Version.** The first header line starts with `LinuxDoctor <version>`, and so does the
+  loading screen.
 - **Live header.** A second header line shows CPU/memory/root-disk usage,
   refreshed roughly once a second for as long as the TUI stays open, via
   `output::live_stats` — cheap `/proc` reads plus one `df` call, deliberately not

@@ -148,6 +148,7 @@ pub fn render(report: &Report, meta: &RenderMeta) -> String {
     out.push_str("<dl class=\"facts\">\n");
     let fact =
         |label: &str, value: String| format!("<div><dt>{label}</dt><dd>{value}</dd></div>\n");
+    out.push_str(&fact("LinuxDoctor", esc(meta.tool_version)));
     out.push_str(&fact(
         "Kernel",
         format!("<code>{}</code>", esc(&ctx.kernel_version)),
@@ -168,10 +169,9 @@ pub fn render(report: &Report, meta: &RenderMeta) -> String {
     out.push_str(&fact(
         "Generated",
         format!(
-            "<time datetime=\"{}\">{}</time> by LinuxDoctor {}",
+            "<time datetime=\"{}\">{}</time>",
             format_utc_iso(meta.generated_at_unix),
-            format_utc(meta.generated_at_unix),
-            esc(meta.tool_version)
+            format_utc(meta.generated_at_unix)
         ),
     ));
     out.push_str("</dl>\n</header>\n");
@@ -504,9 +504,23 @@ mod tests {
         assert!(html.contains("Ubuntu 24.04"));
         assert!(html.contains("x86_64 \u{00b7} 8 CPUs \u{00b7} 16000 MB RAM"));
         assert!(html.contains(
-            "<time datetime=\"2026-10-14T06:30:00Z\">2026-10-14 06:30:00 UTC</time> by LinuxDoctor 9.9.9"
+            "<dt>Generated</dt><dd><time datetime=\"2026-10-14T06:30:00Z\">2026-10-14 06:30:00 UTC</time></dd>"
         ));
         assert!(html.contains("never run by the tool"));
+    }
+
+    #[test]
+    fn the_version_is_the_first_fact_of_the_header() {
+        let html = render(&report(vec![]), &meta());
+        let header = &html[html.find("<header>").unwrap()..html.find("</header>").unwrap()];
+        assert!(
+            header
+                .contains("<dl class=\"facts\">\n<div><dt>LinuxDoctor</dt><dd>9.9.9</dd></div>\n"),
+            "{header}"
+        );
+        // Still in the document's metadata and in the footer.
+        assert!(html.contains("<meta name=\"generator\" content=\"LinuxDoctor 9.9.9\">"));
+        assert!(html.contains("LinuxDoctor 9.9.9 only reads system state"));
     }
 
     // ----- summary ----------------------------------------------------------

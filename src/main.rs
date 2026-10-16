@@ -214,6 +214,8 @@ fn run_diff_command(args: DiffArgs, config: &Config) -> ExitCode {
     let labels = diff::render::Labels {
         before: &before_name,
         after: &after_name,
+        before_version: before.linuxdoctor_version.as_deref(),
+        after_version: after.linuxdoctor_version.as_deref(),
     };
     let text = match settings.output {
         DiffFormat::Terminal => diff::render::terminal(&comparison, &labels),

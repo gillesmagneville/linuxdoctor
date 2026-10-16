@@ -28,10 +28,23 @@ use super::compare::{
 /// adding a field never changes it; removing, renaming or re-typing one does.
 pub const COMPARISON_SCHEMA_VERSION: u32 = 1;
 
-/// What the two reports are called in the output: the paths the user typed.
+/// What the two reports are called in the output: the paths the user typed,
+/// and the version of LinuxDoctor that wrote each, when the report says.
 pub struct Labels<'a> {
     pub before: &'a str,
     pub after: &'a str,
+    /// `None` for a report written before 1.8.0, which does not record it.
+    pub before_version: Option<&'a str>,
+    pub after_version: Option<&'a str>,
+}
+
+/// Who wrote a report, as one phrase. The version comes from a file, so it
+/// is untrusted text.
+fn written_by(version: Option<&str>) -> String {
+    match version {
+        Some(version) => format!("LinuxDoctor {}", clean(version, MAX_NAME)),
+        None => "LinuxDoctor version not recorded".to_string(),
+    }
 }
 
 const RESET: &str = "\x1b[0m";
@@ -197,14 +210,18 @@ fn terminal_value(value: &Option<String>) -> String {
 pub fn terminal(c: &Comparison, labels: &Labels) -> String {
     let warning = Severity::Warning.ansi_color();
     let mut out = String::new();
-    out.push_str(&format!("{BOLD}LinuxDoctor{RESET} — report comparison\n\n"));
-    for (name, label, machine) in [
-        ("before", labels.before, &c.before),
-        ("after", labels.after, &c.after),
+    out.push_str(&format!(
+        "{BOLD}LinuxDoctor {}{RESET} — report comparison\n\n",
+        crate::VERSION
+    ));
+    for (name, label, version, machine) in [
+        ("before", labels.before, labels.before_version, &c.before),
+        ("after", labels.after, labels.after_version, &c.after),
     ] {
         out.push_str(&format!(
-            "  {name:<7} {}\n          {DIM}{}{RESET}\n",
+            "  {name:<7} {} {DIM}({}){RESET}\n          {DIM}{}{RESET}\n",
             clean(label, MAX_TEXT),
+            written_by(version),
             machine_line(machine)
         ));
     }
@@ -366,14 +383,19 @@ fn cell(text: &str) -> String {
 
 pub fn markdown(c: &Comparison, labels: &Labels) -> String {
     let mut out = String::from("# LinuxDoctor report comparison\n\n");
-    out.push_str("| | Report | Machine |\n|---|---|---|\n");
-    for (name, label, machine) in [
-        ("before", labels.before, &c.before),
-        ("after", labels.after, &c.after),
+    out.push_str(&format!(
+        "Compared with LinuxDoctor {}.\n\n",
+        crate::VERSION
+    ));
+    out.push_str("| | Report | Written by | Machine |\n|---|---|---|---|\n");
+    for (name, label, version, machine) in [
+        ("before", labels.before, labels.before_version, &c.before),
+        ("after", labels.after, labels.after_version, &c.after),
     ] {
         out.push_str(&format!(
-            "| **{name}** | {} | {} |\n",
+            "| **{name}** | {} | {} | {} |\n",
             cell(&clean(label, MAX_TEXT)),
+            cell(&written_by(version)),
             cell(&machine_line(machine))
         ));
     }
@@ -513,6 +535,9 @@ pub fn markdown(c: &Comparison, labels: &Labels) -> String {
 #[derive(Serialize)]
 struct ReportRef<'a> {
     report: &'a str,
+    /// The version of LinuxDoctor that wrote the report; `null` when it
+    /// does not say (reports from before 1.8.0).
+    linuxdoctor_version: Option<&'a str>,
     machine: &'a MachineFacts,
 }
 
@@ -543,6 +568,8 @@ struct IncompleteJson<'a> {
 struct Envelope<'a> {
     schema_version: u32,
     kind: &'static str,
+    /// The version of LinuxDoctor that made this comparison.
+    linuxdoctor_version: &'static str,
     before: ReportRef<'a>,
     after: ReportRef<'a>,
     machine_changes: &'a [FactChange],
@@ -583,12 +610,15 @@ pub fn json(c: &Comparison, labels: &Labels) -> serde_json::Result<String> {
     serde_json::to_string_pretty(&Envelope {
         schema_version: COMPARISON_SCHEMA_VERSION,
         kind: "comparison",
+        linuxdoctor_version: crate::VERSION,
         before: ReportRef {
             report: labels.before,
+            linuxdoctor_version: labels.before_version,
             machine: &c.before,
         },
         after: ReportRef {
             report: labels.after,
+            linuxdoctor_version: labels.after_version,
             machine: &c.after,
         },
         machine_changes: &c.machine_changes,
@@ -627,6 +657,8 @@ mod tests {
     const LABELS: Labels = Labels {
         before: "before.json",
         after: "after.json",
+        before_version: Some("1.7.0"),
+        after_version: None,
     };
 
     /// A comparison with a change of each kind, a module that failed, one
@@ -701,10 +733,11 @@ mod tests {
     #[test]
     fn the_terminal_text_has_the_expected_structure() {
         let plain = strip_ansi(&terminal(&rich(), &LABELS));
+        let title = format!("LinuxDoctor {} — report comparison", crate::VERSION);
         for expected in [
-            "LinuxDoctor — report comparison",
-            "before  before.json",
-            "after   after.json",
+            title.as_str(),
+            "before  before.json (LinuxDoctor 1.7.0)",
+            "after   after.json (LinuxDoctor version not recorded)",
             "Machine changes",
             "kernel        6.8.0-31 → 6.8.0-40",
             "Summary  2 got worse · 2 got better · 1 other · 0 unchanged · 1 module not compared",
@@ -845,6 +878,8 @@ mod tests {
             &Labels {
                 before: "a\u{1b}[31m.json",
                 after: "b\n.json",
+                before_version: Some("1.\u{1b}]0;pwned\u{7}.0"),
+                after_version: Some("\u{202e}9.9"),
             },
         );
         // The renderer's own colours are the only escape sequences.
@@ -860,6 +895,8 @@ mod tests {
             &Labels {
                 before: "a|b.json",
                 after: "c.json",
+                before_version: Some("1|2"),
+                after_version: Some("<b>1</b>"),
             },
         );
         assert_no_control_characters(&md);
@@ -960,6 +997,55 @@ mod tests {
         assert_eq!(v["skipped_in_both"][0], "numa");
         assert_eq!(v["hidden"], 0);
         assert!(v.get("hidden_below").is_none());
+    }
+
+    #[test]
+    fn markdown_says_which_version_compared_and_which_wrote_each_report() {
+        let md = markdown(&rich(), &LABELS);
+        let mut lines = md.lines();
+        assert_eq!(lines.next(), Some("# LinuxDoctor report comparison"));
+        assert_eq!(lines.next(), Some(""));
+        assert_eq!(
+            lines.next(),
+            Some(format!("Compared with LinuxDoctor {}.", crate::VERSION).as_str())
+        );
+        assert!(md.contains("| | Report | Written by | Machine |"), "{md}");
+        assert!(
+            md.contains("| **before** | before.json | LinuxDoctor 1.7.0 |"),
+            "{md}"
+        );
+        assert!(
+            md.contains("| **after** | after.json | LinuxDoctor version not recorded |"),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn json_records_the_comparing_version_and_the_version_of_each_report() {
+        let v: serde_json::Value = serde_json::from_str(&json(&rich(), &LABELS).unwrap()).unwrap();
+        assert_eq!(v["linuxdoctor_version"], crate::VERSION);
+        assert_eq!(v["before"]["linuxdoctor_version"], "1.7.0");
+        assert!(v["after"]["linuxdoctor_version"].is_null(), "not recorded");
+        // The same key means the same thing at both levels: who wrote it.
+        assert!(v["after"].get("linuxdoctor_version").is_some());
+    }
+
+    #[test]
+    fn a_version_read_from_a_file_cannot_act_on_the_terminal() {
+        // The labels of `hostile_text_cannot_...` carry escape sequences and
+        // a right-to-left override in the versions; these are their cleaned
+        // forms, shown rather than dropped.
+        let plain = strip_ansi(&terminal(
+            &hostile(),
+            &Labels {
+                before: "a.json",
+                after: "b.json",
+                before_version: Some("1.\u{1b}]0;pwned\u{7}.0"),
+                after_version: Some("\u{202e}9.9"),
+            },
+        ));
+        assert!(plain.contains("(LinuxDoctor 1.?]0;pwned?.0)"), "{plain}");
+        assert!(plain.contains("(LinuxDoctor ?9.9)"), "{plain}");
     }
 
     #[test]

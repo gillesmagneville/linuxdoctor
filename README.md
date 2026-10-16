@@ -340,7 +340,7 @@ cargo build --release
 ./target/release/linuxdoctor              # no subcommand: TUI in a real
                                            # terminal, plain audit otherwise
 ./target/release/linuxdoctor audit
-./target/release/linuxdoctor audit --output json   # starts with "schema_version": 1
+./target/release/linuxdoctor audit --output json   # starts with "schema_version": 1, then "linuxdoctor_version"
 ./target/release/linuxdoctor audit --output markdown > report.md   # a document to read/share
 ./target/release/linuxdoctor audit --output html > report.html     # one self-contained page
 ./target/release/linuxdoctor audit --min-severity warning          # show Warning and above only
@@ -364,6 +364,15 @@ shared — a ticket, a wiki page, an email attachment, a file you keep next to t
 machine's backups. The HTML one is a single self-contained page (no JavaScript, no
 external file, no network access; light and dark themes; readable on a phone), and
 both formats include every finding, Info ones too.
+
+Every report says **which version of LinuxDoctor wrote it, at the very top** — the first
+line of the terminal report, the first line under the title in Markdown, the first fact
+of the HTML header — and so do the interactive UI (header and loading screen) and the
+comparison made by `diff`. The JSON report records it as `linuxdoctor_version`, right
+after `schema_version`: checks are added and thresholds move between versions, so a
+saved report is only fully understood with the version that wrote it. `diff` shows the
+version of each report it compares (reports written before 1.8.0 do not record it, and
+are shown as "version not recorded").
 
 ```bash
 linuxdoctor audit --output html > "report-$(hostname)-$(date +%F).html"
@@ -585,7 +594,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 944 lib unit tests + 76 CLI unit tests + 147 integration tests
+cargo test               # 953 lib unit tests + 76 CLI unit tests + 155 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -704,6 +713,7 @@ tests/       # fixture-driven integration tests, one file per module,
              # (logs_module.rs against a fake journalctl); docs_commands.rs runs
              # it for `man`, `completions` and the --modules check; diff_command.rs
              # runs it for `diff` (exit status, formats, unreadable and hostile files);
+             # version_shown.rs checks the version at the top of every output;
              # config_file.rs runs it with real configuration files (the command line
              # wins, exit status 2 for a bad file) and checks that every test that
              # starts the binary keeps it away from the reader's own file;

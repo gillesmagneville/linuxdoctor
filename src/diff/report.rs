@@ -48,6 +48,10 @@ pub struct ReportFile {
     /// as format 1.
     #[serde(default)]
     pub schema_version: u32,
+    /// The version of LinuxDoctor that wrote the report. Absent from
+    /// reports written before 1.8.0.
+    #[serde(default)]
+    pub linuxdoctor_version: Option<String>,
     pub context: ContextFile,
     pub results: Vec<ModuleFile>,
     /// Present when the report was written with `--min-severity`, which
@@ -191,6 +195,28 @@ mod tests {
         assert!(report.results[0].findings.is_empty());
         assert!(!report.results[0].skipped);
         assert!(report.filter.is_none());
+    }
+
+    #[test]
+    fn the_version_that_wrote_the_report_is_read_when_it_is_there() {
+        let with = r#"{
+            "schema_version": 1,
+            "linuxdoctor_version": "1.8.0",
+            "context": {"hostname": "web01"},
+            "results": []
+        }"#;
+        assert_eq!(
+            parse(with, "r.json")
+                .unwrap()
+                .linuxdoctor_version
+                .as_deref(),
+            Some("1.8.0")
+        );
+        // Reports from before 1.8.0 do not say.
+        assert_eq!(parse(MINIMAL, "r.json").unwrap().linuxdoctor_version, None);
+        // A value of another type is a report this version cannot read.
+        let wrong = with.replace("\"1.8.0\"", "180");
+        assert!(parse(&wrong, "r.json").is_err());
     }
 
     #[test]

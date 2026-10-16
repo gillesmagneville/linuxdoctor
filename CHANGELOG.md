@@ -140,9 +140,8 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
   réservée à `vfio-pci`, le texte dit que la vitesse de repos ne dit rien de la
   carte, puisqu'aucun pilote de cette machine ne la gère. Aucune sévérité ne
   change.
-  - **Vérifié sur une vraie machine** (deux cartes derrière deux ports x8, un
-    processeur dont les 16 lignes sont réparties en x8 + x8) : les deux ports
-    annoncent bien x8, et le rapport dit « The port it is plugged into allows at
+  - **Vérifié sur une vraie machine** (deux cartes, chacune derrière un port
+    qui annonce x8) : les deux ports annoncent bien x8, et le rapport dit « The port it is plugged into allows at
     most x8 ». La largeur du port n'est lue que pour un périphérique qui a un
     lien PCIe à lui : la puce vidéo d'un contrôleur de gestion, derrière un pont
     PCIe-vers-PCI, n'en a pas, et la largeur de ce pont (x1) est celle du lien du

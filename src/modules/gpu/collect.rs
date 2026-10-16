@@ -382,11 +382,18 @@ fn enrich_pcie_link_info(gpu: &mut GpuInfo, device_dir: &Path) {
     gpu.pcie_link_width_max = fs::read_to_string(device_dir.join("max_link_width"))
         .ok()
         .and_then(|s| s.trim().parse().ok());
-    gpu.pcie_port_width_max = upstream_port_width_max(device_dir);
+    // The port's width only means something for a device that has a PCIe link
+    // of its own. One on a conventional PCI bus behind a PCIe-to-PCI bridge
+    // (the video chip of a management controller, typically) has none, and
+    // the bridge's width is that of the bridge's own link, not the device's.
+    if gpu.pcie_link_width_max.is_some() {
+        gpu.pcie_port_width_max = upstream_port_width_max(device_dir);
+    }
 }
 
 /// The widest link the port above a PCI device can carry: the
-/// `max_link_width` of the bridge the device hangs from. Found from the
+/// `max_link_width` of the bridge the device hangs from (only meaningful for
+/// a device that has a PCIe link of its own; see [`enrich_pcie_link_info`]). Found from the
 /// device's real location in the sysfs tree (`.../0000:00:03.1/0000:04:00.0`:
 /// the directory above a device is its bridge). A device on the root complex
 /// is directly under a `pci0000:00` directory, which is not a PCI address,
@@ -1670,6 +1677,47 @@ MODALIAS=pci:v00001002d000067DFsv00001DA2sd0000E387bc03sc00i00
         let root = fake_card("port-wide");
         let card = plugged_card(&root, Some(("0000:00:01.1", Some("16\n"))), "0000:02:00.0");
         assert_eq!(upstream_port_width_max(&card), Some(16));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_device_without_a_pcie_link_of_its_own_gets_no_port_width() {
+        // The video chip of a management controller sits on a conventional PCI
+        // bus behind a PCIe-to-PCI bridge. The bridge reports the width of its
+        // own link (x1 here); the chip has no link, so that width is not
+        // something to attach to it. (Seen on a real machine: ASPEED, x1.)
+        let root = fake_card("port-legacy");
+        let card = plugged_card(&root, Some(("0000:0a:00.0", Some("1\n"))), "0000:0b:00.0");
+        let device = fs::canonicalize(&card).unwrap();
+        for file in [
+            "max_link_width",
+            "current_link_width",
+            "max_link_speed",
+            "current_link_speed",
+        ] {
+            fs::remove_file(device.join(file)).unwrap();
+        }
+        // The helper alone still reads the bridge; the decision is the caller's.
+        assert_eq!(upstream_port_width_max(&card), Some(1));
+        let mut gpu = blank_gpu("other");
+        enrich_pcie_link_info(&mut gpu, &card);
+        assert_eq!(gpu.pcie_link_width_max, None);
+        assert_eq!(gpu.pcie_port_width_max, None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_card_whose_current_width_is_unreadable_still_gets_its_port_width() {
+        // What decides that a device has a PCIe link of its own is the
+        // maximum width it reports, not the current one.
+        let root = fake_card("port-no-current");
+        let card = plugged_card(&root, Some(("0000:00:03.1", Some("8\n"))), "0000:04:00.0");
+        fs::remove_file(fs::canonicalize(&card).unwrap().join("current_link_width")).unwrap();
+        let mut gpu = blank_gpu("nvidia");
+        enrich_pcie_link_info(&mut gpu, &card);
+        assert_eq!(gpu.pcie_link_width_current, None);
+        assert_eq!(gpu.pcie_link_width_max, Some(16));
+        assert_eq!(gpu.pcie_port_width_max, Some(8));
         let _ = fs::remove_dir_all(root);
     }
 

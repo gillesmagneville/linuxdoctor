@@ -157,9 +157,61 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     échouent quand on casse le code (41 casseurs essayés, 40 détectés ; le
     dernier était une condition redondante, supprimée).
 
+- **Un profil peut ajouter ses propres vérifications. Premier cas : `--profile hpc`
+  ajoute le module `hpc`, avec la vérification du gouverneur CPU (`HPC001`).** Un profil
+  ne fait que baisser des sévérités. Une vérification qui est fausse sur une machine et
+  juste sur une autre (un poste de travail n'a pas tort de laisser ses CPU en
+  `powersave`) ne peut donc pas être une règle : c'est un module, présent seulement quand
+  le profil est choisi.
+  - **Le mécanisme** (`src/profile.rs`, `engine::modules_for`) : `Profile::modules()`
+    donne les modules du profil, qui ne sont pas dans `all_modules()`. `Context` ne
+    change pas. `--modules` reste exact : `--modules memory --profile hpc` ne lance que
+    `memory`. Nommer le module demande le profil : `--modules hpc` seul est refusé, avant
+    toute exécution, avec le code 2 et un message qui dit quoi taper (« the module 'hpc'
+    is added by the hpc profile: run with --profile hpc (or set profile = "hpc" in the
+    configuration file) »), pour `audit` comme pour `tui`. Les identifiants sont connus
+    de l'analyseur de la ligne de commande : complétions et page de manuel les listent
+    (la page de manuel les range sous le profil, pas sous les modules de tout audit).
+    `diff` n'a rien de nouveau à savoir : un module présent dans un seul rapport est
+    déjà « non comparé », et l'avertissement `different_profiles` existe déjà.
+  - **`HPC001` — gouverneur de fréquence des CPU.** Il lit `scaling_governor`,
+    `scaling_driver` et, quand le pilote en a un, `energy_performance_preference` de
+    chaque CPU. `powersave` ne veut pas dire la même chose partout, et c'est ce qui
+    rend la vérification délicate : avec `intel_pstate` et `amd-pstate-epp`, le
+    processeur choisit lui-même sa fréquence et `powersave` n'est qu'un penchant (jugé
+    selon la préférence : vers la performance = Info, vers l'économie d'énergie =
+    Avertissement, `default` ou valeur inconnue = Info qui le dit ; sans fichier de
+    préférence, la fréquence suit la charge = Avertissement), alors qu'avec les autres
+    pilotes (`acpi-cpufreq`, `intel_cpufreq`…) il bloque la fréquence au minimum
+    (Avertissement). `performance` est Info ; `ondemand`, `conservative` et `schedutil`
+    suivent la charge (Avertissement) ; des CPU qui n'ont pas tous le même gouverneur
+    sont un Avertissement. Les Avertissements viennent avec les commandes pour passer
+    en `performance` tout de suite et à chaque démarrage (un fichier `tmpfiles.d`, sans
+    paquet supplémentaire), et rappellent qu'un outil comme tuned peut remettre l'ancien
+    réglage. Une machine sans interface de fréquence (une machine virtuelle) obtient
+    une Info qui dit qu'il n'y avait rien à vérifier, ce qui n'est pas la même chose
+    que « la fréquence est bonne ». Les faits sur `powersave` viennent de la
+    documentation du noyau (`intel_pstate`, `amd-pstate`).
+  - **Aucun jugement ne dépasse l'Avertissement**, donc choisir le profil ne fait pas
+    échouer l'audit par défaut (le code de sortie suit les Erreurs). Les niveaux de
+    confiance suivent l'échelle du projet (90 quand le pilote et le gouverneur
+    concordent, 80 ou 78 quand reste un facteur non confirmé, 70 quand le pilote est
+    inconnu, et un mélange est au plus aussi sûr que sa partie la moins sûre).
+  - **Pas encore vérifié sur une machine avec `cpufreq`** : le conteneur de
+    développement n'en a pas. Le cas sans interface est vu avec le vrai binaire ; les
+    autres le sont sur de faux arbres sysfs.
+  - Tests : 45 nouveaux (lecture sur faux arbres, chaque branche du jugement avec
+    chaque pilote, le mélange, l'enregistrement du module et son refus sans profil
+    avec le vrai binaire, la page de manuel, les complétions, `diff`). Ils échouent
+    quand on casse le code : 49 casseurs essayés, 46 détectés du premier coup ; les 3
+    autres ont donné un test de plus (le pire des types de CPU décide), un cas de plus
+    (`cpu+1`, qu'un simple `parse` accepterait) et une condition redondante supprimée.
+
 ### Modifié
 
 - Le message sur l'absence de pilote cite maintenant `amdgpu`, `i915` ou `xe`.
+- La description du profil `hpc` (en-tête des rapports, page de manuel) dit maintenant
+  aussi qu'il ajoute le module `hpc`.
 - Le texte sur le lien PCIe d'une carte ne dit plus « worth checking the physical
   slot/cable » : il décrit ce qui est mesuré (`PCIe: 8.0 GT/s PCIe x8 (this card
   supports up to 8.0 GT/s PCIe x16).`), puis explique la largeur et la vitesse

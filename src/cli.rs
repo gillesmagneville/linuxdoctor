@@ -75,7 +75,8 @@ pub enum Command {
 #[derive(Parser)]
 pub struct AuditArgs {
     /// Restrict to specific modules by id (e.g. --modules memory,cpu).
-    /// An unknown id is a usage error, not an empty report.
+    /// An unknown id is a usage error, not an empty report. A module that a
+    /// profile adds (e.g. hpc) is accepted only together with that profile.
     #[arg(long, value_delimiter = ',', value_parser = module_ids())]
     pub modules: Option<Vec<String>>,
 
@@ -109,7 +110,8 @@ pub struct AuditArgs {
 #[derive(Parser)]
 pub struct TuiArgs {
     /// Restrict to specific modules by id (e.g. --modules memory,cpu).
-    /// An unknown id is a usage error, not an empty report.
+    /// An unknown id is a usage error, not an empty report. A module that a
+    /// profile adds (e.g. hpc) is accepted only together with that profile.
     #[arg(long, value_delimiter = ',', value_parser = module_ids())]
     pub modules: Option<Vec<String>>,
 
@@ -165,10 +167,14 @@ pub struct CompletionsArgs {
 /// selected nothing and produced an empty report that exited 0 -- a clean
 /// result nobody had actually checked.
 fn module_ids() -> PossibleValuesParser {
-    let ids: Vec<&'static str> = linuxdoctor::modules::all_modules()
+    let mut ids: Vec<&'static str> = linuxdoctor::modules::all_modules()
         .iter()
         .map(|module| module.id())
         .collect();
+    // The modules a profile adds are known ids too; whether the profile was
+    // chosen is checked once the command line and the configuration file are
+    // both read (see `main`).
+    ids.extend(linuxdoctor::profile::module_ids());
     PossibleValuesParser::new(ids)
 }
 
@@ -712,6 +718,20 @@ mod tests {
         }
         let a = audit_args(&["--modules", "security,logs,memory"]);
         assert_eq!(a.modules.unwrap(), ["security", "logs", "memory"]);
+    }
+
+    #[test]
+    fn modules_accepts_the_ids_a_profile_adds_and_completions_offer_them() {
+        let ids = linuxdoctor::profile::module_ids();
+        assert!(!ids.is_empty());
+        for id in ids {
+            let a = audit_args(&["--modules", id]);
+            assert_eq!(a.modules.unwrap(), [id]);
+            let t = Cli::try_parse_from(["linuxdoctor", "tui", "--modules", id]);
+            assert!(t.is_ok(), "tui --modules {id}");
+            let script = String::from_utf8(completion_script(Shell::Bash)).unwrap();
+            assert!(script.contains(id), "{id} not offered by the completions");
+        }
     }
 
     #[test]

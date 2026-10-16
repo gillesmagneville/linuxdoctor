@@ -27,12 +27,19 @@
 //!   tell an adjusted finding from an untouched one, and see what it would
 //!   have been.
 //!
+//! A profile may also **add modules**: checks that are right on one kind of
+//! machine and noise on another (a desktop is not wrong for leaving its CPUs
+//! on `powersave`), which lowering a severity cannot express. They are part of
+//! the audit only when the profile is chosen, and are named in the profile's
+//! description, in the manual page and in the report like any other module.
+//!
 //! The adjustment is applied to the finished report, before the exit status
 //! is decided and before any display filter, so it is the severity after the
 //! profile that every output, the exit status and `diff` work from.
 
 use crate::core::engine::Report;
 use crate::models::Severity;
+use crate::modules::Module;
 
 /// A kind of machine. See the module documentation for what a profile does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,10 +70,43 @@ impl Profile {
         match self {
             Profile::Hpc => {
                 "a compute node, where fully used CPUs are the normal state: \
-                 load-average findings are reported as informational"
+                 load-average findings are reported as informational, and the \
+                 `hpc` module checks that the CPUs are free to run at full speed"
             }
         }
     }
+
+    /// The modules this profile adds to an audit, after the ones every audit
+    /// has. Empty for a profile that only adjusts severities. See the module
+    /// documentation.
+    pub fn modules(self) -> Vec<Box<dyn Module>> {
+        match self {
+            Profile::Hpc => vec![Box::new(crate::modules::hpc::HpcModule)],
+        }
+    }
+}
+
+/// The first module among `ids` that belongs to a profile other than the one
+/// chosen (or to a profile when none is), with that profile. `--modules hpc`
+/// without `--profile hpc` cannot run what was asked for; saying so beats
+/// returning a report that quietly lacks it.
+pub fn module_needing_profile(ids: &[String], chosen: Option<Profile>) -> Option<(&str, Profile)> {
+    ids.iter().find_map(|id| {
+        Profile::ALL
+            .into_iter()
+            .filter(|profile| Some(*profile) != chosen)
+            .find(|profile| profile.modules().iter().any(|m| m.id() == id))
+            .map(|profile| (id.as_str(), profile))
+    })
+}
+
+/// Every id a profile adds, in profile order: what `--modules` accepts on top
+/// of the ids every audit has.
+pub fn module_ids() -> Vec<&'static str> {
+    Profile::ALL
+        .into_iter()
+        .flat_map(|profile| profile.modules().into_iter().map(|m| m.id()))
+        .collect()
 }
 
 /// One adjustment: a finding the profile reports at most at `cap`.
@@ -411,5 +451,49 @@ mod tests {
             .matches("Profile hpc:")
             .count();
         assert_eq!(notes, 1);
+    }
+
+    // ----- the modules a profile adds -----------------------------------
+
+    #[test]
+    fn the_hpc_profile_adds_the_hpc_module_and_only_it() {
+        let ids: Vec<&str> = Profile::Hpc.modules().iter().map(|m| m.id()).collect();
+        assert_eq!(ids, ["hpc"]);
+        assert_eq!(module_ids(), ["hpc"]);
+    }
+
+    #[test]
+    fn a_module_a_profile_adds_never_takes_the_id_of_one_every_audit_has() {
+        let general: Vec<&str> = crate::modules::all_modules()
+            .iter()
+            .map(|m| m.id())
+            .collect();
+        let added = module_ids();
+        for id in &added {
+            assert!(!general.contains(id), "{id} is in both lists");
+        }
+        for (i, id) in added.iter().enumerate() {
+            assert!(!added[i + 1..].contains(id), "{id} is added twice");
+        }
+    }
+
+    #[test]
+    fn asking_for_a_profile_module_without_its_profile_names_the_module_and_the_profile() {
+        let ids = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+        // Not chosen at all.
+        let asked = ids(&["memory", "hpc"]);
+        assert_eq!(
+            module_needing_profile(&asked, None),
+            Some(("hpc", Profile::Hpc))
+        );
+        // Chosen: nothing to say.
+        assert_eq!(module_needing_profile(&asked, Some(Profile::Hpc)), None);
+        // Only modules every audit has: nothing to say, with or without one.
+        let plain = ids(&["memory", "cpu"]);
+        assert_eq!(module_needing_profile(&plain, None), None);
+        assert_eq!(module_needing_profile(&plain, Some(Profile::Hpc)), None);
+        // An id nobody knows is not this function's business (clap refuses it).
+        assert_eq!(module_needing_profile(&ids(&["nope"]), None), None);
+        assert_eq!(module_needing_profile(&[], None), None);
     }
 }

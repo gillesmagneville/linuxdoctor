@@ -96,6 +96,7 @@ linuxdoctor/
 │   │   ├── cpu/
 │   │   ├── numa/
 │   │   ├── gpu/
+│   │   ├── hpc/              # added by --profile hpc, not in all_modules() — see "Profiles"
 │   │   ├── storage/
 │   │   ├── systemd/
 │   │   ├── ntp/
@@ -144,6 +145,7 @@ linuxdoctor/
     ├── docs_commands.rs      # the real binary: man, completions, --modules check
     ├── diff_command.rs       # the real binary: diff, its exit status and its formats
     ├── profile_option.rs     # profiles: the real CPU module and the real binary
+    ├── hpc_module.rs         # the module the hpc profile adds, with the real binary
     └── hostile_names.rs      # the real binary against escape sequences in names, every format
 ```
 
@@ -975,7 +977,9 @@ The checks are written for a machine in general, and some readings mean somethin
 particular kind of machine: a load average at the number of CPUs is contention on a
 desktop and a compute node doing its job. A **profile** says what kind of machine is being
 audited, once, in one place (`src/profile.rs`), instead of every module guessing. Today
-there is one, `hpc`; a `server` profile is planned.
+there is one, `hpc`; a `server` profile is planned. A profile does two things, and only
+these: it **lowers severities** (rules 2 to 5 below), and it may **add modules** (the end of
+this section).
 
 Five rules, each with the test that holds it:
 
@@ -1027,14 +1031,46 @@ point of the profile, and also what to remember when choosing it: **a node that 
 oversubscribed by mistake looks the same as one that is working.** The profile removes the
 alarm, not the number.
 
+`hpc` also adds a module, `hpc` (`src/modules/hpc/`):
+
+| Finding | What it judges |
+|---|---|
+| `HPC001` CPU Frequency Governor | The `scaling_governor` of every online CPU with a frequency policy, read with its `scaling_driver` and, where there is one, its `energy_performance_preference`. `performance` is Info. `powersave` means two different things: under `intel_pstate` and `amd-pstate-epp` the processor picks its own frequency and `powersave` only biases it (judged by the preference: performance-leaning is Info, efficiency-leaning a Warning, unknown or `default` an Info that says so; with no preference file, the load drives it: Warning), under every other driver it holds the lowest frequency (Warning, 90%). `ondemand`, `conservative` and `schedutil` follow the load (Warning). CPUs that do not share one governor are a Warning. No policy at all (a virtual machine) is an Info that says there was nothing to check. The facts behind the `powersave` split are in the kernel's `intel_pstate` and `amd-pstate` documentation. |
+
+### Modules a profile adds
+
+A lowering rule cannot say "this is wrong here and right elsewhere": that is a check, and
+it would be noise on a machine it does not suit (a desktop left on `powersave` is
+fine). So a profile may add modules, with these rules:
+
+* **`Profile::modules()`** returns them. They are **not** in `all_modules()`; the engine
+  builds the list for a run with `engine::modules_for(profile)` (the general modules, then
+  the profile's), so a run without the profile cannot contain one
+  (`a_profile_adds_its_modules_after_the_ones_every_audit_has`,
+  `a_full_audit_has_no_hpc_module_without_the_profile`).
+* **`Context` does not change.** A module reads what it needs itself, like any other.
+* **`--modules` stays exact.** `--modules memory --profile hpc` runs memory only; naming the
+  module needs the profile (`profile::module_needing_profile`), and asking for it without
+  the profile stops with status 2 and a message that says what to type, before anything
+  runs, for `audit` and `tui` alike (`asking_for_the_module_without_the_profile_is_refused_in_words_that_say_what_to_do`).
+  The ids are known to the parser, so they are completed and listed in the manual page
+  (`modules_accepts_the_ids_a_profile_adds_and_completions_offer_them`).
+* **Ids are unique** across both lists (`a_module_a_profile_adds_never_takes_the_id_of_one_every_audit_has`).
+* **`diff` needs nothing new.** A module present in one report only is already "not
+  compared: not run", and the `different_profiles` caveat is already there.
+* **Rule 2 does not apply to what the module finds**, since the module is the profile's own:
+  its findings can be a Warning. They stay at Warning at most unless the failure is
+  certain, so choosing a profile does not make the default exit status fail.
+
 ### Adding a profile or a rule
 
 A rule must name a finding some module really produces (`the_rules_name_findings_the_cpu_module_really_produces`
 guards the `hpc` ones), give a reason a reader can disagree with, and only lower. A profile
 that needs a check the general audit does not make (what a server should have, for
-instance) adds a module the profile selects; it does not change `Context`. The word that
-chooses a profile lives in two places, `Profile::name` and `cli::ProfileArg`, and a test
-walks both lists to keep them the same.
+instance) adds a module (above); it does not change `Context`. The module needs a line in
+`module_summary()` (`src/manpage.rs`; a test fails until it exists) and its id must not
+collide with an existing one. The word that chooses a profile lives in two places,
+`Profile::name` and `cli::ProfileArg`, and a test walks both lists to keep them the same.
 
 ---
 

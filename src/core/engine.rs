@@ -226,7 +226,7 @@ pub fn run_audit_with_progress(
     on_progress: impl FnMut(usize, usize, &[&'static str]),
 ) -> Result<Report, CoreError> {
     let context = Context::detect()?;
-    let modules = all_modules();
+    let modules = modules_for(profile);
     let selected: Vec<&dyn Module> = modules
         .iter()
         .map(|m| m.as_ref())
@@ -238,6 +238,16 @@ pub fn run_audit_with_progress(
         .collect();
 
     Ok(audit_of(&selected, context, profile, on_progress))
+}
+
+/// Every module an audit with this profile can run: the ones every audit has,
+/// then the ones the profile adds. `--modules` selects among these.
+pub fn modules_for(profile: Option<Profile>) -> Vec<Box<dyn Module>> {
+    let mut modules = all_modules();
+    if let Some(profile) = profile {
+        modules.extend(profile.modules());
+    }
+    modules
 }
 
 /// The report of running `modules`, with the profile (if any) applied to
@@ -654,5 +664,25 @@ mod report_filter_tests {
         assert!(r.results[3].skipped);
         assert_eq!(r.results[4].notes.len(), 1);
         assert!(r.results[4].findings.is_empty());
+    }
+
+    #[test]
+    fn a_profile_adds_its_modules_after_the_ones_every_audit_has() {
+        let ids = |profile| -> Vec<&'static str> {
+            modules_for(profile).iter().map(|m| m.id()).collect()
+        };
+        let plain = ids(None);
+        let hpc = ids(Some(Profile::Hpc));
+        assert!(!plain.contains(&"hpc"), "{plain:?}");
+        assert_eq!(hpc.last(), Some(&"hpc"));
+        assert_eq!(
+            &hpc[..hpc.len() - 1],
+            &plain[..],
+            "the others are untouched"
+        );
+        assert_eq!(
+            plain,
+            all_modules().iter().map(|m| m.id()).collect::<Vec<_>>()
+        );
     }
 }

@@ -12,6 +12,8 @@ fn run(args: &[&str]) -> Output {
     let mut full = vec!["audit", "--modules", "memory"];
     full.extend_from_slice(args);
     Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args(full)
         .output()
         .expect("linuxdoctor binary should start")

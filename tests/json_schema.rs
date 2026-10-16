@@ -7,6 +7,8 @@ use std::process::Command;
 
 fn audit_json() -> (String, serde_json::Value) {
     let output = Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args(["audit", "--modules", "memory", "--output", "json"])
         .output()
         .expect("linuxdoctor binary should start");

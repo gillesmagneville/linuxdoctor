@@ -45,6 +45,8 @@ impl Drop for Dir {
 
 fn run(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args(args)
         .output()
         .expect("linuxdoctor binary should start")
@@ -53,6 +55,8 @@ fn run(args: &[&str]) -> Output {
 /// Runs with `stdin` as standard input.
 fn run_with_stdin(args: &[&str], stdin: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

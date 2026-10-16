@@ -351,6 +351,7 @@ cargo build --release
 ./target/release/linuxdoctor tui              # interactive terminal UI, explicitly
 ./target/release/linuxdoctor diff before.json after.json   # what changed between two reports
 ./target/release/linuxdoctor audit --timeout 30   # allow slow tools 30 s each
+./target/release/linuxdoctor --no-config audit    # for once, ignore ~/.config/linuxdoctor/config.toml
 ./target/release/linuxdoctor man > linuxdoctor.1  # the manual page (see below)
 ./target/release/linuxdoctor completions bash     # shell completion script
 ```
@@ -382,7 +383,7 @@ Two options, kept separate on purpose:
 |---|---|
 | 0 | The audit ran and nothing reached the `--fail-on` level |
 | 1 | A finding reached the level (default `error`: Error and Critical), **or** the audit itself could not run |
-| 2 | Command-line usage error (a mistyped option value, or a `--modules` id that does not exist) |
+| 2 | Command-line usage error (a mistyped option value, or a `--modules` id that does not exist), or a configuration file that cannot be used |
 
 Without `--fail-on` the behaviour is exactly what it has always been (exit 1 on Error
 or Critical). With it, a short explanation goes to **stderr**, so `--output json >
@@ -392,7 +393,8 @@ report.json` stays clean. Things worth knowing, for scripts and CI:
   display: hiding findings can never make a failing audit pass.
 - A module that could not run is reported as such but is **not** a finding, so it does
   not change the exit status; check the report's `error` fields if that matters to you.
-- `linuxdoctor tui` keeps the default threshold and has neither option.
+- `linuxdoctor tui` keeps the default threshold and has neither option (it only reads
+  `timeout` from the configuration file, see below).
 - A reader that goes away early (`linuxdoctor audit | head -1`) is not an error and does
   not change the verdict: the exit status is still the audit's own.
 - Names chosen by the audited machine (a process, a virtual machine, a mount point, a
@@ -462,6 +464,67 @@ before anything reaches your terminal.
 linuxdoctor diff before.json after.json --fail-on warning --output markdown > review.md
 ```
 
+### The configuration file
+
+If you always type the same options, write them down once in
+`~/.config/linuxdoctor/config.toml` (under `$XDG_CONFIG_HOME` when that is set to an
+absolute path). The file is optional, and every line of it is optional:
+
+```toml
+# ~/.config/linuxdoctor/config.toml
+# Every line is optional. An option typed on the command line always wins
+# over this file.
+
+# Longest an external tool may run, in seconds (--timeout).
+timeout = 20
+
+# Exit with status 1 from this severity up, for audit and diff (--fail-on):
+# info, warning, error, critical or never.
+fail_on = "warning"
+
+# Only show findings from this severity up (--min-severity).
+min_severity = "warning"
+
+[audit]
+# terminal, json, markdown or html (--output).
+output = "markdown"
+
+[diff]
+# terminal, json or markdown (--output).
+output = "markdown"
+# A section can change the lines above for its own command.
+fail_on = "error"
+```
+
+```bash
+mkdir -p ~/.config/linuxdoctor && editor ~/.config/linuxdoctor/config.toml
+```
+
+- **What you type always wins.** The file only fills in what you did not type, option by
+  option: with the file above, `linuxdoctor audit --output json` prints JSON and still
+  uses the file's `fail_on` and `min_severity`. Typing the default value counts as
+  typing something: `--output terminal` beats `output = "markdown"`.
+- **The words are the ones of the command line**, read by the same parser, so `"md"`
+  works wherever `--output md` does. The top-level `timeout`, `fail_on` and
+  `min_severity` apply to `audit` and `diff` (`timeout` to every command); the
+  `[audit]` and `[diff]` sections hold `output` — it cannot be set at the top, because
+  the two commands do not accept the same formats (`diff` has no `html`) — and may
+  repeat the other two for their own command.
+- **A mistake is an error, never a guess.** An unknown key, a value the option would not
+  accept or a file that cannot be read stops the program with exit status **2**, before
+  anything is run, and says which file and which line. `--no-config` ignores the file
+  for one run (the way out of a broken file); `--config FILE` reads another one, which
+  must exist (one file per CI job, for instance).
+- **A level from the file explains itself**, like `--fail-on` does, when it makes the
+  exit status 1: `fail_on = "warning" in /home/you/.config/linuxdoctor/config.toml`.
+- `--modules` cannot be set in the file on purpose: a file that quietly narrowed every
+  audit would produce clean-looking reports of checks that were never made.
+- `man` and `completions` never read the file, so a broken file cannot stop you from
+  printing them; `tui` reads only `timeout`.
+- The file is untrusted text like any other: it must be a regular file of at most
+  64 KiB, and whatever is quoted from it in an error message has its control characters
+  replaced.
+
 ### Manual page and shell completions
 
 The `.deb` and `.rpm` packages install the manual page and the completions for
@@ -522,7 +585,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 944 lib unit tests + 37 CLI unit tests + 128 integration tests
+cargo test               # 944 lib unit tests + 76 CLI unit tests + 147 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -532,7 +595,7 @@ cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no re
 ## Toolchain note
 
 This was built and tested against `rustc`/`cargo` 1.75 (Ubuntu 24.04's apt package).
-Four dependencies are pinned for that MSRV:
+Five dependencies are pinned for that MSRV:
 
 * `clap` at `4.4.18` — newer `clap_builder` releases declare `edition2024` in their
   own manifest, which requires Cargo ≥ 1.85 just to parse.
@@ -541,6 +604,12 @@ Four dependencies are pinned for that MSRV:
   newer and a Rust of 1.85.
 * `unicode-segmentation` (a transitive dependency of `ratatui`) pinned to `1.11.0`
   in `Cargo.lock` for the same reason.
+* `toml` at `0.9.6`, with only the `std`, `serde` and `parse` features (it reads the
+  configuration file, it never writes TOML): later 0.9 releases need Rust 1.76. Its
+  own dependencies are held in `Cargo.lock` at the last releases that build on 1.75
+  (`toml_parser` 1.0.2, `serde_spanned` 1.0.1, `toml_datetime` 0.7.1, `winnow` 0.7.15).
+  To choose versions for 1.75 yourself, `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback
+  cargo add ...` does it from a newer Cargo.
 
 `Cargo.toml` declares `rust-version = "1.75"`, and the GitHub Actions workflow
 (`.github/workflows/ci.yml`) builds and tests on exactly 1.75.0 as well as on
@@ -572,6 +641,7 @@ linuxdoctor/
     ├── main.rs                # bin entry point
     ├── cli.rs                 # argument parsing (audit / tui / diff / completions / man, --output,
     │                          #   --min-severity, --fail-on, --modules checked against the registry)
+    ├── config.rs              # the optional configuration file (~/.config/linuxdoctor/config.toml)
     ├── manpage.rs             # the manual page printed by `linuxdoctor man`
     ├── lib.rs                 # library root (also used by examples/ and tests/)
     │
@@ -634,6 +704,9 @@ tests/       # fixture-driven integration tests, one file per module,
              # (logs_module.rs against a fake journalctl); docs_commands.rs runs
              # it for `man`, `completions` and the --modules check; diff_command.rs
              # runs it for `diff` (exit status, formats, unreadable and hostile files);
+             # config_file.rs runs it with real configuration files (the command line
+             # wins, exit status 2 for a bad file) and checks that every test that
+             # starts the binary keeps it away from the reader's own file;
              # hostile_names.rs runs it against escape sequences in names, every format
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```

@@ -18,6 +18,8 @@ use std::process::{Command, Output, Stdio};
 fn run_into_a_closed_pipe(args: &[&str], path: Option<&str>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_linuxdoctor"));
     command
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

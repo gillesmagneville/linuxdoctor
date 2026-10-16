@@ -52,6 +52,8 @@ impl Drop for FakeBin {
 fn audit_virtualization(bin: &FakeBin, timeout_secs: &str) -> (Duration, serde_json::Value) {
     let started = Instant::now();
     let output = Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args([
             "audit",
             "--modules",

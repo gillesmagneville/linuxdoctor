@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::io::IsTerminal;
+use std::path::PathBuf;
 
 use clap::builder::PossibleValuesParser;
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell;
 
 use linuxdoctor::models::Severity;
+
+/// Longest `--timeout` accepted, on the command line and in the
+/// configuration file alike.
+pub const MAX_TIMEOUT_SECONDS: u64 = 3600;
 
 #[derive(Parser)]
 #[command(
@@ -25,9 +30,26 @@ pub struct Cli {
         long,
         global = true,
         value_name = "SECONDS",
-        value_parser = clap::value_parser!(u64).range(1..=3600)
+        value_parser = clap::value_parser!(u64).range(1..=MAX_TIMEOUT_SECONDS)
     )]
     pub timeout: Option<u64>,
+
+    /// Read the settings from this file instead of
+    /// ~/.config/linuxdoctor/config.toml. A file that is missing or
+    /// invalid is an error.
+    #[arg(
+        long,
+        global = true,
+        value_name = "FILE",
+        value_hint = ValueHint::FilePath,
+        conflicts_with = "no_config"
+    )]
+    pub config: Option<PathBuf>,
+
+    /// Ignore the configuration file: run with the built-in defaults and
+    /// the options typed on the command line.
+    #[arg(long, global = true)]
+    pub no_config: bool,
 }
 
 #[derive(Subcommand)]
@@ -58,9 +80,9 @@ pub struct AuditArgs {
 
     /// Output format. `markdown` and `html` produce a complete report
     /// document (redirect it to a file); `html` is a single self-contained
-    /// page.
-    #[arg(long, value_enum, default_value_t = OutputFormat::Terminal)]
-    pub output: OutputFormat,
+    /// page. Default: terminal.
+    #[arg(long, value_enum)]
+    pub output: Option<OutputFormat>,
 
     /// Only show findings at or above this severity. A display filter: it
     /// never changes the exit status (see --fail-on) and the output says
@@ -96,9 +118,9 @@ pub struct DiffArgs {
     pub after: String,
 
     /// Output format. `markdown` produces a complete document (redirect
-    /// it to a file or paste it in a ticket).
-    #[arg(long, value_enum, default_value_t = DiffFormat::Terminal)]
-    pub output: DiffFormat,
+    /// it to a file or paste it in a ticket). Default: terminal.
+    #[arg(long, value_enum)]
+    pub output: Option<DiffFormat>,
 
     /// Only show changes to findings that were at or above this severity
     /// in either report. A display filter: it never changes the exit
@@ -151,7 +173,7 @@ pub fn completion_script(shell: Shell) -> Vec<u8> {
     script
 }
 
-#[derive(Copy, Clone, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
     Terminal,
     Json,
@@ -163,7 +185,7 @@ pub enum OutputFormat {
 }
 
 /// `diff --output` values.
-#[derive(Copy, Clone, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum DiffFormat {
     Terminal,
     Json,
@@ -245,7 +267,7 @@ impl Cli {
         } else {
             Command::Audit(AuditArgs {
                 modules: None,
-                output: OutputFormat::Terminal,
+                output: None,
                 min_severity: None,
                 fail_on: None,
             })
@@ -262,6 +284,8 @@ mod tests {
         let cli = Cli {
             command: None,
             timeout: None,
+            config: None,
+            no_config: false,
         };
         assert!(matches!(cli.resolved_command_with(true), Command::Tui(_)));
     }
@@ -271,6 +295,8 @@ mod tests {
         let cli = Cli {
             command: None,
             timeout: None,
+            config: None,
+            no_config: false,
         };
         assert!(matches!(
             cli.resolved_command_with(false),
@@ -286,16 +312,18 @@ mod tests {
         let cli = Cli {
             command: Some(Command::Audit(AuditArgs {
                 modules: None,
-                output: OutputFormat::Json,
+                output: Some(OutputFormat::Json),
                 min_severity: None,
                 fail_on: None,
             })),
             timeout: None,
+            config: None,
+            no_config: false,
         };
         let resolved = cli.resolved_command_with(true);
         assert!(matches!(resolved, Command::Audit(_)));
         if let Command::Audit(args) = resolved {
-            assert!(matches!(args.output, OutputFormat::Json));
+            assert_eq!(args.output, Some(OutputFormat::Json));
         }
     }
 
@@ -306,6 +334,8 @@ mod tests {
                 modules: Some(vec!["memory".to_string()]),
             })),
             timeout: None,
+            config: None,
+            no_config: false,
         };
         let resolved = cli.resolved_command_with(false);
         assert!(matches!(resolved, Command::Tui(_)));
@@ -350,22 +380,19 @@ mod tests {
 
     #[test]
     fn output_accepts_markdown_html_and_the_md_alias() {
-        assert!(matches!(
-            audit_args(&["--output", "markdown"]).output,
-            OutputFormat::Markdown
-        ));
-        assert!(matches!(
-            audit_args(&["--output", "md"]).output,
-            OutputFormat::Markdown
-        ));
-        assert!(matches!(
-            audit_args(&["--output", "html"]).output,
-            OutputFormat::Html
-        ));
-        assert!(matches!(
-            audit_args(&["--output", "json"]).output,
-            OutputFormat::Json
-        ));
+        for (word, expected) in [
+            ("markdown", OutputFormat::Markdown),
+            ("md", OutputFormat::Markdown),
+            ("html", OutputFormat::Html),
+            ("json", OutputFormat::Json),
+            ("terminal", OutputFormat::Terminal),
+        ] {
+            assert_eq!(
+                audit_args(&["--output", word]).output,
+                Some(expected),
+                "{word}"
+            );
+        }
         assert!(Cli::try_parse_from(["linuxdoctor", "audit", "--output", "pdf"]).is_err());
     }
 
@@ -385,7 +412,10 @@ mod tests {
         let a = diff_args(&["before.json", "after.json"]);
         assert_eq!(a.before, "before.json");
         assert_eq!(a.after, "after.json");
-        assert!(matches!(a.output, DiffFormat::Terminal));
+        assert_eq!(
+            a.output, None,
+            "unset: the configuration or the default decides"
+        );
         assert_eq!(a.min_severity, None);
         assert_eq!(a.fail_on, None);
     }
@@ -412,14 +442,14 @@ mod tests {
 
     #[test]
     fn diff_output_has_no_html_format() {
-        assert!(matches!(
+        assert_eq!(
             diff_args(&["a", "b", "--output", "md"]).output,
-            DiffFormat::Markdown
-        ));
-        assert!(matches!(
+            Some(DiffFormat::Markdown)
+        );
+        assert_eq!(
             diff_args(&["a", "b", "--output", "json"]).output,
-            DiffFormat::Json
-        ));
+            Some(DiffFormat::Json)
+        );
         assert!(
             Cli::try_parse_from(["linuxdoctor", "diff", "a", "b", "--output", "html"]).is_err()
         );
@@ -430,6 +460,39 @@ mod tests {
         let a = audit_args(&[]);
         assert_eq!(a.min_severity, None);
         assert_eq!(a.fail_on, None);
+        // Unset, not "terminal": a typed `--output terminal` must be told
+        // apart from nothing typed, because the configuration file only
+        // fills in what was not typed.
+        assert_eq!(a.output, None);
+    }
+
+    // ----- configuration file options -----------------------------------------
+
+    #[test]
+    fn config_and_no_config_are_global_and_exclusive() {
+        let cli = Cli::try_parse_from(["linuxdoctor", "audit", "--config", "/tmp/c.toml"]).unwrap();
+        assert_eq!(cli.config, Some(PathBuf::from("/tmp/c.toml")));
+        assert!(!cli.no_config);
+        let cli = Cli::try_parse_from(["linuxdoctor", "--no-config", "diff", "a", "b"]).unwrap();
+        assert!(cli.no_config);
+        assert_eq!(cli.config, None);
+        assert!(Cli::try_parse_from(["linuxdoctor", "--config", "x", "--no-config"]).is_err());
+        assert!(Cli::try_parse_from(["linuxdoctor", "audit", "--config"]).is_err());
+    }
+
+    #[test]
+    fn config_options_default_to_the_default_file() {
+        let cli = Cli::try_parse_from(["linuxdoctor", "audit"]).unwrap();
+        assert_eq!(cli.config, None);
+        assert!(!cli.no_config);
+    }
+
+    #[test]
+    fn the_timeout_limit_is_shared_with_the_configuration_file() {
+        let at_limit = MAX_TIMEOUT_SECONDS.to_string();
+        assert!(Cli::try_parse_from(["linuxdoctor", "--timeout", &at_limit]).is_ok());
+        let over = (MAX_TIMEOUT_SECONDS + 1).to_string();
+        assert!(Cli::try_parse_from(["linuxdoctor", "--timeout", &over]).is_err());
     }
 
     #[test]
@@ -506,7 +569,7 @@ mod tests {
             panic!("expected audit");
         };
         assert_eq!(a.modules.unwrap(), ["memory", "cpu"]);
-        assert!(matches!(a.output, OutputFormat::Html));
+        assert_eq!(a.output, Some(OutputFormat::Html));
         assert_eq!(a.min_severity, Some(SeverityArg::Warning));
         assert_eq!(a.fail_on, Some(FailOnArg::Never));
     }

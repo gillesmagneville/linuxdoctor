@@ -9,6 +9,24 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Corrigé
+
+- **`linuxdoctor audit | head` ne plante plus.** Quand le lecteur de la sortie
+  disparaissait avant l'écriture (`| head -1`, un pager quitté aussitôt), les
+  quatre formats d'`audit` paniquaient (message `failed printing to stdout:
+  Broken pipe`, code de sortie 101) parce qu'ils écrivaient avec `print!`.
+  Le texte est maintenant construit puis écrit avec l'écriture sûre déjà
+  utilisée par `diff`, `man` et `completions` : un lecteur parti n'est pas une
+  erreur. Le verdict ne change pas pour autant : le code de sortie reste celui
+  de l'audit (1 si un constat atteint le niveau `--fail-on`) et un `--fail-on`
+  explicite s'explique toujours sur la sortie d'erreur. Une vraie erreur
+  d'écriture (disque plein) reste signalée et donne le code 1.
+  - Tests : `tests/broken_pipe.rs` ferme le tube avant l'écriture (les audits
+    sont assez longs pour que ce soit certain) et vérifie, avec le vrai
+    binaire, l'absence de panique pour les quatre formats, le verdict conservé
+    (faux `df` presque plein), le message de `--fail-on`, et `man`,
+    `completions` et `diff`. Trois de ces tests échouent sans le correctif.
+
 ## [1.7.0] - 2026-10-16
 
 La comparaison de deux rapports (`linuxdoctor diff`) et un correctif de

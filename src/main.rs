@@ -93,17 +93,23 @@ fn run_audit_command(args: AuditArgs) -> ExitCode {
     });
     let meta = RenderMeta::now(filter);
 
-    match args.output {
-        OutputFormat::Terminal => print!("{}", output::terminal::render_with(&report, &meta)),
+    let text = match args.output {
+        OutputFormat::Terminal => output::terminal::render_with(&report, &meta),
         OutputFormat::Json => match output::json::render_with(&report, &meta) {
-            Ok(json) => println!("{json}"),
+            Ok(json) => json + "\n",
             Err(e) => {
                 eprintln!("linuxdoctor: failed to render JSON: {e}");
                 return ExitCode::FAILURE;
             }
         },
-        OutputFormat::Markdown => print!("{}", output::markdown::render(&report, &meta)),
-        OutputFormat::Html => print!("{}", output::html::render(&report, &meta)),
+        OutputFormat::Markdown => output::markdown::render(&report, &meta),
+        OutputFormat::Html => output::html::render(&report, &meta),
+    };
+    // Not `print!`, which panics when the reader has gone away
+    // (`linuxdoctor audit | head`). A reader that leaves early does not
+    // change what the audit found: the verdict below is still given.
+    if !write_stdout(text.as_bytes()) {
+        return ExitCode::FAILURE;
     }
 
     // Only an explicit --fail-on explains itself on stderr: the default

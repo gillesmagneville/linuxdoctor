@@ -56,7 +56,7 @@ fn module_summary(id: &str) -> Option<&'static str> {
         }
         "hpc" => {
             "Added by the hpc profile: whether the CPUs are free to run at full speed (frequency \
-             governor)."
+             governor), and whether RDMA can lock the memory it needs (locked-memory limit)."
         }
         _ => return None,
     })

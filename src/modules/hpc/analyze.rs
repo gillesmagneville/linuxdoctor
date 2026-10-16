@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
+use crate::modules::logs::text::human_size;
 use crate::modules::recommend::Steps;
 
-use super::collect::{CpuFreq, HpcRawData};
+use super::collect::{CpuFreq, HpcRawData, Limit, MemLock, RdmaDevice};
 
 /// Pure function: RawData -> Findings. No I/O -- see ARCHITECTURE.md
 /// "Testing Strategy".
-pub fn analyze(data: &HpcRawData, _ctx: &Context) -> Vec<Finding> {
-    vec![governor_finding(&data.cpufreq)]
+pub fn analyze(data: &HpcRawData, ctx: &Context) -> Vec<Finding> {
+    let ram = ctx.mem_total_kb.saturating_mul(1024);
+    vec![
+        governor_finding(&data.cpufreq),
+        memlock_finding(data.memlock, &data.rdma, ram),
+    ]
 }
 
 /// What the CPUs of one kind have in common: the same driver, governor and
@@ -310,6 +315,200 @@ fn performance_steps() -> String {
         .build()
 }
 
+/// How many RDMA device names an evidence value lists before it counts the
+/// rest.
+const MAX_NAMES: usize = 8;
+
+/// What every sentence about the locked-memory limit has to say: it is the
+/// limit of the process that was measured, not of the jobs the node will run.
+const OWN_SESSION: &str = "This is the limit of the session LinuxDoctor ran in: jobs started by \
+                           a scheduler or a systemd service have limits of their own.";
+
+fn limit_text(limit: Limit) -> String {
+    match limit {
+        Limit::Unlimited => "unlimited".to_string(),
+        Limit::Bytes(bytes) => human_size(bytes),
+    }
+}
+
+/// The device names, `mlx5_0, mlx5_1`; the first few and a count when there
+/// are many.
+fn names_text(devices: &[RdmaDevice]) -> String {
+    let shown = devices
+        .iter()
+        .take(MAX_NAMES)
+        .map(|d| d.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    match devices.len().saturating_sub(MAX_NAMES) {
+        0 => shown,
+        more => format!("{shown}, and {more} more"),
+    }
+}
+
+/// The link layers of all the ports, without repeats: `Ethernet, InfiniBand`.
+fn link_layers_text(devices: &[RdmaDevice]) -> Option<String> {
+    let layers: BTreeSet<&str> = devices
+        .iter()
+        .flat_map(|d| d.link_layers.iter().map(String::as_str))
+        .collect();
+    if layers.is_empty() {
+        None
+    } else {
+        Some(layers.into_iter().collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// Whether the locked-memory limit leaves RDMA the memory it can ask for.
+enum Fit {
+    Enough,
+    Short,
+    /// Finite, but the amount of RAM is not known to compare it with.
+    Unknown,
+}
+
+/// HPC002 -- the locked-memory limit, judged for a node with RDMA devices.
+/// RDMA locks the memory it transfers in RAM, and the kernel counts that
+/// against the process's `RLIMIT_MEMLOCK` (the default, a few MiB, is far
+/// below what an MPI job registers). Always reported, like HPC001: a node
+/// with no RDMA device says so, instead of staying silent.
+fn memlock_finding(memlock: Option<MemLock>, rdma: &[RdmaDevice], ram: u64) -> Finding {
+    let builder = |severity: Severity, confidence: Confidence| {
+        let devices = if rdma.is_empty() {
+            "none".to_string()
+        } else {
+            names_text(rdma)
+        };
+        let mut finding = Finding::builder(
+            "HPC002",
+            "Locked Memory Limit",
+            Category::Memory,
+            severity,
+            confidence,
+        )
+        .evidence("rdma_devices", devices);
+        if let Some(layers) = link_layers_text(rdma) {
+            finding = finding.evidence("rdma_link_layers", layers);
+        }
+        if let Some(limits) = memlock {
+            finding = finding
+                .evidence("memlock_soft", limit_text(limits.soft))
+                .evidence("memlock_hard", limit_text(limits.hard));
+            if ram > 0 {
+                finding = finding.evidence("ram", human_size(ram));
+            }
+        }
+        finding
+    };
+    let info = |explanation: String| {
+        builder(Severity::Info, Confidence::direct_observation())
+            .explanation(explanation)
+            .build()
+    };
+
+    if rdma.is_empty() {
+        let limit = memlock.map_or(String::new(), |m| {
+            format!(" (soft limit {})", limit_text(m.soft))
+        });
+        return info(format!(
+            "No RDMA device (InfiniBand, RoCE) is listed, so the limit on locked memory{limit} \
+             does not matter for RDMA here. A card whose driver is not loaded does not appear."
+        ));
+    }
+
+    let n = rdma.len();
+    let what = format!(
+        "{n} RDMA device{} ({})",
+        if n == 1 { "" } else { "s" },
+        names_text(rdma)
+    );
+    let Some(limits) = memlock else {
+        return info(format!(
+            "{what} found, but the limit on locked memory could not be read from \
+             /proc/self/limits. RDMA needs it to be unlimited or close to the RAM; check it with \
+             `ulimit -l`."
+        ));
+    };
+
+    let soft = limit_text(limits.soft);
+    let fit = match limits.soft {
+        Limit::Unlimited => Fit::Enough,
+        Limit::Bytes(_) if ram == 0 => Fit::Unknown,
+        Limit::Bytes(bytes) if bytes >= ram => Fit::Enough,
+        Limit::Bytes(_) => Fit::Short,
+    };
+    match fit {
+        Fit::Enough => {
+            let against = if limits.soft == Limit::Unlimited {
+                String::new()
+            } else {
+                format!(", at least the {} of RAM", human_size(ram))
+            };
+            info(format!(
+                "{what} found. The soft limit on locked memory is {soft}{against}, so RDMA can \
+                 lock all the memory it needs. {OWN_SESSION}"
+            ))
+        }
+        Fit::Unknown => info(format!(
+            "{what} found. The soft limit on locked memory is {soft}; the amount of RAM is not \
+             known, so it cannot be compared with it. RDMA needs the limit to be unlimited or \
+             close to the RAM. {OWN_SESSION}"
+        )),
+        Fit::Short => {
+            let raise = match limits.hard {
+                Limit::Bytes(bytes) if bytes < ram => format!(
+                    "The hard limit is {} as well, so raising the limit takes root.",
+                    human_size(bytes)
+                ),
+                hard => format!(
+                    "The hard limit ({}) lets users raise it themselves.",
+                    limit_text(hard)
+                ),
+            };
+            builder(Severity::Warning, Confidence::strong_indication(75))
+                .explanation(format!(
+                    "{what} found, but the soft limit on locked memory is only {soft} for {} of \
+                     RAM. RDMA locks the memory it transfers in RAM; an application that \
+                     registers more than the limit allows (an MPI job does) fails to register \
+                     memory, and the job either stops or falls back to a slower transport. \
+                     {raise} {OWN_SESSION}",
+                    human_size(ram)
+                ))
+                .recommendation(memlock_steps())
+                .build()
+        }
+    }
+}
+
+fn memlock_steps() -> String {
+    Steps::new()
+        .step(
+            "Raise the limit in the current shell and the jobs it starts (this needs the hard \
+             limit to allow it, or root):",
+            &["ulimit -l unlimited"],
+        )
+        .step(
+            "Make it permanent for logins; PAM applies this file at every login. The `*` lines \
+             do not cover root: add `root` lines if root runs jobs:",
+            &["printf '* soft memlock unlimited\\n* hard memlock unlimited\\n' | sudo tee /etc/security/limits.d/90-memlock.conf"],
+        )
+        .step(
+            "Services started by systemd do not read that file; give them the same default (a \
+             service started after this, or after a reboot, gets it; a running service keeps \
+             its limit until it is restarted):",
+            &[
+                "sudo mkdir -p /etc/systemd/system.conf.d",
+                "printf '[Manager]\\nDefaultLimitMEMLOCK=infinity\\n' | sudo tee /etc/systemd/system.conf.d/memlock.conf",
+                "sudo systemctl daemon-reexec",
+            ],
+        )
+        .step(
+            "Check the result in a new login session, and the default systemd gives to services:",
+            &["ulimit -l", "systemctl show -p DefaultLimitMEMLOCK"],
+        )
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,9 +543,14 @@ mod tests {
             .collect()
     }
 
+    /// HPC001 for these CPUs (the other finding is not looked at).
     fn finding_of(cpufreq: Vec<CpuFreq>) -> Finding {
-        let mut findings = analyze(&HpcRawData { cpufreq }, &ctx());
-        assert_eq!(findings.len(), 1);
+        let data = HpcRawData {
+            cpufreq,
+            ..Default::default()
+        };
+        let mut findings = analyze(&data, &ctx());
+        assert_eq!(findings.len(), 2);
         findings.remove(0)
     }
 
@@ -675,5 +879,250 @@ mod tests {
         for other in ["default", "0", "255", "", "Performance"] {
             assert_eq!(lean(other), Lean::Unknown, "{other:?}");
         }
+    }
+
+    const MIB: u64 = 1024 * 1024;
+    const GIB: u64 = 1024 * MIB;
+
+    fn soft_hard(soft: Limit, hard: Limit) -> Option<MemLock> {
+        Some(MemLock { soft, hard })
+    }
+
+    fn device(name: &str, layers: &[&str]) -> RdmaDevice {
+        RdmaDevice {
+            name: name.to_string(),
+            link_layers: layers.iter().map(|l| l.to_string()).collect(),
+        }
+    }
+
+    fn mlx() -> Vec<RdmaDevice> {
+        vec![device("mlx5_0", &["InfiniBand"])]
+    }
+
+    /// HPC002 for a node with `ram` bytes of RAM.
+    fn memlock_of(memlock: Option<MemLock>, rdma: Vec<RdmaDevice>, ram: u64) -> Finding {
+        let data = HpcRawData {
+            memlock,
+            rdma,
+            ..Default::default()
+        };
+        let ctx = Context {
+            mem_total_kb: ram / 1024,
+            ..ctx()
+        };
+        let mut findings = analyze(&data, &ctx);
+        assert_eq!(findings.len(), 2);
+        findings.remove(1)
+    }
+
+    #[test]
+    fn the_governor_comes_first_and_the_locked_memory_limit_second() {
+        let ids: Vec<String> = analyze(&HpcRawData::default(), &ctx())
+            .into_iter()
+            .map(|f| f.id)
+            .collect();
+        assert_eq!(ids, ["HPC001", "HPC002"]);
+    }
+
+    #[test]
+    fn without_an_rdma_device_the_limit_is_said_not_to_matter() {
+        let limits = soft_hard(Limit::Bytes(8 * MIB), Limit::Bytes(8 * MIB));
+        let f = memlock_of(limits, vec![], 64 * GIB);
+        assert_eq!(f.id, "HPC002");
+        assert_eq!(f.severity, Severity::Info);
+        assert_eq!(f.confidence.percent, 100);
+        assert!(f.recommendation.is_none());
+        assert_eq!(evidence(&f, "rdma_devices"), Some("none"));
+        assert_eq!(evidence(&f, "rdma_link_layers"), None);
+        let text = f.explanation.as_str();
+        assert!(text.contains("No RDMA device"), "{text}");
+        assert!(text.contains("soft limit 8.0 MiB"), "{text}");
+        assert!(text.contains("driver is not loaded"), "{text}");
+    }
+
+    #[test]
+    fn without_an_rdma_device_and_without_a_reading_nothing_is_claimed_about_the_limit() {
+        let f = memlock_of(None, vec![], 64 * GIB);
+        assert_eq!(f.severity, Severity::Info);
+        let text = f.explanation.as_str();
+        assert!(text.contains("No RDMA device"), "{text}");
+        assert!(!text.contains("soft limit"), "{text}");
+        assert_eq!(evidence(&f, "memlock_soft"), None);
+        assert_eq!(evidence(&f, "memlock_hard"), None);
+        assert_eq!(evidence(&f, "ram"), None);
+    }
+
+    #[test]
+    fn an_unreadable_limit_with_rdma_present_is_reported_not_judged() {
+        let f = memlock_of(None, mlx(), 64 * GIB);
+        assert_eq!(f.severity, Severity::Info);
+        assert_eq!(f.confidence.percent, 100);
+        assert!(f.recommendation.is_none());
+        let text = f.explanation.as_str();
+        assert!(text.contains("1 RDMA device (mlx5_0) found"), "{text}");
+        assert!(text.contains("could not be read"), "{text}");
+        assert!(text.contains("`ulimit -l`"), "{text}");
+        assert_eq!(evidence(&f, "rdma_devices"), Some("mlx5_0"));
+        assert_eq!(evidence(&f, "memlock_soft"), None);
+    }
+
+    #[test]
+    fn an_unlimited_soft_limit_is_fine_whatever_the_hard_one() {
+        for hard in [Limit::Unlimited, Limit::Bytes(MIB)] {
+            let f = memlock_of(soft_hard(Limit::Unlimited, hard), mlx(), 64 * GIB);
+            assert_eq!(f.severity, Severity::Info, "{hard:?}");
+            assert_eq!(f.confidence.percent, 100);
+            assert!(f.recommendation.is_none());
+            let text = f.explanation.as_str();
+            assert!(text.contains("is unlimited, so RDMA can lock"), "{text}");
+            assert!(!text.contains("at least the"), "{text}");
+            assert!(text.contains("limits of their own"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_finite_limit_is_fine_from_the_amount_of_ram_up() {
+        let ram = 64 * GIB;
+        for soft in [ram, ram + 1, 2 * ram] {
+            let f = memlock_of(soft_hard(Limit::Bytes(soft), Limit::Unlimited), mlx(), ram);
+            assert_eq!(f.severity, Severity::Info, "{soft}");
+            let text = f.explanation.as_str();
+            assert!(text.contains("at least the 64.0 GiB of RAM"), "{text}");
+            assert!(text.contains("limits of their own"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_limit_below_the_ram_with_rdma_present_is_a_warning_with_the_steps() {
+        let ram = 64 * GIB;
+        for soft in [8 * MIB, ram - 1] {
+            let f = memlock_of(soft_hard(Limit::Bytes(soft), Limit::Unlimited), mlx(), ram);
+            assert_eq!(f.severity, Severity::Warning, "{soft}");
+            assert_eq!(f.confidence.percent, 75);
+            assert_eq!(f.category, Category::Memory);
+            let text = f.explanation.as_str();
+            assert!(text.contains("only"), "{text}");
+            assert!(text.contains("for 64.0 GiB of RAM"), "{text}");
+            assert!(text.contains("fails to register memory"), "{text}");
+            assert!(text.contains("limits of their own"), "{text}");
+            let steps = f.recommendation.as_deref().unwrap();
+            for expected in [
+                "1. ",
+                "2. ",
+                "3. ",
+                "4. ",
+                "ulimit -l unlimited",
+                "printf '* soft memlock unlimited\\n* hard memlock unlimited\\n' | sudo tee /etc/security/limits.d/90-memlock.conf",
+                "printf '[Manager]\\nDefaultLimitMEMLOCK=infinity\\n' | sudo tee /etc/systemd/system.conf.d/memlock.conf",
+                "systemctl daemon-reexec",
+                "systemctl show -p DefaultLimitMEMLOCK",
+            ] {
+                assert!(steps.contains(expected), "{expected} in {steps}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_warning_says_whether_users_can_raise_the_limit_themselves() {
+        let ram = 64 * GIB;
+        let said = |hard: Limit| {
+            let f = memlock_of(soft_hard(Limit::Bytes(8 * MIB), hard), mlx(), ram);
+            assert_eq!(f.severity, Severity::Warning);
+            f.explanation
+        };
+        for hard in [Limit::Unlimited, Limit::Bytes(ram), Limit::Bytes(ram + 1)] {
+            let text = said(hard);
+            assert!(text.contains("lets users raise it themselves"), "{text}");
+            assert!(!text.contains("takes root"), "{text}");
+        }
+        let text = said(Limit::Bytes(ram - 1));
+        assert!(text.contains("takes root"), "{text}");
+        assert!(!text.contains("raise it themselves"), "{text}");
+        let text = said(Limit::Bytes(8 * MIB));
+        assert!(text.contains("The hard limit is 8.0 MiB as well"), "{text}");
+    }
+
+    #[test]
+    fn a_finite_limit_is_not_judged_when_the_ram_is_not_known() {
+        let f = memlock_of(
+            soft_hard(Limit::Bytes(8 * MIB), Limit::Bytes(8 * MIB)),
+            mlx(),
+            0,
+        );
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.recommendation.is_none());
+        let text = f.explanation.as_str();
+        assert!(text.contains("not known"), "{text}");
+        assert!(text.contains("limits of their own"), "{text}");
+        assert_eq!(evidence(&f, "ram"), None);
+        // An unlimited one needs no comparison.
+        let f = memlock_of(soft_hard(Limit::Unlimited, Limit::Unlimited), mlx(), 0);
+        assert!(f.explanation.contains("is unlimited, so"));
+    }
+
+    #[test]
+    fn the_evidence_gives_the_limits_the_ram_and_the_devices() {
+        let devices = vec![
+            device("mlx5_0", &["InfiniBand"]),
+            device("mlx5_1", &["Ethernet"]),
+            device("rxe0", &["Ethernet", "InfiniBand"]),
+        ];
+        let f = memlock_of(
+            soft_hard(Limit::Bytes(64 * 1024), Limit::Unlimited),
+            devices,
+            32 * GIB,
+        );
+        assert_eq!(evidence(&f, "rdma_devices"), Some("mlx5_0, mlx5_1, rxe0"));
+        assert_eq!(
+            evidence(&f, "rdma_link_layers"),
+            Some("Ethernet, InfiniBand")
+        );
+        assert_eq!(evidence(&f, "memlock_soft"), Some("64.0 KiB"));
+        assert_eq!(evidence(&f, "memlock_hard"), Some("unlimited"));
+        assert_eq!(evidence(&f, "ram"), Some("32.0 GiB"));
+        let text = f.explanation.as_str();
+        assert!(
+            text.contains("3 RDMA devices (mlx5_0, mlx5_1, rxe0) found"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn link_layers_are_left_out_when_no_port_gave_one() {
+        let f = memlock_of(
+            soft_hard(Limit::Unlimited, Limit::Unlimited),
+            vec![device("mlx5_0", &[])],
+            GIB,
+        );
+        assert_eq!(evidence(&f, "rdma_link_layers"), None);
+        assert_eq!(evidence(&f, "rdma_devices"), Some("mlx5_0"));
+    }
+
+    #[test]
+    fn many_devices_are_listed_up_to_a_limit_and_then_counted() {
+        let many = |n: usize| -> Vec<RdmaDevice> {
+            (0..n).map(|i| device(&format!("d{i}"), &[])).collect()
+        };
+        assert_eq!(names_text(&many(1)), "d0");
+        assert_eq!(
+            names_text(&many(MAX_NAMES)),
+            "d0, d1, d2, d3, d4, d5, d6, d7"
+        );
+        assert_eq!(
+            names_text(&many(MAX_NAMES + 1)),
+            "d0, d1, d2, d3, d4, d5, d6, d7, and 1 more"
+        );
+        assert_eq!(
+            names_text(&many(MAX_NAMES + 5)),
+            "d0, d1, d2, d3, d4, d5, d6, d7, and 5 more"
+        );
+    }
+
+    #[test]
+    fn a_limit_is_written_as_unlimited_or_as_a_size() {
+        assert_eq!(limit_text(Limit::Unlimited), "unlimited");
+        assert_eq!(limit_text(Limit::Bytes(0)), "0 B");
+        assert_eq!(limit_text(Limit::Bytes(65_536)), "64.0 KiB");
+        assert_eq!(limit_text(Limit::Bytes(8 * MIB)), "8.0 MiB");
     }
 }

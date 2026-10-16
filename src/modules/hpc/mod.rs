@@ -4,9 +4,10 @@
 //!
 //! Unlike the other modules, this one is not part of every audit: it is
 //! added by the profile (see [`crate::profile::Profile::modules`]), because
-//! what it looks at -- whether the CPUs are left free to run at full speed --
-//! is a question for a machine whose job is computing, and a finding "your
-//! desktop is not set to `performance`" would be noise. A profile can only
+//! what it looks at -- whether the CPUs are left free to run at full speed,
+//! whether the memory an RDMA network needs can be locked -- is a question
+//! for a machine whose job is computing, and a finding "your desktop is not
+//! set to `performance`" would be noise. A profile can only
 //! lower the severity of an existing finding, so a check that is wrong on one
 //! kind of machine and right on another has to live in a module of its own.
 

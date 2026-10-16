@@ -207,11 +207,48 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     autres ont donné un test de plus (le pire des types de CPU décide), un cas de plus
     (`cpu+1`, qu'un simple `parse` accepterait) et une condition redondante supprimée.
 
+- **`--profile hpc` : nouvelle vérification `HPC002`, la limite de mémoire verrouillée
+  (RDMA).** Le module `hpc` en a maintenant deux : le gouverneur (`HPC001`) puis cette
+  limite. Le RDMA (InfiniBand, RoCE) transfère la mémoire sans le CPU : le noyau la garde
+  verrouillée en RAM et la compte dans `RLIMIT_MEMLOCK`, quelques MiB par défaut. Une tâche
+  MPI qui en enregistre davantage échoue à enregistrer la mémoire, puis s'arrête ou passe
+  sur un transport plus lent.
+  - **Ce qu'il lit** : les périphériques RDMA (`/sys/class/infiniband`, avec la couche de
+    liaison de chaque port : InfiniBand, ou Ethernet pour RoCE) et la ligne
+    `Max locked memory` de `/proc/self/limits` (limites souple et dure), comparées à la RAM
+    de la machine. La ligne n'est lue que si l'unité est `bytes` et que chaque limite est un
+    nombre ou `unlimited`.
+  - **Ce qu'il dit** : sans périphérique RDMA, une Info qui dit que la limite n'a pas
+    d'importance ici (une carte dont le pilote n'est pas chargé n'apparaît pas dans la liste).
+    Avec des périphériques : limite souple illimitée ou au moins égale à la RAM = Info ;
+    plus basse = Avertissement, confiance 75 %, qui dit si la limite dure laisse les
+    utilisateurs la relever eux-mêmes ou s'il faut être root, avec les commandes
+    (`ulimit -l`, un fichier `limits.d` pour les connexions, `DefaultLimitMEMLOCK` pour les
+    services systemd, puis les commandes de vérification). Limite illisible, ou finie avec une
+    RAM inconnue : Info qui le dit, sans juger.
+  - **Pourquoi seulement 75 %** : la limite lue est celle de la session qui a lancé
+    l'audit. Les tâches lancées par un ordonnanceur ou par un service systemd ont les leurs ;
+    le constat le dit dans chaque cas.
+  - **Pas encore vu sur du matériel RDMA** : ni le conteneur de développement ni la machine
+    de test n'en ont. La lecture est vérifiée sur de faux arbres sysfs (plusieurs
+    périphériques, plusieurs ports, ordre quelconque du système de fichiers, noms hostiles) ;
+    le chemin `/sys/class/infiniband` est celui de rdma-core. Le cas « aucun périphérique »
+    est vu avec le vrai binaire.
+  - Tests : 25 nouveaux (23 unitaires pour la lecture et le jugement, aux frontières
+    comprises : limite égale à la RAM, limite dure égale à la RAM ; plus 2 de bout en bout,
+    le test existant étant remplacé par trois, un par constat et un pour l'ordre). Ils
+    échouent quand on casse le code : 64 casseurs essayés, 63 détectés ; le dernier est
+    équivalent (retirer le `?` sur la colonne de la limite dure donne le même résultat, car
+    l'unité manquante échoue de toute façon). Un test trop lâche (la commande `printf` de
+    systemd sans saut de ligne final passait) a été resserré.
+
 ### Modifié
 
 - Le message sur l'absence de pilote cite maintenant `amdgpu`, `i915` ou `xe`.
 - La description du profil `hpc` (en-tête des rapports, page de manuel) dit maintenant
   aussi qu'il ajoute le module `hpc`.
+  Elle dit aussi, ainsi que la phrase du module dans la page de manuel, qu'il vérifie la
+  limite de mémoire verrouillée.
 - Le texte sur le lien PCIe d'une carte ne dit plus « worth checking the physical
   slot/cable » : il décrit ce qui est mesuré (`PCIe: 8.0 GT/s PCIe x8 (this card
   supports up to 8.0 GT/s PCIe x16).`), puis explique la largeur et la vitesse

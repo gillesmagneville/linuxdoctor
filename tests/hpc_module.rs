@@ -120,9 +120,16 @@ fn a_full_audit_under_the_profile_ends_with_the_hpc_module() {
     assert_eq!(report["profile"], "hpc");
 }
 
-#[test]
-fn the_module_reports_one_finding_that_says_how_many_cpus_it_looked_at() {
-    let sandbox = Sandbox::new("finding");
+/// The evidence value of a finding; evidence is a list of [key, value] pairs.
+fn evidence(finding: &serde_json::Value, key: &str) -> Option<String> {
+    finding["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|pair| (pair[0] == key).then(|| pair[1].as_str().expect("text").to_string()))
+}
+
+fn hpc_findings(sandbox: &Sandbox) -> Vec<serde_json::Value> {
     let o = sandbox.run(&[
         "audit",
         "--modules",
@@ -136,20 +143,25 @@ fn the_module_reports_one_finding_that_says_how_many_cpus_it_looked_at() {
     ]);
     let report = json(&o);
     assert_eq!(module_ids(&report), ["hpc"]);
-    let findings = report["results"][0]["findings"].as_array().unwrap();
-    assert_eq!(findings.len(), 1, "{findings:?}");
+    report["results"][0]["findings"].as_array().unwrap().clone()
+}
+
+#[test]
+fn the_module_reports_two_findings_in_order_the_governor_then_locked_memory() {
+    let sandbox = Sandbox::new("findings");
+    let findings = hpc_findings(&sandbox);
+    let ids: Vec<&str> = findings.iter().map(|f| f["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["HPC001", "HPC002"], "{findings:?}");
+}
+
+#[test]
+fn the_governor_finding_says_how_many_cpus_it_looked_at() {
+    let sandbox = Sandbox::new("governor");
+    let findings = hpc_findings(&sandbox);
     let finding = &findings[0];
     assert_eq!(finding["id"], "HPC001");
     assert_eq!(finding["title"], "CPU Frequency Governor");
-    // Evidence is a list of [key, value] pairs.
-    let evidence = |key: &str| -> Option<String> {
-        finding["evidence"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find_map(|pair| (pair[0] == key).then(|| pair[1].as_str().expect("text").to_string()))
-    };
-    let cpus: usize = evidence("cpus_with_cpufreq")
+    let cpus: usize = evidence(finding, "cpus_with_cpufreq")
         .expect("always reported")
         .parse()
         .expect("a number");
@@ -159,10 +171,35 @@ fn the_module_reports_one_finding_that_says_how_many_cpus_it_looked_at() {
             .as_str()
             .unwrap()
             .contains("No CPU frequency scaling interface"));
-        assert_eq!(evidence("governor"), None);
+        assert_eq!(evidence(finding, "governor"), None);
     } else {
-        assert!(evidence("governor").is_some(), "{finding}");
+        assert!(evidence(finding, "governor").is_some(), "{finding}");
     }
+}
+
+#[test]
+fn the_locked_memory_finding_says_what_it_found_whatever_the_host() {
+    let sandbox = Sandbox::new("memlock");
+    let findings = hpc_findings(&sandbox);
+    let finding = &findings[1];
+    assert_eq!(finding["id"], "HPC002");
+    assert_eq!(finding["title"], "Locked Memory Limit");
+    let explanation = finding["explanation"].as_str().unwrap();
+    // The host decides whether it has RDMA devices; the finding must say
+    // which, and judge only when there are some.
+    let devices = evidence(finding, "rdma_devices").expect("always reported");
+    if devices == "none" {
+        assert_eq!(finding["severity"], "info", "{finding}");
+        assert!(explanation.contains("No RDMA device"), "{explanation}");
+        assert!(finding["recommendation"].is_null(), "{finding}");
+    } else {
+        assert!(explanation.contains("RDMA device"), "{explanation}");
+        assert!(explanation.contains(&devices), "{explanation}");
+    }
+    // This test process has a limit; it is read in bytes or as unlimited.
+    let soft = evidence(finding, "memlock_soft");
+    assert!(soft.is_some(), "{finding}");
+    assert!(evidence(finding, "memlock_hard").is_some(), "{finding}");
 }
 
 #[test]

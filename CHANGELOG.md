@@ -140,12 +140,18 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
   réservée à `vfio-pci`, le texte dit que la vitesse de repos ne dit rien de la
   carte, puisqu'aucun pilote de cette machine ne la gère. Aucune sévérité ne
   change.
-  - **Limite connue** : la largeur du port n'a pas pu être vérifiée sur du
-    matériel avec un port bifurqué. Si un port annonce sa largeur d'origine (x16)
-    alors que la carte mère la partage, le texte tombe dans le cas « le port
-    pourrait porter plus », dont la formulation reste prudente et cite les lignes
-    partagées en premier.
-  - Tests : 25 nouveaux (faux arbre sysfs avec de vrais liens symboliques pour
+  - **Vérifié sur une vraie machine** (deux cartes derrière deux ports x8, un
+    processeur dont les 16 lignes sont réparties en x8 + x8) : les deux ports
+    annoncent bien x8, et le rapport dit « The port it is plugged into allows at
+    most x8 ». La largeur du port n'est lue que pour un périphérique qui a un
+    lien PCIe à lui : la puce vidéo d'un contrôleur de gestion, derrière un pont
+    PCIe-vers-PCI, n'en a pas, et la largeur de ce pont (x1) est celle du lien du
+    pont, pas de la puce.
+  - **Limite connue** : un port bifurqué qui annoncerait sa largeur d'origine
+    (x16) alors que la carte mère la partage n'a pas été vu. Le texte tomberait
+    dans le cas « le port pourrait porter plus », dont la formulation reste
+    prudente et cite les lignes partagées en premier.
+  - Tests : 27 nouveaux (faux arbre sysfs avec de vrais liens symboliques pour
     le port amont, chaque cas de largeur, les cartes qui se partagent des lignes,
     la vitesse seule, la carte réservée à une machine virtuelle, les puces
     nommées, et le cas complet de la machine qui a motivé tout cela). Ils

@@ -188,6 +188,28 @@ fn main() {
     app.page_next();
     terminal.draw(|f| draw(f, &mut app)).unwrap();
     print_buffer(&terminal);
+
+    println!("\n--- f: warnings and above only. Counts appear next to each module, the ones left with nothing are greyed, the bottom bar says the view is filtered ---\n");
+    app.back_out();
+    app.cycle_severity();
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    print_buffer(&terminal);
+
+    println!(
+        "\n--- /sdb: typing a search (the screen jumps to the first module that matches) ---\n"
+    );
+    app.clear_filter();
+    app.start_search();
+    for c in "sdb".chars() {
+        app.search_type(c);
+    }
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    print_buffer(&terminal);
+
+    println!("\n--- Enter keeps the search as a filter; Esc would clear it ---\n");
+    app.finish_search();
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    print_buffer(&terminal);
 }
 
 fn print_buffer(terminal: &Terminal<TestBackend>) {

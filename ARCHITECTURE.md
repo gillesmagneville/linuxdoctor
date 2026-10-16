@@ -120,6 +120,7 @@ linuxdoctor/
 │       ├── markdown.rs       # Markdown report — see "Markdown Renderer" below
 │       ├── html.rs           # self-contained HTML report — see "HTML Renderer" below
 │       ├── tui.rs            # interactive UI (ratatui) — see "Output Engine"
+│       ├── tui_filter.rs     # what the TUI shows: minimum severity + search text
 │       └── live_stats.rs     # TUI header gauges (CPU/mem/disk %) — see "Output Engine"
 │
 └── tests/
@@ -818,6 +819,36 @@ two — no diagnostic logic lives here either. Its extra behavior:
   instances, a module's findings are shown flat, exactly as Terminal/JSON always do.
 - **Version.** The first header line starts with `LinuxDoctor <version>`, and so does the
   loading screen.
+- **Filter and search** (`f`, `/`; `output::tui_filter::ViewFilter`). A *view* over the
+  report, never a change to it: `TuiApp` keeps the `Report` whole and a `ViewFilter`
+  beside it, and every place that draws findings asks the filter first
+  (`visible_findings`). Two narrowings combined with "and": a minimum severity (the four
+  levels of `--min-severity`) and a text matched without regard to case against a
+  finding's id, title, explanation, recommendation, instance and evidence — the text as
+  typed, not split into words. Rules worth knowing:
+  - *The report is untouched.* A module's ✓/⚠/✗ is still computed from all its findings,
+    and the exit code of `linuxdoctor tui` from all of them: hiding a finding on screen
+    cannot hide it from the exit status. The bottom bar always says what the screen is
+    (`All N findings shown`, `Filter: … · M of N findings`, or the text being typed), and
+    each filtered page starts with `Filter: … — x of y findings of this module shown`.
+  - *Sub-items follow the filter.* A module's instances are those of the findings that pass
+    it (`instances_of(visible_findings(..))`), so a filter that leaves one instance shows
+    it flat — the same "fewer than 2 instances" rule as before, not a special case. A
+    filter change leaves any open submenu.
+  - *The selection only moves when the filter changes.* `settle_selection` runs after a
+    filter change or a refresh and, if the selected module has nothing to show, selects
+    the first that has; with no match anywhere the selection stays and the page says
+    "Nothing in this module matches the filter". `PgUp`/`PgDn` are not narrowed, so a
+    failed or skipped module (which has no findings to match) stays reachable.
+  - *Typing mode.* After `/`, letters are text — `q`, `r`, `f`, `j` and `k` included — and
+    only keys that cannot be text act: Enter keeps the text, Esc forgets it (the severity
+    stays), Backspace edits, the arrows and `PgUp`/`PgDn` still work. Control/Alt
+    combinations are ignored. The text is limited to 40 characters and refuses control
+    characters, because it is drawn back; it is typed, not read from the audited machine,
+    so the hostile-text cleaning does not apply to it. Outside typing mode, Esc undoes one
+    level at a time: submenu, then filter, then quit.
+  - *Testable without a terminal.* Key handling is `handle_key(app, key) -> KeyAction`
+    (`Nothing`, `Quit`, `Rescan`), separate from the event loop.
 - **Live header.** A second header line shows CPU/memory/root-disk usage,
   refreshed roughly once a second for as long as the TUI stays open, via
   `output::live_stats` — cheap `/proc` reads plus one `df` call, deliberately not

@@ -11,6 +11,28 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **`diff` prévient quand les deux rapports ne viennent pas de la même version de
+  LinuxDoctor.** Les contrôles évoluent d'une version à l'autre : un constat qui
+  apparaît ou disparaît peut venir du programme, pas de la machine. L'avertissement
+  est dit avant les changements, comme celui des machines différentes, dans les trois
+  formats (`> ⚠` en Markdown, `caveats` en JSON avec `"kind": "different_versions"`
+  et les deux versions).
+  - Il se déclenche si les deux versions enregistrées diffèrent, **et aussi** si un
+    seul des deux rapports en enregistre une : toute version qui l'enregistre est plus
+    récente que toute version qui ne le fait pas, donc les deux diffèrent
+    forcément (l'autre est alors « not recorded »).
+  - Il ne dit rien quand les versions sont égales, ni quand aucun des deux rapports
+    n'en enregistre : il n'y a rien à conclure, et l'avertissement s'afficherait à
+    chaque comparaison de rapports anciens.
+  - Il n'ajoute ni ne masque aucun changement et ne modifie pas le code de sortie.
+    Les versions viennent de fichiers : elles sont nettoyées dans le texte et
+    échappées en Markdown.
+  - Tests : unitaires (détection, rendu des trois formats, texte hostile) et
+    `tests/version_shown.rs` avec le vrai binaire, y compris le code de sortie
+    identique avec ou sans avertissement. Ils échouent quand on supprime
+    l'avertissement, qu'on l'étend à deux rapports sans version ou qu'on retire le
+    nettoyage.
+
 - **La version de LinuxDoctor s'affiche en tête de chaque sortie.** Première
   ligne du rapport terminal (`LinuxDoctor 1.8.0 — machine`), première ligne sous
   le titre du rapport Markdown, premier fait de l'en-tête du rapport HTML,
@@ -27,7 +49,8 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     « Compared with LinuxDoctor … » en Markdown, `linuxdoctor_version` en JSON)
     et celle qui a écrit chacun des deux rapports (entre parenthèses en
     terminal, colonne « Written by » en Markdown, `before` / `after` en JSON).
-    Un rapport d'avant la 1.8.0 ne l'enregistre pas : il est présenté comme
+    Un rapport d'une version qui ne l'enregistrait pas (la 1.8.0 et les
+    précédentes) n'en a pas : il est présenté comme
     « LinuxDoctor version not recorded » (`null` en JSON). Cette version vient
     d'un fichier, donc d'un texte non fiable : elle est nettoyée comme le reste
     (terminal) et échappée (Markdown).

@@ -631,8 +631,9 @@ report, the two version keys are the only additions to the report's top level.
 `linuxdoctor_version` (a string, `linuxdoctor::VERSION`) is **not** part of the layout —
 `schema_version` is — but a record of where the findings came from: checks are added and
 thresholds move between versions, so a stored report is only fully understood with the
-version that wrote it. It was added in 1.8.0 without a bump, as the rule allows; reports
-written before it simply lack the key, and `diff` says "version not recorded" for them.
+version that wrote it. It was added without a bump, as the rule allows; reports written
+before it (1.8.0 and earlier) simply lack the key, and `diff` says "version not recorded"
+for them.
 
 When `--min-severity` was used, the document also carries (right after the two version
 keys) a `filter` object, absent otherwise:
@@ -725,8 +726,17 @@ Caveats are stated before the changes: the two reports describe different machin
 name or architecture differ), the second looks older than the first (a boot time that went
 backwards, so the arguments are probably reversed), or either was written with
 `--min-severity` (so nothing below the stricter floor exists on either side, and the
-comparison says it only compared findings at or above it). Changed machine facts (kernel,
-distribution, memory, CPUs, a reboot) are listed under "Machine changes".
+comparison says it only compared findings at or above it), or they were not written by the
+same version of LinuxDoctor. That last one matters because checks are added and thresholds
+move between versions: a finding that appears or disappears may come from the program, not
+from the machine. Two recorded versions that differ raise it; so does one recorded version
+next to a report that records none (every version that records the field is newer than every
+one that does not, so the two certainly differ); two reports that both record none say
+nothing, since there is nothing to conclude — a warning there would only be noise on every
+comparison of old reports. A caveat never adds or hides a change and never moves the exit
+status (`Caveat::DifferentVersions`; the versions come from files and are cleaned like the
+host names). Changed machine facts (kernel, distribution, memory, CPUs, a reboot) are listed
+under "Machine changes".
 
 ### Exit status and options
 
@@ -763,9 +773,10 @@ A comparison involves three: the version that made it (the title of the terminal
 "Compared with LinuxDoctor …" in Markdown, top-level `linuxdoctor_version` in JSON) and
 the versions that wrote the two reports (in parentheses after each report in the terminal
 text, a "Written by" column in Markdown, `before.linuxdoctor_version` /
-`after.linuxdoctor_version` in JSON — `null` for a report from before 1.8.0, shown as
-"LinuxDoctor version not recorded"). The versions of the reports come from files and are
-untrusted text like the rest: cleaned for the terminal, escaped for Markdown.
+`after.linuxdoctor_version` in JSON — `null` for a report from a version that did not
+record it, shown as "LinuxDoctor version not recorded"). The versions of the reports come
+from files and are untrusted text like the rest: cleaned for the terminal, escaped for
+Markdown. When they differ, the comparison also says so as a caveat (below).
 
 ### JSON output
 
@@ -801,7 +812,10 @@ it):
 }
 ```
 
-`kind` is `new`, `resolved`, `worse` or `better`; `section` is where the change is listed
+`caveats[].kind` is `different_machines`, `reports_look_reversed`, `filtered` or
+`different_versions` (`before` / `after` are the two versions, `null` for a report that does
+not record one); a reader should ignore a caveat kind it does not know, as it ignores a key.
+`kind` of a change is `new`, `resolved`, `worse` or `better`; `section` is where the change is listed
 (`worse`, `better`, `other`); `before` / `after` are the severities (`null` on the side
 where the finding does not exist); `doubt` (`"before"` or `"after"`) appears on a change that
 incomplete data makes uncertain; `hidden_below` appears with `hidden` when `--min-severity`

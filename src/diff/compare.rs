@@ -173,6 +173,17 @@ pub enum Caveat {
         before: Option<Severity>,
         after: Option<Severity>,
     },
+    /// The two reports were not written by the same version of LinuxDoctor.
+    /// Checks are added and thresholds move between versions, so a finding
+    /// that appeared or disappeared may come from the program, not from the
+    /// machine. `None` is a report that does not record its version (an
+    /// older one): next to a recorded version that is a different version
+    /// for certain, since every version after the change records it. Two
+    /// reports that both lack it say nothing, and raise no caveat.
+    DifferentVersions {
+        before: Option<String>,
+        after: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -339,6 +350,15 @@ pub fn compare(before: &ReportFile, after: &ReportFile) -> Comparison {
             after: after.filter.map(|f| f.min_severity),
         });
     }
+    if written_by_different_versions(
+        before.linuxdoctor_version.as_deref(),
+        after.linuxdoctor_version.as_deref(),
+    ) {
+        caveats.push(Caveat::DifferentVersions {
+            before: before.linuxdoctor_version.clone(),
+            after: after.linuxdoctor_version.clone(),
+        });
+    }
 
     let mut comparison = Comparison {
         before: before_facts,
@@ -373,6 +393,17 @@ pub fn compare(before: &ReportFile, after: &ReportFile) -> Comparison {
         compare_module(&mut comparison, id, b, a);
     }
     comparison
+}
+
+/// Whether two reports certainly come from different versions of the
+/// program. A report without a version predates the field, so next to one
+/// that has it the versions differ; two without cannot be told apart.
+fn written_by_different_versions(before: Option<&str>, after: Option<&str>) -> bool {
+    match (before, after) {
+        (Some(b), Some(a)) => b != a,
+        (None, None) => false,
+        _ => true,
+    }
 }
 
 fn by_id(modules: &[ModuleFile]) -> HashMap<&str, &ModuleFile> {
@@ -731,6 +762,12 @@ pub(crate) mod testkit {
 
     pub fn report(modules: Vec<Value>) -> ReportFile {
         report_on("web01", 1_000_000, modules)
+    }
+
+    /// The report as a given version of LinuxDoctor wrote it.
+    pub fn by_version(mut report: ReportFile, version: &str) -> ReportFile {
+        report.linuxdoctor_version = Some(version.to_string());
+        report
     }
 
     pub fn filtered(mut report: ReportFile, min: crate::models::Severity) -> ReportFile {
@@ -1107,6 +1144,122 @@ mod tests {
             &report_on("web01", 1_000_000, vec![]),
         );
         assert!(c.caveats.contains(&Caveat::ReportsLookReversed));
+    }
+
+    // ----- the versions --------------------------------------------------------------
+
+    fn version_caveat(c: &Comparison) -> Option<&Caveat> {
+        c.caveats
+            .iter()
+            .find(|c| matches!(c, Caveat::DifferentVersions { .. }))
+    }
+
+    #[test]
+    fn reports_from_two_versions_are_flagged() {
+        let c = compare(
+            &by_version(report(vec![]), "1.8.1"),
+            &by_version(report(vec![]), "1.9.0"),
+        );
+        assert_eq!(
+            version_caveat(&c),
+            Some(&Caveat::DifferentVersions {
+                before: Some("1.8.1".into()),
+                after: Some("1.9.0".into())
+            })
+        );
+    }
+
+    #[test]
+    fn two_reports_from_the_same_version_raise_nothing() {
+        let c = compare(
+            &by_version(report(vec![]), "1.9.0"),
+            &by_version(report(vec![]), "1.9.0"),
+        );
+        assert!(c.caveats.is_empty(), "{:?}", c.caveats);
+    }
+
+    #[test]
+    fn a_report_with_a_version_next_to_one_without_is_a_different_version() {
+        // Every version that records the field is newer than every one that
+        // does not, so one side having it is enough to know they differ.
+        let old = report(vec![]);
+        let new = by_version(report(vec![]), "1.9.0");
+        let c = compare(&old, &new);
+        assert_eq!(
+            version_caveat(&c),
+            Some(&Caveat::DifferentVersions {
+                before: None,
+                after: Some("1.9.0".into())
+            })
+        );
+        let c = compare(&new, &old);
+        assert_eq!(
+            version_caveat(&c),
+            Some(&Caveat::DifferentVersions {
+                before: Some("1.9.0".into()),
+                after: None
+            })
+        );
+    }
+
+    #[test]
+    fn two_reports_that_both_lack_a_version_say_nothing_about_it() {
+        // They may or may not come from the same version: no information,
+        // so no warning (it would appear on every comparison of old reports).
+        let c = compare(&report(vec![]), &report(vec![]));
+        assert!(version_caveat(&c).is_none());
+        assert!(c.caveats.is_empty());
+    }
+
+    #[test]
+    fn the_version_caveat_does_not_change_what_was_compared() {
+        // A caveat tells the reader how far to trust the comparison; it never
+        // adds or hides a change, and so never moves the exit status.
+        let b = || {
+            report(vec![module(
+                "m",
+                &[("A", None, "warning"), ("B", None, "info")],
+            )])
+        };
+        let a = || {
+            report(vec![module(
+                "m",
+                &[("A", None, "error"), ("C", None, "warning")],
+            )])
+        };
+        let plain = compare(&b(), &a());
+        let versioned = compare(&by_version(b(), "1.8.1"), &by_version(a(), "1.9.0"));
+        assert!(version_caveat(&versioned).is_some());
+        assert_eq!(changes_of(&plain), changes_of(&versioned));
+        assert_eq!(plain.totals(), versioned.totals());
+        assert_eq!(
+            plain.regressions(crate::models::Severity::Warning).len(),
+            versioned
+                .regressions(crate::models::Severity::Warning)
+                .len()
+        );
+    }
+
+    #[test]
+    fn the_version_caveat_comes_after_the_others_and_is_one_of_several() {
+        let c = compare(
+            &filtered(
+                by_version(report_on("web01", 1_000_000, vec![]), "1.8.1"),
+                crate::models::Severity::Warning,
+            ),
+            &by_version(report_on("db02", 1_000_000, vec![]), "1.9.0"),
+        );
+        let kinds: Vec<&str> = c
+            .caveats
+            .iter()
+            .map(|c| match c {
+                Caveat::DifferentMachines { .. } => "machines",
+                Caveat::ReportsLookReversed => "reversed",
+                Caveat::Filtered { .. } => "filtered",
+                Caveat::DifferentVersions { .. } => "versions",
+            })
+            .collect();
+        assert_eq!(kinds, ["machines", "filtered", "versions"]);
     }
 
     // ----- several findings under one key ---------------------------------------------

@@ -371,8 +371,8 @@ of the HTML header — and so do the interactive UI (header and loading screen) 
 comparison made by `diff`. The JSON report records it as `linuxdoctor_version`, right
 after `schema_version`: checks are added and thresholds move between versions, so a
 saved report is only fully understood with the version that wrote it. `diff` shows the
-version of each report it compares (reports written before 1.8.0 do not record it, and
-are shown as "version not recorded").
+version of each report it compares (reports from versions that did not record it are shown
+as "version not recorded"), and warns when the two were not written by the same version.
 
 ```bash
 linuxdoctor audit --output html > "report-$(hostname)-$(date +%F).html"
@@ -451,8 +451,10 @@ Two things the comparison refuses to do, because they would make a bad result lo
   counted as an improvement. A module whose tools were cut short is flagged `?` and listed
   under **Incomplete data**.
 - **It says when the comparison may not mean much**: the reports come from different
-  machines, they look reversed (the second was taken at an earlier boot), or one was
-  written with `--min-severity`.
+  machines, they look reversed (the second was taken at an earlier boot), one was
+  written with `--min-severity`, or they were written by different versions of LinuxDoctor
+  (checks are added between versions, so a finding can appear or disappear because the
+  program changed, not the machine).
 
 `--min-severity` and `--fail-on` work as for `audit`: the first only hides changes (and
 says how many), the second decides the exit status, judged on the whole comparison.
@@ -604,7 +606,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 992 lib unit tests + 76 CLI unit tests + 155 integration tests
+cargo test               # 1004 lib unit tests + 76 CLI unit tests + 160 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

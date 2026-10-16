@@ -33,7 +33,7 @@ pub const COMPARISON_SCHEMA_VERSION: u32 = 1;
 pub struct Labels<'a> {
     pub before: &'a str,
     pub after: &'a str,
-    /// `None` for a report written before 1.8.0, which does not record it.
+    /// `None` for a report written by a version that did not record it.
     pub before_version: Option<&'a str>,
     pub after_version: Option<&'a str>,
 }
@@ -168,6 +168,20 @@ fn caveat_text(caveat: &Caveat) -> String {
                 "{which} written with --min-severity: only findings at {} or above \
                  were compared.",
                 word(*floor)
+            )
+        }
+        Caveat::DifferentVersions { before, after } => {
+            // From files: untrusted text, like the host names above.
+            let name = |version: &Option<String>| match version {
+                Some(version) => clean(version, MAX_NAME),
+                None => "not recorded".to_string(),
+            };
+            format!(
+                "These reports were written by different versions of LinuxDoctor ({} and {}): \
+                 checks are added and thresholds change between versions, so a finding that \
+                 appeared or disappeared may come from the program, not from the machine.",
+                name(before),
+                name(after)
             )
         }
     }
@@ -536,7 +550,7 @@ pub fn markdown(c: &Comparison, labels: &Labels) -> String {
 struct ReportRef<'a> {
     report: &'a str,
     /// The version of LinuxDoctor that wrote the report; `null` when it
-    /// does not say (reports from before 1.8.0).
+    /// does not say (written by a version that did not record it).
     linuxdoctor_version: Option<&'a str>,
     machine: &'a MachineFacts,
 }
@@ -839,6 +853,105 @@ mod tests {
         let caveat = text.find("different machines").expect("caveat shown");
         let summary = text.find("Summary").expect("summary shown");
         assert!(caveat < summary, "{text}");
+    }
+
+    // ----- the version caveat -----------------------------------------------------
+
+    fn two_versions() -> Comparison {
+        compare(
+            &by_version(
+                report(vec![module("m", &[("A", None, "warning")])]),
+                "1.8.1",
+            ),
+            &by_version(report(vec![module("m", &[("A", None, "error")])]), "1.9.0"),
+        )
+    }
+
+    #[test]
+    fn the_terminal_says_the_reports_come_from_different_versions_before_the_changes() {
+        let text = strip_ansi(&terminal(&two_versions(), &LABELS));
+        let caveat = text
+            .find("different versions of LinuxDoctor (1.8.1 and 1.9.0)")
+            .expect("caveat shown");
+        assert!(text.contains("not from the machine"), "{text}");
+        assert!(caveat < text.find("Summary").unwrap(), "{text}");
+    }
+
+    #[test]
+    fn a_report_without_a_version_is_named_as_such_in_the_caveat() {
+        let c = compare(&report(vec![]), &by_version(report(vec![]), "1.9.0"));
+        let text = strip_ansi(&terminal(&c, &LABELS));
+        assert!(
+            text.contains("different versions of LinuxDoctor (not recorded and 1.9.0)"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_same_version_gets_no_caveat_in_any_format() {
+        let c = compare(
+            &by_version(report(vec![]), "1.9.0"),
+            &by_version(report(vec![]), "1.9.0"),
+        );
+        assert!(!strip_ansi(&terminal(&c, &LABELS)).contains("different versions"));
+        assert!(!markdown(&c, &LABELS).contains("different versions"));
+        let v: serde_json::Value = serde_json::from_str(&json(&c, &LABELS).unwrap()).unwrap();
+        assert_eq!(v["caveats"], j!([]));
+    }
+
+    #[test]
+    fn markdown_quotes_the_version_caveat_like_the_others() {
+        let md = markdown(&two_versions(), &LABELS);
+        assert!(
+            md.contains("> ⚠ These reports were written by different versions of LinuxDoctor (1.8.1 and 1.9.0)"),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn json_records_the_version_caveat_with_both_versions() {
+        let v: serde_json::Value =
+            serde_json::from_str(&json(&two_versions(), &LABELS).unwrap()).unwrap();
+        assert_eq!(
+            v["caveats"],
+            j!([{"kind": "different_versions", "before": "1.8.1", "after": "1.9.0"}])
+        );
+        let c = compare(&report(vec![]), &by_version(report(vec![]), "1.9.0"));
+        let v: serde_json::Value = serde_json::from_str(&json(&c, &LABELS).unwrap()).unwrap();
+        assert_eq!(
+            v["caveats"][0],
+            j!({"kind": "different_versions", "before": null, "after": "1.9.0"})
+        );
+    }
+
+    #[test]
+    fn a_version_read_from_a_file_cannot_act_on_the_terminal_through_the_caveat() {
+        let evil = "1.\u{1b}[2J\u{1b}]0;pwned\u{7}\u{202e}0";
+        let c = compare(
+            &by_version(report(vec![]), evil),
+            &by_version(report(vec![]), "<b>2|0</b>"),
+        );
+        let plain = strip_ansi(&terminal(&c, &LABELS));
+        assert_no_control_characters(&plain);
+        assert!(
+            plain.contains("different versions of LinuxDoctor (1.?[2J?]0;pwned??0 and"),
+            "{plain}"
+        );
+        let md = markdown(&c, &LABELS);
+        assert_no_control_characters(&md);
+        // Every `<` is escaped, so no tag can open.
+        let bare = md
+            .char_indices()
+            .any(|(i, c)| c == '<' && !md[..i].ends_with('\\'));
+        assert!(!bare, "markup must be escaped: {md}");
+        assert!(md.contains("\\<b>2|0\\</b>"), "{md}");
+        // A very long version is cut, not printed whole.
+        let long = "9".repeat(5_000);
+        let c = compare(
+            &by_version(report(vec![]), &long),
+            &by_version(report(vec![]), "1.9.0"),
+        );
+        assert!(terminal(&c, &LABELS).len() < 3_000);
     }
 
     // ----- hostile files ----------------------------------------------------------

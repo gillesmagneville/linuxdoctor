@@ -9,6 +9,12 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.7.0] - 2026-10-16
+
+La comparaison de deux rapports (`linuxdoctor diff`) et un correctif de
+sécurité : le texte choisi par la machine auditée ne peut plus agir sur votre
+terminal. Le format du rapport JSON ne change pas (`schema_version` reste 1).
+
 ### Sécurité
 
 - **Le texte choisi par la machine auditée ne peut plus agir sur votre

@@ -57,6 +57,7 @@ linuxdoctor/
 ├── src/
 │   ├── main.rs
 │   ├── cli.rs                 # clap definition (audit / tui / diff / completions / man)
+│   ├── config.rs              # the optional config.toml — see "Configuration"
 │   ├── manpage.rs             # `linuxdoctor man`: the page, generated — see
 │   │                          # "Manual Page and Shell Completions"
 │   │
@@ -198,6 +199,10 @@ audit → **decide pass/fail on the whole report** → apply the display filter 
 
 `diff <BEFORE> <AFTER>` takes the same `--min-severity` and `--fail-on`, and
 `--output terminal|json|markdown`; see "Report Diff".
+
+Every one of these options, and `--timeout`, can also come from the configuration file;
+what is typed wins (see "Configuration"). `--config FILE` and `--no-config`, both global,
+choose which file is read.
 
 ## Core Engine
 
@@ -870,19 +875,58 @@ thread — so a note is always attributed to the module whose command was stoppe
 # Configuration
 
 ```
-~/.config/linuxdoctor/config.toml
+$XDG_CONFIG_HOME/linuxdoctor/config.toml      (~/.config/linuxdoctor/config.toml when unset)
 ```
 
-```toml
-output = "terminal"
-parallel = true
-colors = true
-timeout = 10
-```
+An optional file holding the options a person would otherwise type every time. The
+README ("The configuration file") shows it and `config::EXAMPLE` is the text a test
+keeps identical in the README and the manual page.
 
-The configuration file is not implemented yet. Today the only runtime setting is the
-command-line flag `--timeout <seconds>` (default 10), which overrides the per-command
-time limit described under Collectors.
+| Key | Where | Same as |
+|---|---|---|
+| `timeout` | top level | `--timeout` (every command) |
+| `fail_on`, `min_severity` | top level, or inside `[audit]` / `[diff]` | `--fail-on`, `--min-severity` |
+| `output` | `[audit]` or `[diff]` only | `--output` (each command has its own formats) |
+
+`src/config.rs` lives in the binary crate, next to `cli.rs`, because the words it accepts
+are those of the `clap` enums. The design in five rules:
+
+1. **The command line always wins.** The option structs in `cli.rs` hold `Option`s with no
+   `clap` default, so "typed" can be told from "not typed" (`--output terminal` is a
+   choice; nothing typed is not). `Settings::resolve` then applies, per option: typed >
+   the command's section > the top-level line > the built-in default. A pure function,
+   with the precedence tests next to it.
+2. **One parser per word.** A value is read by `ValueEnum::from_str`, the very function
+   behind the option it stands for, and the list of accepted words in an error comes from
+   `value_variants()`. A new value or alias is available in the file and on the command
+   line at once; a unit test walks every variant to keep it so.
+3. **A mistake is an error, never a guess.** `deny_unknown_fields` everywhere, repeated
+   keys refused by the parser, a missing `--config` file refused, and any of it ends the
+   run with status 2 (`CONFIG_UNUSABLE`, the status of a usage error) before anything is
+   collected. Only a *missing default file* is normal. `--no-config` is the way out.
+4. **`--modules` is not configurable.** A file that quietly narrowed every audit would
+   produce clean-looking reports of checks nobody made — the failure the module-id
+   validation of `--modules` was written to prevent.
+5. **The exit status explains where it came from.** `fail_on` is the one setting whose
+   effect is not visible in the output, so a level chosen by the file carries
+   `Origin::ConfigFile` and the stderr line that explains an exit of 1 quotes it
+   (`fail_on = "warning" in <path>`) instead of `--fail-on warning`. The default gate
+   stays silent, as before.
+
+The file is untrusted text. It is looked at with `stat` before it is opened (a named pipe
+would block `open`), must be a regular file of at most 64 KiB and valid UTF-8, and the
+error message is built by `describe_error` — message, line number, and the offending line
+cut to 100 characters and passed through `core::text::clean` — rather than taken from the
+parser's own rendering, which quotes the whole line. `man` and `completions` do not read
+the file at all; `tui` reads only `timeout`.
+
+`toml` is used with its `std`, `serde` and `parse` features only (reading, no writing),
+pinned for Rust 1.75 (see the README "Toolchain note").
+
+**Rule for tests:** a test that starts the real binary must keep it away from the
+reader's own configuration file — `.env("XDG_CONFIG_HOME", "/nonexistent")` or
+`--no-config`. `tests/config_file.rs` checks every file in `tests/` for it, so a person
+with `fail_on = "never"` in their own file does not see the suite change its mind.
 
 ---
 

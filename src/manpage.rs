@@ -17,6 +17,8 @@ use clap::Command;
 use clap_mangen::roff::{bold, roman, Roff};
 use clap_mangen::Man;
 
+use crate::config;
+
 /// What each module is for, in one line. A module id without an entry is
 /// still listed (by id only) rather than breaking the page; the test
 /// `every_registered_module_has_a_summary` makes sure that never ships.
@@ -182,6 +184,7 @@ pub fn render(root: &Command, module_ids: &[&str]) -> io::Result<Vec<u8>> {
 
     write_modules(&mut page, module_ids)?;
     write_exit_status(&mut page)?;
+    write_files(&mut page)?;
     write_examples(&mut page)?;
     write_closing(&mut page)?;
     Ok(page.bytes)
@@ -294,7 +297,8 @@ fn write_exit_status(page: &mut Page) -> io::Result<()> {
             ),
             (
                 "2",
-                "Command-line usage error, including an unknown module id. diff: a report could \
+                "Command-line usage error, including an unknown module id, or a configuration \
+                 file that cannot be read or understood. diff: a report could \
                  not be read, is not a LinuxDoctor report, or was written by a newer version; \
                  nothing was compared.",
             ),
@@ -314,6 +318,44 @@ fn write_exit_status(page: &mut Page) -> io::Result<()> {
              what audit --fail-on is for. A reader that closes the pipe early (audit | head) is not \
              an error and does not change the status.",
         );
+    })
+}
+
+fn write_files(page: &mut Page) -> io::Result<()> {
+    page.roff(|r| {
+        r.control("SH", ["FILES"]);
+        r.control("TP", []);
+        r.text([bold("$XDG_CONFIG_HOME/linuxdoctor/config.toml")]);
+        r.text([roman(
+            "The options a person types every time, written down once; ~/.config is used when \
+             XDG_CONFIG_HOME is not set to an absolute path. Not having the file is normal. It \
+             is read before every command except man and completions.",
+        )]);
+        paragraph(
+            r,
+            "The file is TOML. Top-level lines apply to both audit and diff: timeout (seconds, \
+             as --timeout), fail_on (as --fail-on) and min_severity (as --min-severity). The \
+             sections [audit] and [diff] hold output (as --output, with the formats of that \
+             command) and may repeat fail_on and min_severity, which then win over the \
+             top-level lines for that command. Words are written as on the command line.",
+        );
+        paragraph(
+            r,
+            "An option typed on the command line always wins over the file. A mistake in the \
+             file (an unknown key, a value the option would not accept, a file that cannot be \
+             read) is an error with status 2 that names the file and the line; nothing is \
+             guessed. Use --config FILE to read another file, or --no-config to ignore the \
+             file for one run. --modules cannot be set in the file: a file that quietly \
+             narrowed every audit would produce clean reports of checks that were never made.",
+        );
+        paragraph(r, "An example, using every key:");
+        r.control("RS", []);
+        r.control("nf", []);
+        for line in config::EXAMPLE.lines() {
+            r.text([roman(line)]);
+        }
+        r.control("fi", []);
+        r.control("RE", []);
     })
 }
 
@@ -359,6 +401,10 @@ fn write_examples(page: &mut Page) -> io::Result<()> {
             (
                 "linuxdoctor audit --timeout 30",
                 "Allow each external tool 30 seconds instead of the default 10.",
+            ),
+            (
+                "linuxdoctor --no-config audit",
+                "Run with the built-in defaults for once, ignoring the configuration file.",
             ),
             (
                 "source <(linuxdoctor completions bash)",
@@ -451,6 +497,7 @@ mod tests {
             ".SH COMMANDS",
             ".SH MODULES",
             ".SH \"EXIT STATUS\"",
+            ".SH FILES",
             ".SH EXAMPLES",
             ".SH \"SEE ALSO\"",
             ".SH \"REPORTING BUGS\"",
@@ -532,6 +579,46 @@ mod tests {
         }
         // The comparison has its own meaning for 1 and 2.
         assert!(exit.contains("diff:"), "{exit}");
+    }
+
+    #[test]
+    fn the_files_section_documents_the_configuration_file() {
+        let page = page();
+        let files = section(&page, ".SH FILES", ".SH EXAMPLES");
+        for word in [
+            "config.toml",
+            "XDG_CONFIG_HOME",
+            "timeout",
+            "fail_on",
+            "min_severity",
+            "[audit]",
+            "[diff]",
+            "\\-\\-no\\-config",
+            "\\-\\-config",
+            "always wins",
+            "status 2",
+        ] {
+            assert!(
+                files.contains(word),
+                "`{word}` missing from FILES:\n{files}"
+            );
+        }
+        // The example is the one the program accepts, line for line: the
+        // page prints config::EXAMPLE, only with roff's escaping.
+        for line in config::EXAMPLE.lines().filter(|l| l.contains(" = ")) {
+            assert!(
+                files.contains(line),
+                "`{line}` missing from FILES:\n{files}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_new_options_are_in_the_options_section() {
+        let page = page();
+        let options = section(&page, ".SH OPTIONS", ".SH COMMANDS");
+        assert!(options.contains("\\-\\-config"), "{options}");
+        assert!(options.contains("\\-\\-no\\-config"), "{options}");
     }
 
     #[test]

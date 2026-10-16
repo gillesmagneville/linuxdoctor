@@ -26,16 +26,17 @@ impl GateResult {
     }
 
     /// One-line explanation for stderr, only when the gate failed.
-    pub fn message(&self) -> Option<String> {
+    /// `setting` says where the threshold was chosen: `--fail-on warning`
+    /// when it was typed, the line of the configuration file when it was
+    /// written there.
+    pub fn message(&self, setting: &str) -> Option<String> {
         let threshold = self.threshold?;
         if self.failing == 0 {
             return None;
         }
         Some(format!(
-            "{} finding(s) at {} or above (--fail-on {}); exiting with status 1",
+            "{} finding(s) at {threshold} or above ({setting}); exiting with status 1",
             self.failing,
-            threshold,
-            threshold.to_string().to_lowercase()
         ))
     }
 }
@@ -120,7 +121,7 @@ mod tests {
         let g = evaluate(&r, None);
         assert!(!g.failed());
         assert_eq!(g.failing, 0);
-        assert_eq!(g.message(), None);
+        assert_eq!(g.message("--fail-on never"), None);
     }
 
     #[test]
@@ -135,18 +136,26 @@ mod tests {
     }
 
     #[test]
-    fn message_names_count_level_and_flag() {
+    fn message_names_count_level_and_where_the_level_was_chosen() {
         let r = report(&[Severity::Warning, Severity::Critical]);
         let g = evaluate(&r, Some(Severity::Warning));
         assert_eq!(
-            g.message().unwrap(),
+            g.message("--fail-on warning").unwrap(),
             "2 finding(s) at WARNING or above (--fail-on warning); exiting with status 1"
+        );
+        assert_eq!(
+            g.message("fail_on = \"warning\" in /etc/c.toml").unwrap(),
+            "2 finding(s) at WARNING or above (fail_on = \"warning\" in /etc/c.toml); \
+             exiting with status 1"
         );
     }
 
     #[test]
     fn no_message_when_the_gate_passes() {
         let r = report(&[Severity::Info]);
-        assert_eq!(evaluate(&r, Some(Severity::Error)).message(), None);
+        assert_eq!(
+            evaluate(&r, Some(Severity::Error)).message("--fail-on error"),
+            None
+        );
     }
 }

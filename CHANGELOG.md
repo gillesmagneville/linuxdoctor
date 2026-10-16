@@ -9,6 +9,65 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **Un fichier de configuration, `~/.config/linuxdoctor/config.toml`** (sous
+  `$XDG_CONFIG_HOME` quand il est défini), pour garder sans les retaper les
+  options qu'on tape à chaque fois : `timeout`, `fail_on`, `min_severity`
+  (valables pour `audit` et `diff`) et `output` (dans les sections `[audit]` et
+  `[diff]`, car les deux commandes n'acceptent pas les mêmes formats). Le
+  fichier est facultatif, comme chacune de ses lignes.
+  - **Ce qu'on tape sur la ligne de commande l'emporte toujours**, option par
+    option : le fichier ne remplit que ce qui n'a pas été tapé. Taper la valeur
+    par défaut compte comme une saisie (`--output terminal` l'emporte sur
+    `output = "markdown"`). Dans le fichier, la ligne d'une section l'emporte
+    sur celle du haut.
+  - **Les mots sont ceux de la ligne de commande**, lus par le même analyseur
+    (`"md"` marche comme `--output md`) : une valeur ou un alias ajouté plus
+    tard existe aux deux endroits à la fois.
+  - **Une erreur est une erreur, jamais une devinette.** Clé inconnue, valeur
+    refusée, fichier illisible, trop gros (plus de 64 Kio), qui n'est pas du
+    texte UTF-8 ou qui n'est pas un fichier ordinaire : le programme s'arrête
+    avec le code 2, avant d'avoir rien exécuté, en disant quel fichier et quelle
+    ligne. Seule l'absence du fichier par défaut est normale.
+  - **`--config FICHIER`** lit un autre fichier (qui doit exister) et
+    **`--no-config`** ignore le fichier pour une exécution, y compris un fichier
+    cassé. `man` et `completions` ne lisent jamais le fichier ; `tui` ne lit que
+    `timeout`.
+  - **Un niveau venant du fichier s'explique**, comme `--fail-on`, quand il
+    donne le code de sortie 1 : `fail_on = "warning" in /home/vous/.config/…`.
+    Le niveau par défaut reste silencieux.
+  - `--modules` n'est volontairement pas configurable : un fichier qui
+    restreindrait discrètement chaque audit donnerait des rapports d'apparence
+    saine sur des vérifications jamais faites.
+  - Le fichier est traité comme un texte non fiable : lu après un `stat` (un
+    tube nommé ferait attendre `open` indéfiniment), borné, et la ligne citée
+    dans une erreur est raccourcie et débarrassée de ses caractères de
+    contrôle (l'affichage d'erreur de la bibliothèque TOML aurait recopié la
+    ligne entière).
+  - La page de manuel a une section FILES avec l'exemple complet ; le README a
+    la section « The configuration file », et un test vérifie que l'exemple du
+    README est exactement celui que le programme accepte.
+  - Nouvelle dépendance : `toml` 0.9.6 (lecture seule : fonctionnalités `std`,
+    `serde` et `parse`), fixée avec ses dépendances pour rester compilable avec
+    Rust 1.75 (voir la « Toolchain note » du README).
+  - Tests : 34 tests unitaires (`src/config.rs`) et 19 tests d'intégration avec
+    le vrai binaire (`tests/config_file.rs`) ; ils échouent quand on inverse la
+    priorité, qu'on oublie de lire le fichier ou qu'on perd l'origine du niveau.
+    Un test vérifie aussi que chaque test qui lance le binaire l'isole du vrai
+    fichier de configuration de celui qui exécute la suite.
+
+### Modifié
+
+- `audit --output` et `diff --output` n'ont plus de valeur par défaut dans
+  `clap` : l'aide n'affiche plus « [default: terminal] » mais le dit dans son
+  texte (« Default: terminal »). Le comportement est le même ; il fallait
+  pouvoir distinguer « non tapé » de « tapé » pour que le fichier ne remplace
+  que ce qui n'a pas été tapé.
+- Le message de `--fail-on` sur la sortie d'erreur indique maintenant d'où vient
+  le niveau (`--fail-on warning` ou la ligne du fichier) ; avec l'option tapée,
+  il est identique à avant.
+
 ### Corrigé
 
 - **`linuxdoctor audit | head` ne plante plus.** Quand le lecteur de la sortie

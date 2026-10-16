@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 mod cli;
+mod config;
 mod manpage;
 
 use clap::Parser;
@@ -9,6 +10,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use cli::{AuditArgs, Cli, Command, DiffArgs, DiffFormat, OutputFormat};
+use config::Config;
 use linuxdoctor::core;
 use linuxdoctor::core::gate::{self, DEFAULT_FAIL_ON};
 use linuxdoctor::diff;
@@ -16,15 +18,42 @@ use linuxdoctor::models::Severity;
 use linuxdoctor::output;
 use linuxdoctor::output::common::{FilterInfo, RenderMeta};
 
+/// Exit status when the configuration file cannot be used. The same as a
+/// mistake on the command line, which is what a bad setting is.
+const CONFIG_UNUSABLE: u8 = 2;
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    if let Some(seconds) = cli.timeout {
+    let typed_timeout = cli.timeout;
+    let choice = match (&cli.config, cli.no_config) {
+        (_, true) => config::Choice::Ignore,
+        (Some(path), false) => config::Choice::File(path.clone()),
+        (None, false) => config::Choice::Default,
+    };
+    let command = cli.resolved_command();
+
+    // The manual page and the completion scripts do not depend on any
+    // setting, so a broken file must not stop them from being printed.
+    let config = match command {
+        Command::Man | Command::Completions(_) => Config::default(),
+        _ => match config::load(&choice) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("linuxdoctor: {e}");
+                if choice == config::Choice::Default {
+                    eprintln!("linuxdoctor: fix the file, or run with --no-config to ignore it");
+                }
+                return ExitCode::from(CONFIG_UNUSABLE);
+            }
+        },
+    };
+    if let Some(seconds) = typed_timeout.or(config.timeout) {
         core::command::set_default_timeout(Duration::from_secs(seconds));
     }
-    match cli.resolved_command() {
-        Command::Audit(args) => run_audit_command(args),
+    match command {
+        Command::Audit(args) => run_audit_command(args, &config),
         Command::Tui(args) => run_tui_command(args.modules),
-        Command::Diff(args) => run_diff_command(args),
+        Command::Diff(args) => run_diff_command(args, &config),
         Command::Completions(args) => print_bytes(&cli::completion_script(args.shell)),
         Command::Man => run_man_command(),
     }
@@ -66,7 +95,13 @@ fn write_stdout(bytes: &[u8]) -> bool {
     }
 }
 
-fn run_audit_command(args: AuditArgs) -> ExitCode {
+fn run_audit_command(args: AuditArgs, config: &Config) -> ExitCode {
+    let settings = config.audit.resolve(
+        args.output,
+        args.min_severity,
+        args.fail_on,
+        OutputFormat::Terminal,
+    );
     let mut report = match core::engine::run_audit(args.modules.as_deref()) {
         Ok(report) => report,
         Err(e) => {
@@ -78,13 +113,13 @@ fn run_audit_command(args: AuditArgs) -> ExitCode {
     // The pass/fail decision looks at the whole report, before any display
     // filter: hiding findings from the output must never turn a failing
     // audit into a passing one.
-    let threshold = match args.fail_on {
-        Some(level) => level.threshold(),
+    let threshold = match settings.fail_on {
+        Some(chosen) => chosen.level.threshold(),
         None => Some(DEFAULT_FAIL_ON),
     };
     let gate = gate::evaluate(&report, threshold);
 
-    let filter = args.min_severity.map(|level| {
+    let filter = settings.min_severity.map(|level| {
         let min_severity = Severity::from(level);
         FilterInfo {
             min_severity,
@@ -93,7 +128,7 @@ fn run_audit_command(args: AuditArgs) -> ExitCode {
     });
     let meta = RenderMeta::now(filter);
 
-    let text = match args.output {
+    let text = match settings.output {
         OutputFormat::Terminal => output::terminal::render_with(&report, &meta),
         OutputFormat::Json => match output::json::render_with(&report, &meta) {
             Ok(json) => json + "\n",
@@ -112,11 +147,12 @@ fn run_audit_command(args: AuditArgs) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Only an explicit --fail-on explains itself on stderr: the default
-    // gate has always been silent and stays so.
+    // Only a level somebody chose -- with --fail-on or in the configuration
+    // file -- explains itself on stderr: the default gate has always been
+    // silent and stays so.
     if gate.failed() {
-        if args.fail_on.is_some() {
-            if let Some(message) = gate.message() {
+        if let Some(chosen) = &settings.fail_on {
+            if let Some(message) = gate.message(&config.describe(chosen)) {
                 eprintln!("linuxdoctor: {message}");
             }
         }
@@ -130,7 +166,13 @@ fn run_audit_command(args: AuditArgs) -> ExitCode {
 /// "something got worse", so a script can tell the two apart.
 const DIFF_UNUSABLE: u8 = 2;
 
-fn run_diff_command(args: DiffArgs) -> ExitCode {
+fn run_diff_command(args: DiffArgs, config: &Config) -> ExitCode {
+    let settings = config.diff.resolve(
+        args.output,
+        args.min_severity,
+        args.fail_on,
+        DiffFormat::Terminal,
+    );
     if args.before == "-" && args.after == "-" {
         eprintln!(
             "linuxdoctor: only one of the two reports can be read from standard input; \
@@ -157,13 +199,13 @@ fn run_diff_command(args: DiffArgs) -> ExitCode {
     // As for `audit`: the pass/fail decision looks at the whole comparison,
     // before any display filter, so hiding changes never hides a regression
     // from the exit status.
-    let threshold = match args.fail_on {
-        Some(level) => level.threshold(),
+    let threshold = match settings.fail_on {
+        Some(chosen) => chosen.level.threshold(),
         None => Some(DEFAULT_FAIL_ON),
     };
     let regressions = threshold.map_or(0, |t| comparison.regressions(t).len());
 
-    if let Some(level) = args.min_severity {
+    if let Some(level) = settings.min_severity {
         comparison.retain_at_or_above(Severity::from(level));
     }
 
@@ -173,7 +215,7 @@ fn run_diff_command(args: DiffArgs) -> ExitCode {
         before: &before_name,
         after: &after_name,
     };
-    let text = match args.output {
+    let text = match settings.output {
         DiffFormat::Terminal => diff::render::terminal(&comparison, &labels),
         DiffFormat::Markdown => diff::render::markdown(&comparison, &labels),
         DiffFormat::Json => match diff::render::json(&comparison, &labels) {
@@ -189,13 +231,12 @@ fn run_diff_command(args: DiffArgs) -> ExitCode {
     }
 
     if regressions > 0 {
-        // Only an explicit --fail-on explains itself on stderr, as for audit.
-        if let (Some(_), Some(threshold)) = (args.fail_on, threshold) {
+        // Only a level somebody chose explains itself on stderr, as for audit.
+        if let (Some(chosen), Some(threshold)) = (&settings.fail_on, threshold) {
             eprintln!(
-                "linuxdoctor: {regressions} finding(s) appeared or got worse, now at {} or \
-                 above (--fail-on {}); exiting with status 1",
-                threshold,
-                threshold.to_string().to_lowercase()
+                "linuxdoctor: {regressions} finding(s) appeared or got worse, now at {threshold} \
+                 or above ({}); exiting with status 1",
+                config.describe(chosen)
             );
         }
         return ExitCode::FAILURE;

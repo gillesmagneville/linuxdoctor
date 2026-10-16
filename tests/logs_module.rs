@@ -491,6 +491,8 @@ impl Drop for FakeBin {
 fn audit(bin: &FakeBin, extra: &[&str]) -> (Option<i32>, Duration, serde_json::Value) {
     let started = Instant::now();
     let output = Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args(["audit", "--modules", "logs", "--output", "json"])
         .args(extra)
         .env("PATH", bin.path_env())
@@ -713,6 +715,8 @@ fn a_hung_journalctl_costs_one_time_limit_and_is_reported_as_incomplete() {
 fn the_real_module_runs_and_always_reports_its_overview_and_log_files() {
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let output = Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args([
             "audit",
             "--modules",

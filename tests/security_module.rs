@@ -466,6 +466,8 @@ fn every_format_renders_the_module() {
 #[test]
 fn the_real_module_runs_and_reports_the_same_nine_topics_on_any_host() {
     let out = Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args([
             "audit",
             "--modules",

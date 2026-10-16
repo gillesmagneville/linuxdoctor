@@ -56,6 +56,8 @@ esac"#,
 
     fn audit(&self, extra: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+            // Never the configuration file of whoever runs the tests.
+            .env("XDG_CONFIG_HOME", "/nonexistent")
             .args(["audit", "--modules", "storage", "--timeout", "5"])
             .args(extra)
             .env("PATH", format!("{}:/usr/bin:/bin", self.dir.display()))
@@ -187,6 +189,8 @@ fn a_comparison_of_two_such_reports_neutralises_the_name_as_well() {
     fs::write(&after, &json).unwrap();
 
     let o = Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args(["diff"])
         .arg(&before)
         .arg(&after)

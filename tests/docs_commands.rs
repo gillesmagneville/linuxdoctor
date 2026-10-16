@@ -25,6 +25,8 @@ const MODULE_IDS: [&str; 13] = [
 
 fn run(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        // Never the configuration file of whoever runs the tests.
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .args(args)
         .output()
         .expect("linuxdoctor binary should start")

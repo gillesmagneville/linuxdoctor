@@ -37,7 +37,14 @@ seuils et de la sévérité avant qu'après.
    version minimale supportée. N'utilisez donc pas d'API plus récente que
    1.75 (par exemple `Option::is_none_or`, stabilisée en 1.82).
 
-3. Décrivez dans la pull request ce qui change et pourquoi.
+3. Un test qui lance le vrai binaire doit l'isoler du fichier de configuration de
+   celui qui exécute les tests, sinon un `fail_on = "never"` dans son
+   `~/.config/linuxdoctor/config.toml` ferait changer d'avis la suite :
+   `.env("XDG_CONFIG_HOME", "/nonexistent")` (ou `--no-config`) sur chaque
+   `Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))`. Un test
+   (`tests/config_file.rs`) échoue si un fichier de `tests/` l'oublie.
+
+4. Décrivez dans la pull request ce qui change et pourquoi.
 
 ## Ajouter un nouveau module de diagnostic
 

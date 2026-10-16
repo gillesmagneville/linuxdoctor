@@ -201,7 +201,7 @@ mod tests {
     fn the_version_that_wrote_the_report_is_read_when_it_is_there() {
         let with = r#"{
             "schema_version": 1,
-            "linuxdoctor_version": "1.8.0",
+            "linuxdoctor_version": "1.9.0",
             "context": {"hostname": "web01"},
             "results": []
         }"#;
@@ -210,12 +210,12 @@ mod tests {
                 .unwrap()
                 .linuxdoctor_version
                 .as_deref(),
-            Some("1.8.0")
+            Some("1.9.0")
         );
         // Reports from versions that did not record it do not say.
         assert_eq!(parse(MINIMAL, "r.json").unwrap().linuxdoctor_version, None);
         // A value of another type is a report this version cannot read.
-        let wrong = with.replace("\"1.8.0\"", "180");
+        let wrong = with.replace("\"1.9.0\"", "180");
         assert!(parse(&wrong, "r.json").is_err());
     }
 

@@ -7,8 +7,9 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::core::engine::ModuleRunResult;
-use crate::models::Severity;
+use crate::core::engine::{ModuleRunResult, Report};
+use crate::core::text::make_printable;
+use crate::models::{Confidence, Finding, Severity};
 
 /// Set when `--min-severity` removed findings from the report, so a
 /// filtered report never looks like a complete one.
@@ -89,6 +90,92 @@ pub fn format_utc(secs: u64) -> String {
 pub fn format_utc_iso(secs: u64) -> String {
     let (y, mo, d, h, mi, s) = civil_from_unix(secs);
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
+/// A copy of `report` that is safe to put in front of a reader: every
+/// piece of text in it has been through [`crate::core::text::printable`].
+///
+/// A report is full of strings the audited machine chose -- process names,
+/// virtual machine and container names, unit and interface names, user
+/// names, file names, messages from tools -- and any of them can carry a
+/// terminal escape sequence. Every renderer except JSON (which escapes
+/// control characters by construction, and so keeps the data exactly as
+/// observed) takes this copy first, so none of them has to remember which
+/// of its fields are dangerous: all of them are.
+pub fn display_safe(report: &Report) -> Report {
+    let mut safe = report.clone();
+    make_display_safe(&mut safe);
+    safe
+}
+
+/// [`display_safe`], in place, for the interactive UI that owns its report.
+///
+/// Every struct is taken apart *exhaustively*, with no `..`: adding a text
+/// field to `Context`, `Finding`, `Confidence` or `ModuleRunResult` stops
+/// this function from compiling until the new field is dealt with here.
+pub fn make_display_safe(report: &mut Report) {
+    let Report { context, results } = report;
+
+    let crate::core::context::Context {
+        hostname,
+        kernel_version,
+        distro,
+        architecture,
+        cpu_count: _,
+        mem_total_kb: _,
+        boot_time_unix: _,
+    } = context;
+    make_printable(hostname);
+    make_printable(kernel_version);
+    if let Some(distro) = distro {
+        make_printable(distro);
+    }
+    make_printable(architecture);
+
+    for result in results {
+        let ModuleRunResult {
+            // A compile-time constant of the program, not read from the machine.
+            module_id: _,
+            findings,
+            error,
+            skipped: _,
+            notes,
+        } = result;
+        if let Some(error) = error {
+            make_printable(error);
+        }
+        notes.iter_mut().for_each(make_printable);
+        findings.iter_mut().for_each(make_finding_display_safe);
+    }
+}
+
+fn make_finding_display_safe(finding: &mut Finding) {
+    let Finding {
+        id,
+        title,
+        category: _,
+        severity: _,
+        confidence,
+        evidence,
+        explanation,
+        recommendation,
+        instance,
+    } = finding;
+    make_printable(id);
+    make_printable(title);
+    let Confidence { percent: _, reason } = confidence;
+    make_printable(reason);
+    for (key, value) in evidence {
+        make_printable(key);
+        make_printable(value);
+    }
+    make_printable(explanation);
+    if let Some(recommendation) = recommendation {
+        make_printable(recommendation);
+    }
+    if let Some(instance) = instance {
+        make_printable(instance);
+    }
 }
 
 /// Findings per severity, worst first: `[critical, error, warning, info]`.
@@ -270,8 +357,126 @@ pub fn explanation_blocks(text: &str) -> Vec<Block> {
     blocks
 }
 
+/// A report whose every piece of text is hostile, shared by the tests of
+/// every renderer.
+#[cfg(test)]
+pub(crate) mod testkit {
+    use super::*;
+    use crate::core::context::Context;
+    use crate::models::Category;
+
+    /// An escape sequence that clears the screen, one that sets the window
+    /// title (ended by BEL), a carriage return that would overwrite the
+    /// line, a right-to-left override, and some markup, all around a word
+    /// the tests can look for.
+    pub const PAYLOAD: &str = "\u{1b}[2J\u{1b}]0;pwned\u{7}\rEVIL\u{202e}<b>x</b>";
+
+    /// The first character of `text` that could act on a terminal or
+    /// reorder what is displayed. Line feeds are fine.
+    pub fn unsafe_char(text: &str) -> Option<char> {
+        text.chars()
+            .find(|&c| (c.is_control() && c != '\n') || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
+    }
+
+    /// `text` without the colour sequences (`ESC [ ... m`) a renderer
+    /// writes itself, so what is left is only what came from the report.
+    pub fn without_own_colours(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' && chars.peek() == Some(&'[') {
+                let mut seq = String::new();
+                let mut closed = false;
+                for d in chars.by_ref() {
+                    if d == 'm' {
+                        closed = true;
+                        break;
+                    }
+                    if !(d.is_ascii_digit() || d == ';' || d == '[') {
+                        seq.push(d);
+                        break;
+                    }
+                }
+                if !closed {
+                    // Not one of our colours: keep it, so the test sees it.
+                    out.push('\u{1b}');
+                    out.push('[');
+                    out.push_str(&seq);
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn finding(id: &str, severity: Severity, one_line_recommendation: bool) -> Finding {
+        let recommendation = if one_line_recommendation {
+            format!("fix {PAYLOAD}")
+        } else {
+            format!("1. Look {PAYLOAD}:\n    cat {PAYLOAD}\n2. Then {PAYLOAD}.")
+        };
+        Finding::builder(
+            format!("{id}{PAYLOAD}"),
+            format!("title {PAYLOAD}"),
+            Category::Memory,
+            severity,
+            crate::models::Confidence::new(80, format!("reason {PAYLOAD}")),
+        )
+        .evidence(format!("key {PAYLOAD}"), format!("value {PAYLOAD}"))
+        .explanation(format!(
+            "first line {PAYLOAD}\n  second\tline {PAYLOAD}\r\nthird"
+        ))
+        .recommendation(recommendation)
+        .instance(format!("instance {PAYLOAD}"))
+        .build()
+    }
+
+    /// Hostile text in every field of the report that holds text, with
+    /// findings at every severity, and a failed and an incomplete module.
+    pub fn hostile_report() -> Report {
+        let result = |module_id: &'static str, findings: Vec<Finding>| ModuleRunResult {
+            module_id,
+            findings,
+            error: None,
+            skipped: false,
+            notes: Vec::new(),
+        };
+        let mut failed = result("cpu", Vec::new());
+        failed.error = Some(format!("error {PAYLOAD}"));
+        failed.notes = vec![format!("note {PAYLOAD}")];
+        let mut incomplete = result("numa", vec![finding("N", Severity::Info, true)]);
+        incomplete.notes = vec![format!("note {PAYLOAD}"), format!("other {PAYLOAD}")];
+        Report {
+            context: Context {
+                hostname: format!("host {PAYLOAD}"),
+                kernel_version: format!("kernel {PAYLOAD}"),
+                distro: Some(format!("distro {PAYLOAD}")),
+                architecture: format!("arch {PAYLOAD}"),
+                cpu_count: 4,
+                mem_total_kb: 8_388_608,
+                boot_time_unix: 0,
+            },
+            results: vec![
+                result(
+                    "memory",
+                    vec![
+                        finding("W", Severity::Warning, false),
+                        finding("E", Severity::Error, true),
+                        finding("C", Severity::Critical, false),
+                        finding("I", Severity::Info, false),
+                    ],
+                ),
+                failed,
+                incomplete,
+            ],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::testkit::*;
     use super::*;
 
     // ----- time ------------------------------------------------------
@@ -492,5 +697,90 @@ mod tests {
         assert_eq!(module_status(&r), ModuleStatus::Failed("boom".into()));
         r.skipped = true;
         assert_eq!(module_status(&r), ModuleStatus::Skipped);
+    }
+
+    // ----- display_safe ------------------------------------------------
+
+    /// Every string in a serialized value.
+    fn strings_of(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(s) => out.push(s.clone()),
+            serde_json::Value::Array(items) => items.iter().for_each(|v| strings_of(v, out)),
+            serde_json::Value::Object(map) => map.values().for_each(|v| strings_of(v, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn display_safe_cleans_every_piece_of_text_in_the_report() {
+        let hostile = hostile_report();
+        let before = serde_json::to_value(&hostile).unwrap();
+        let safe = serde_json::to_value(display_safe(&hostile)).unwrap();
+
+        let (mut raw, mut cleaned) = (Vec::new(), Vec::new());
+        strings_of(&before, &mut raw);
+        strings_of(&safe, &mut cleaned);
+        // The test must be looking at the whole report: the payload really
+        // is in every text field, and it comes out of every one of them.
+        let dangerous = raw.iter().filter(|s| unsafe_char(s).is_some()).count();
+        assert!(
+            dangerous >= 25,
+            "only {dangerous} hostile strings in the fixture"
+        );
+        assert_eq!(raw.len(), cleaned.len(), "same fields, same order");
+        for text in &cleaned {
+            assert_eq!(unsafe_char(text), None, "{text:?}");
+        }
+        assert!(
+            cleaned.iter().any(|s| s.contains("EVIL")),
+            "the text is neutralised, not removed"
+        );
+    }
+
+    #[test]
+    fn display_safe_keeps_what_is_not_text() {
+        let hostile = hostile_report();
+        let safe = display_safe(&hostile);
+        assert_eq!(safe.context.cpu_count, hostile.context.cpu_count);
+        assert_eq!(safe.results.len(), hostile.results.len());
+        for (a, b) in safe.results.iter().zip(&hostile.results) {
+            assert_eq!(a.module_id, b.module_id);
+            assert_eq!(a.skipped, b.skipped);
+            assert_eq!(a.error.is_some(), b.error.is_some());
+            let severities = |r: &ModuleRunResult| -> Vec<(Severity, u8)> {
+                r.findings
+                    .iter()
+                    .map(|f| (f.severity, f.confidence.percent))
+                    .collect()
+            };
+            assert_eq!(severities(a), severities(b));
+        }
+    }
+
+    #[test]
+    fn display_safe_changes_nothing_in_an_ordinary_report() {
+        let mut ordinary = hostile_report();
+        // The same report, but with only text a machine can legitimately produce.
+        let text = "Wörter 日本語 — ✓ ⚠\n  aligned    columns\n    indented";
+        make_display_safe(&mut ordinary);
+        let mut report = ordinary.clone();
+        for result in &mut report.results {
+            for f in &mut result.findings {
+                f.explanation = text.to_string();
+                f.title = text.lines().next().unwrap().to_string();
+            }
+        }
+        let before = serde_json::to_value(&report).unwrap();
+        let after = serde_json::to_value(display_safe(&report)).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn display_safe_returns_a_copy_and_leaves_the_original_exactly_as_observed() {
+        // JSON must keep the data as it was observed; only the copy is cleaned.
+        let hostile = hostile_report();
+        let _ = display_safe(&hostile);
+        assert!(hostile.context.hostname.contains('\u{1b}'));
+        assert!(hostile.results[0].findings[0].title.contains('\u{1b}'));
     }
 }

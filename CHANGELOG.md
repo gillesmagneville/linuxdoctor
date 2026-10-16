@@ -9,6 +9,35 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Sécurité
+
+- **Le texte choisi par la machine auditée ne peut plus agir sur votre
+  terminal.** Noms de processus, de machines virtuelles et de conteneurs,
+  points de montage, noms d'utilisateurs, messages d'outils : n'importe lequel
+  pouvait contenir une séquence d'échappement (effacer l'écran, changer le titre
+  de la fenêtre, réécrire la ligne du dessus avec un retour chariot) ou un
+  contrôle bidirectionnel qui inverse l'ordre d'affichage. Les rapports
+  Markdown et HTML les transmettaient tels quels (un `cat rapport.md` suffisait
+  à les déclencher), et le terminal comme la TUI ne les filtraient pas
+  partout. Désormais le rapport terminal, Markdown, HTML et la TUI remplacent
+  par `?` les caractères de contrôle et les contrôles bidirectionnels ; les
+  retours à la ligne, l'indentation, les accents et les écritures de droite à
+  gauche sont conservés, et un vrai audit complet (874 chaînes) n'est modifié
+  en rien.
+  - Un seul point d'entrée : `output::common::display_safe` copie le rapport en
+    traitant **chaque** chaîne. Il décompose `Context`, `ModuleRunResult`,
+    `Finding` et `Confidence` sans `..` : ajouter un champ texte à l'un d'eux
+    empêche la compilation tant qu'il n'est pas traité, donc un rendu ne peut
+    pas l'oublier. La fonction de nettoyage est `core::text::printable`.
+  - Le JSON ne change pas, volontairement : il échappe déjà les caractères de
+    contrôle (`\u001b`) et reste l'enregistrement fidèle de ce qui a été
+    observé, ce que `linuxdoctor diff` compare.
+  - Tests : un test par rendu (terminal, Markdown, HTML, mémoire tampon de la
+    TUI, y compris après un `r`), un test sur le rapport entier, et
+    `tests/hostile_names.rs` qui lance le vrai binaire contre un faux `df` dont
+    le point de montage est fait de séquences d'échappement, dans les quatre
+    formats et dans `diff`. Chacun échoue quand l'appel est retiré.
+
 ### Ajouté
 
 - **Comparaison de rapports** : `linuxdoctor diff avant.json apres.json`

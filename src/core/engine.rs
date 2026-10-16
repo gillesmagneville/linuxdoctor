@@ -16,7 +16,7 @@ use crate::modules::{all_modules, Module};
 /// One module's outcome: either the findings it produced, or a note that it
 /// failed / was skipped. Kept separate from `Finding` so a collector failure
 /// is visible in output rather than silently disappearing.
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ModuleRunResult {
     pub module_id: &'static str,
     pub findings: Vec<Finding>,
@@ -41,7 +41,7 @@ impl ModuleRunResult {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub context: Context,
     pub results: Vec<ModuleRunResult>,

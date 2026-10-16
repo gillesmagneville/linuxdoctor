@@ -69,7 +69,7 @@ linuxdoctor/
 │   │   ├── engine.rs         # concurrent orchestration, failure isolation
 │   │   ├── gate.rs           # pass/fail decision behind the exit status (--fail-on)
 │   │   ├── parallel.rs       # ordered parallel map for per-device work (SMART)
-│   │   ├── text.rs           # `clean`: control characters out of untrusted text
+│   │   ├── text.rs           # `clean` and `printable`: control characters out of untrusted text
 │   │   └── error.rs
 │   │
 │   ├── models/
@@ -112,7 +112,8 @@ linuxdoctor/
 │   └── output/
 │       ├── mod.rs
 │       ├── common.rs         # RenderMeta, date formatting, recommendation/explanation
-│       │                     # layout shared by the document renderers
+│       │                     # layout shared by the document renderers, and
+│       │                     # `display_safe` (see "Text from the audited machine")
 │       ├── terminal.rs       # text + ANSI colors
 │       ├── json.rs           # JSON (+ schema_version)
 │       ├── markdown.rs       # Markdown report — see "Markdown Renderer" below
@@ -137,7 +138,8 @@ linuxdoctor/
     ├── virtualization_module.rs
     # (one per module, same fixture-driven pattern)
     ├── docs_commands.rs      # the real binary: man, completions, --modules check
-    └── diff_command.rs       # the real binary: diff, its exit status and its formats
+    ├── diff_command.rs       # the real binary: diff, its exit status and its formats
+    └── hostile_names.rs      # the real binary against escape sequences in names, every format
 ```
 
 As more modules are added, if `collect.rs` logic starts repeating across modules
@@ -460,6 +462,44 @@ Non-interactive renderers receive the report plus a `RenderMeta`
 inside a renderer, so output is deterministic and testable) and, when `--min-severity`
 removed findings, a `FilterInfo { min_severity, hidden }`. Every renderer states a
 filter when there is one — a filtered report must never pass for a complete one.
+
+## Text from the audited machine
+
+A report is full of strings the audited machine chose: process names, virtual machine and
+container names, unit and interface names, mount points, user names, messages from tools.
+Any of them can carry a terminal escape sequence (clear the screen, retitle the window,
+overwrite the line above with a carriage return) or a right-to-left override that
+reorders what is displayed. The rule is one sentence: **no renderer other than JSON emits
+a control character that came from the machine.**
+
+* `core::text::printable` is the one function that does it. It keeps text as it is — line
+  breaks, indentation, accents, right-to-left scripts — and replaces what could act on a
+  terminal with `?`: every control character (ESC, BEL, backspace, NUL, DEL, the C1 range,
+  a carriage return that does not end a line) and the bidirectional overrides and
+  isolates. A tab becomes a space. It returns the input without copying when there is
+  nothing to change, which is almost always: a full real audit (874 strings) is unchanged.
+* `output::common::display_safe(&Report) -> Report` applies it to **every** string of a
+  report. It takes `Context`, `ModuleRunResult`, `Finding` and `Confidence` apart without
+  `..`, so adding a text field to any of them stops it from compiling until the new field
+  is handled: a renderer cannot forget a field, and a new field cannot be forgotten.
+* The terminal, Markdown and HTML renderers call it on entry; the TUI calls the in-place
+  `make_display_safe` when it receives a report (`TuiApp::new` and `replace_report`), so
+  nothing it draws — lists, details, search, the header — can show raw text. Markdown and
+  HTML still escape their own markup (below): that is a different problem, and a file
+  that is read with `cat` needs both.
+* **JSON is the exception, on purpose.** `serde_json` escapes control characters
+  (`\u001b`), so the output is safe to read as text, and it is the record of what was
+  observed: altering names in it would make a stored report lie, and `linuxdoctor diff`
+  compares reports by those names.
+* `linuxdoctor diff` reads files rather than the machine, and uses `core::text::clean`
+  (single line, bounded length) for the strings of a comparison; see "Report Diff".
+
+Tests: `core::text` (the rules), `output::common` (a report with hostile text in every
+field comes out clean, an ordinary one comes out identical, the original keeps its
+bytes), one test per renderer including the TUI's screen buffer, and
+`tests/hostile_names.rs`, which runs the real binary against a fake `df` whose mount point
+is made of escape sequences and checks every format. Each of these fails when the call is
+removed (checked by hand when it was written).
 
 ## Severity filter and exit status
 
@@ -1078,6 +1118,10 @@ than a dependency for this).
 LinuxDoctor is read-only. It never modifies configuration, restarts services, opens
 listening sockets, sends telemetry, or uploads data. No internet connection is
 required.
+
+What the audited machine and the files it is compared with can say is untrusted: it is
+neutralised before any renderer but JSON shows it (see "Text from the audited machine"),
+and Markdown and HTML escape their own markup on top of that.
 
 ---
 

@@ -14,8 +14,8 @@ use crate::core::engine::{ModuleRunResult, Report};
 use crate::models::{Finding, Severity};
 
 use super::common::{
-    explanation_blocks, format_utc, format_utc_iso, module_status, parse_recommendation,
-    severity_counts, Block, ModuleStatus, Recommendation, RenderMeta,
+    display_safe, explanation_blocks, format_utc, format_utc_iso, module_status,
+    parse_recommendation, severity_counts, Block, ModuleStatus, Recommendation, RenderMeta,
 };
 
 const STYLE: &str = r#"
@@ -120,6 +120,8 @@ fn badge(sev: Severity) -> String {
 }
 
 pub fn render(report: &Report, meta: &RenderMeta) -> String {
+    // See `markdown::render`: no control characters from the audited machine.
+    let report = &display_safe(report);
     let ctx = &report.context;
     let mut out = String::new();
 
@@ -807,5 +809,13 @@ mod tests {
     fn output_is_stable_for_identical_input() {
         let r = report(vec![module("memory", vec![rich_finding()])]);
         assert_eq!(render(&r, &meta()), render(&r, &meta()));
+    }
+
+    #[test]
+    fn text_from_the_audited_machine_has_no_control_characters() {
+        use crate::output::common::testkit::{hostile_report, unsafe_char};
+        let out = render(&hostile_report(), &RenderMeta::default());
+        assert_eq!(unsafe_char(&out), None, "{out:?}");
+        assert!(out.contains("EVIL"), "{out}");
     }
 }

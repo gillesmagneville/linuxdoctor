@@ -7,3 +7,4 @@ pub mod live_stats;
 pub mod markdown;
 pub mod terminal;
 pub mod tui;
+pub mod tui_filter;

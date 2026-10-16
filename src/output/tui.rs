@@ -14,6 +14,14 @@
 //! is driven entirely by `Finding.instance`, not by hardcoded knowledge
 //! of which check IDs happen to be per-instance for which modules.
 //!
+//! The screen can be narrowed without touching the report (`tui_filter`):
+//! `f` cycles a minimum severity, `/` types a text looked for in the
+//! findings. Both only change what is *drawn* -- the module list's status
+//! symbols still describe the whole module and the exit code is still
+//! computed from every finding. A module's sub-items are those of the
+//! findings that pass the filter, so a filter that leaves one instance
+//! shows it flat, exactly like a module that only ever had one.
+//!
 //! Two independent freshness stories, deliberately not conflated:
 //! - The header's CPU/memory/disk gauges (`live_stats`) refresh on their
 //!   own, roughly once a second, for as long as the TUI is open — cheap
@@ -34,7 +42,7 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -50,6 +58,7 @@ use crate::core::engine::{run_audit_with_progress, ModuleRunResult, Report};
 use crate::models::{Finding, Severity};
 use crate::output::common::make_display_safe;
 use crate::output::live_stats::{self, CpuStatSample, LiveStats};
+use crate::output::tui_filter::ViewFilter;
 
 /// Minimum number of distinct sub-items before a module gets a real,
 /// navigable submenu. Below this, everything is shown flat instead.
@@ -73,6 +82,11 @@ pub struct TuiApp {
     live_stats: LiveStats,
     prev_cpu_sample: Option<CpuStatSample>,
     last_scan: Instant,
+    /// What the screen narrows the report to. Never applied to `report`.
+    filter: ViewFilter,
+    /// True between `/` and Enter/Esc: typed characters go to the search
+    /// text instead of being commands.
+    typing: bool,
 }
 
 impl TuiApp {
@@ -93,6 +107,8 @@ impl TuiApp {
             live_stats: LiveStats::default(),
             prev_cpu_sample: None,
             last_scan: Instant::now(),
+            filter: ViewFilter::default(),
+            typing: false,
         }
     }
 
@@ -127,6 +143,9 @@ impl TuiApp {
         self.focus = Focus::Modules;
         self.detail_scroll = 0;
         self.last_scan = Instant::now();
+        // The filter outlives a refresh; the module it left selected may no
+        // longer have anything to show.
+        self.settle_selection();
     }
 
     fn selected_module_index(&self) -> usize {
@@ -145,8 +164,107 @@ impl TuiApp {
     /// this in the TUI section for why that matters.
     fn submenu_items(&self) -> Vec<String> {
         self.selected_module()
-            .map(|r| submenu_items_for(r).into_iter().map(String::from).collect())
+            .map(|r| {
+                instances_of(&visible_findings(r, &self.filter))
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            })
             .unwrap_or_default()
+    }
+
+    // ----- the view filter -----------------------------------------------------------------------
+
+    /// `f`: next minimum severity.
+    pub fn cycle_severity(&mut self) {
+        self.filter.cycle_severity();
+        self.filter_changed();
+    }
+
+    /// `/`: from now on typed characters are the search text. Any text
+    /// already there stays, to be edited.
+    pub fn start_search(&mut self) {
+        self.typing = true;
+    }
+
+    /// A character typed while searching.
+    pub fn search_type(&mut self, c: char) {
+        if self.filter.push_char(c) {
+            self.filter_changed();
+        }
+    }
+
+    pub fn search_backspace(&mut self) {
+        if self.filter.pop_char() {
+            self.filter_changed();
+        }
+    }
+
+    /// Enter while searching: stop typing, keep the text as a filter.
+    pub fn finish_search(&mut self) {
+        self.typing = false;
+    }
+
+    /// Esc while searching: stop typing and forget the text (the severity
+    /// stays).
+    pub fn cancel_search(&mut self) {
+        self.typing = false;
+        if self.filter.clear_query() {
+            self.filter_changed();
+        }
+    }
+
+    /// Esc with the filter active: show everything again. Returns whether
+    /// there was a filter to clear.
+    pub fn clear_filter(&mut self) -> bool {
+        if !self.filter.is_active() {
+            return false;
+        }
+        self.filter.clear();
+        self.filter_changed();
+        true
+    }
+
+    /// The sub-items, the scroll position and possibly the selected module
+    /// all depend on what passes the filter: start from the top of whatever
+    /// is left.
+    fn filter_changed(&mut self) {
+        self.focus = Focus::Modules;
+        self.submenu_state = ListState::default();
+        self.detail_scroll = 0;
+        self.settle_selection();
+    }
+
+    /// While a filter is active, make sure the selected module is one that
+    /// has something to show -- otherwise move to the first that has. With
+    /// nothing matching anywhere the selection stays put, and its page says
+    /// so. Only ever called when the filter or the report changes, never
+    /// while moving between modules, so the arrow keys still reach every one.
+    fn settle_selection(&mut self) {
+        if !self.filter.is_active() {
+            return;
+        }
+        let filter = &self.filter;
+        let shows_something = |r: &ModuleRunResult| r.findings.iter().any(|f| filter.matches(f));
+        if self.selected_module().is_some_and(shows_something) {
+            return;
+        }
+        if let Some(first) = self.report.results.iter().position(shows_something) {
+            self.module_state.select(Some(first));
+        }
+    }
+
+    /// How many findings pass the filter, out of how many there are.
+    fn shown_and_total(&self) -> (usize, usize) {
+        self.report
+            .results
+            .iter()
+            .fold((0, 0), |(shown, total), r| {
+                (
+                    shown + visible_findings(r, &self.filter).len(),
+                    total + r.findings.len(),
+                )
+            })
     }
 
     fn has_submenu(&self) -> bool {
@@ -252,13 +370,23 @@ impl TuiApp {
     }
 }
 
-/// Distinct instance names for a module's findings, in first-seen order.
-/// A free function (not a `TuiApp` method) so `draw_module_list` can call
-/// it per-row to show a submenu indicator, without going through "the
-/// currently selected" module.
-fn submenu_items_for(result: &ModuleRunResult) -> Vec<&str> {
+/// The findings of a module that pass the filter, in report order.
+fn visible_findings<'a>(result: &'a ModuleRunResult, filter: &ViewFilter) -> Vec<&'a Finding> {
+    result
+        .findings
+        .iter()
+        .filter(|f| filter.matches(f))
+        .collect()
+}
+
+/// Distinct instance names among some findings, in first-seen order. A
+/// free function (not a `TuiApp` method) so `draw_module_list` can call it
+/// per-row to show a submenu indicator, without going through "the
+/// currently selected" module. Given the findings that pass the filter, not
+/// all of them: an instance with nothing left to show is not a sub-item.
+fn instances_of<'a>(findings: &[&'a Finding]) -> Vec<&'a str> {
     let mut seen: Vec<&str> = Vec::new();
-    for f in &result.findings {
+    for f in findings {
         if let Some(name) = f.instance.as_deref() {
             if !seen.contains(&name) {
                 seen.push(name);
@@ -332,7 +460,7 @@ pub fn draw(f: &mut Frame, app: &mut TuiApp) {
         .constraints([
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Length(2),
         ])
         .split(area);
 
@@ -346,11 +474,56 @@ pub fn draw(f: &mut Frame, app: &mut TuiApp) {
     draw_left_pane(f, app, body[0]);
     draw_detail_pane(f, app, body[1]);
 
-    let help = Paragraph::new(help_text(app)).style(Style::default().fg(Color::DarkGray));
-    f.render_widget(help, outer[2]);
+    let keys = Line::from(Span::styled(
+        help_text(app),
+        Style::default().fg(Color::DarkGray),
+    ));
+    f.render_widget(Paragraph::new(vec![status_line(app), keys]), outer[2]);
+}
+
+/// "1 finding" / "12 findings".
+fn findings_count(n: usize) -> String {
+    format!("{n} finding{}", if n == 1 { "" } else { "s" })
+}
+
+/// First line of the bottom bar: what the screen is showing of the report.
+/// Says outright when it is not everything -- a filtered screen must never
+/// pass for a complete one.
+fn status_line(app: &TuiApp) -> Line<'static> {
+    let (shown, total) = app.shown_and_total();
+    let dim = Style::default().fg(Color::DarkGray);
+    if app.typing {
+        let accent = Style::default().fg(Color::Cyan);
+        return Line::from(vec![
+            Span::styled(" Search: ", accent.add_modifier(Modifier::BOLD)),
+            Span::raw(app.filter.query().to_string()),
+            Span::styled("\u{2588}", accent),
+            Span::styled(format!("   {shown} of {}", findings_count(total)), dim),
+        ]);
+    }
+    if app.filter.is_active() {
+        return Line::from(Span::styled(
+            format!(
+                " Filter: {}  \u{00b7}  Esc clears  \u{00b7}  {shown} of {}",
+                app.filter.describe(),
+                findings_count(total),
+            ),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    Line::from(Span::styled(
+        format!(
+            " All {} shown  \u{00b7}  f filter by severity  \u{00b7}  / search",
+            findings_count(total)
+        ),
+        dim,
+    ))
 }
 
 fn help_text(app: &TuiApp) -> &'static str {
+    if app.typing {
+        return " type to search  \u{00b7}  Backspace delete  \u{00b7}  Enter keep  \u{00b7}  Esc clear";
+    }
     match app.focus {
         Focus::Modules if app.has_submenu() => {
             " PgUp/PgDn select module  \u{00b7}  Enter for detail  \u{00b7}  \u{2191}/\u{2193} scroll  \u{00b7}  r refresh  \u{00b7}  q quit"
@@ -440,17 +613,36 @@ fn draw_left_pane(f: &mut Frame, app: &mut TuiApp, area: Rect) {
 }
 
 fn draw_module_list(f: &mut Frame, app: &mut TuiApp, area: Rect) {
+    let filter_on = app.filter.is_active();
     let items: Vec<ListItem> = app
         .report
         .results
         .iter()
         .map(|r| {
+            // The symbol is the health of the whole module, whatever the
+            // filter: it must not turn green because a finding is hidden.
             let (symbol, color) = module_status(r);
-            let has_submenu = submenu_items_for(r).len() >= MIN_ITEMS_FOR_SUBMENU;
+            let visible = visible_findings(r, &app.filter);
+            let has_submenu = instances_of(&visible).len() >= MIN_ITEMS_FOR_SUBMENU;
             let suffix = if has_submenu { " \u{203a}" } else { "" };
+            // With a filter on, say how many of this module's findings get
+            // through, and grey out the modules left with none. A module
+            // that failed or was skipped has no findings to count; it keeps
+            // its own colour.
+            let counted = filter_on && !r.skipped && r.error.is_none();
+            let count = if counted {
+                format!(" ({})", visible.len())
+            } else {
+                String::new()
+            };
+            let name_style = if counted && visible.is_empty() {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{symbol} "), Style::default().fg(color)),
-                Span::raw(format!("{}{suffix}", r.module_id)),
+                Span::styled(format!("{}{suffix}{count}", r.module_id), name_style),
             ]))
         })
         .collect();
@@ -508,12 +700,13 @@ fn draw_detail_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
         return;
     }
 
-    let items = app.submenu_items();
+    let visible = visible_findings(result, &app.filter);
+    let items = instances_of(&visible);
     let (title, lines) = if items.len() >= MIN_ITEMS_FOR_SUBMENU {
         match app.focus {
             Focus::Modules => {
                 let mut lines =
-                    render_findings(result.findings.iter().filter(|f| f.instance.is_none()));
+                    render_findings(visible.iter().copied().filter(|f| f.instance.is_none()));
                 lines.push(Line::from(Span::styled(
                     format!(
                         "\u{25b8} {} item{} \u{2014} press Enter for detail",
@@ -529,13 +722,13 @@ fn draw_detail_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
             Focus::Submenu => {
                 let selected_name = items
                     .get(app.selected_submenu_index())
-                    .cloned()
+                    .copied()
                     .unwrap_or_default();
                 let lines = render_findings(
-                    result
-                        .findings
+                    visible
                         .iter()
-                        .filter(|f| f.instance.as_deref() == Some(selected_name.as_str())),
+                        .copied()
+                        .filter(|f| f.instance.as_deref() == Some(selected_name)),
                 );
                 (
                     format!("{} \u{203a} {selected_name}", result.module_id),
@@ -546,8 +739,21 @@ fn draw_detail_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
     } else {
         (
             result.module_id.to_string(),
-            render_findings(result.findings.iter()),
+            render_findings(visible.iter().copied()),
         )
+    };
+
+    // A filtered page says so, and says what is missing from it.
+    let lines = if app.filter.is_active() {
+        let mut page = filter_banner(&app.filter, visible.len(), result.findings.len());
+        if visible.is_empty() && !result.findings.is_empty() {
+            page.push(Line::from("Nothing in this module matches the filter."));
+        } else {
+            page.extend(lines);
+        }
+        page
+    } else {
+        lines
     };
 
     // Module-level incidents belong on the module's own page, not on each
@@ -568,6 +774,20 @@ fn draw_detail_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
         .scroll((app.detail_scroll, 0));
 
     f.render_widget(detail, area);
+}
+
+/// First lines of a module's page while a filter is active.
+fn filter_banner(filter: &ViewFilter, shown: usize, total: usize) -> Vec<Line<'static>> {
+    vec![
+        Line::from(Span::styled(
+            format!(
+                "Filter: {} \u{2014} {shown} of {total} findings of this module shown",
+                filter.describe()
+            ),
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+    ]
 }
 
 /// Yellow warning block listing why a module's data may be incomplete
@@ -786,6 +1006,65 @@ pub fn run(selected_ids: Option<&[String]>) -> io::Result<Report> {
     outcome
 }
 
+/// What the event loop must do after a key press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyAction {
+    Nothing,
+    Quit,
+    /// Run the whole pipeline again behind the progress screen (`r`).
+    Rescan,
+}
+
+/// One key press, as a change to the app. Separate from the event loop so
+/// the keys can be tested without a terminal.
+///
+/// While the search text is being typed, letters are text -- `q` and `r`
+/// included -- and only the keys that cannot be text (Enter, Esc, Backspace,
+/// the arrows, PgUp/PgDn) are commands.
+fn handle_key(app: &mut TuiApp, key: KeyEvent) -> KeyAction {
+    if app.typing {
+        match key.code {
+            KeyCode::Esc => app.cancel_search(),
+            KeyCode::Enter => app.finish_search(),
+            KeyCode::Backspace => app.search_backspace(),
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.search_type(c)
+            }
+            KeyCode::PageDown => app.page_next(),
+            KeyCode::PageUp => app.page_previous(),
+            KeyCode::Down => app.scroll_down(),
+            KeyCode::Up => app.scroll_up(),
+            _ => {}
+        }
+        return KeyAction::Nothing;
+    }
+
+    match key.code {
+        KeyCode::Char('q') => return KeyAction::Quit,
+        // Esc undoes one level at a time: the submenu, then the filter, and
+        // only then leaves.
+        KeyCode::Esc => {
+            if !app.back_out() && !app.clear_filter() {
+                return KeyAction::Quit;
+            }
+        }
+        KeyCode::Enter => app.drill_in(),
+        KeyCode::PageDown => app.page_next(),
+        KeyCode::PageUp => app.page_previous(),
+        KeyCode::Down | KeyCode::Char('j') => app.scroll_down(),
+        KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
+        KeyCode::Char('f') => app.cycle_severity(),
+        KeyCode::Char('/') => app.start_search(),
+        KeyCode::Char('r') => return KeyAction::Rescan,
+        _ => {}
+    }
+    KeyAction::Nothing
+}
+
 fn event_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut TuiApp,
@@ -800,25 +1079,15 @@ fn event_loop<B: Backend>(
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => break,
-                        KeyCode::Esc => {
-                            if !app.back_out() {
-                                break;
-                            }
-                        }
-                        KeyCode::Enter => app.drill_in(),
-                        KeyCode::PageDown => app.page_next(),
-                        KeyCode::PageUp => app.page_previous(),
-                        KeyCode::Down | KeyCode::Char('j') => app.scroll_down(),
-                        KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
-                        KeyCode::Char('r') => {
+                    match handle_key(app, key) {
+                        KeyAction::Quit => break,
+                        KeyAction::Rescan => {
                             let new_report = run_scan_with_progress(terminal, selected_ids)?;
                             app.replace_report(new_report);
                             app.refresh_live_stats();
                             last_tick = Instant::now();
                         }
-                        _ => {}
+                        KeyAction::Nothing => {}
                     }
                 }
             }
@@ -1354,5 +1623,510 @@ mod tests {
         let text = screen_text(&mut app, 200, 60);
         assert_eq!(unsafe_char(&text), None, "{text:?}");
         assert_eq!(unsafe_char(&app.report.context.hostname), None);
+    }
+
+    // ----- the view filter ---------------------------------------------------------------------------
+
+    fn module(id: &'static str, findings: Vec<Finding>) -> ModuleRunResult {
+        ModuleRunResult {
+            module_id: id,
+            findings,
+            error: None,
+            skipped: false,
+            notes: Vec::new(),
+        }
+    }
+
+    /// Five modules: two with a warning and an info each, one with only an
+    /// info, one that failed, one that was skipped.
+    fn mixed_report() -> Report {
+        let memory = module(
+            "memory",
+            vec![
+                Finding::builder(
+                    "MEM001",
+                    "Kernel Swappiness",
+                    Category::Memory,
+                    Severity::Info,
+                    Confidence::direct_observation(),
+                )
+                .evidence("vm.swappiness", "60")
+                .explanation("The default value.")
+                .build(),
+                Finding::builder(
+                    "MEM002",
+                    "Swap Activity",
+                    Category::Memory,
+                    Severity::Warning,
+                    Confidence::strong_indication(85),
+                )
+                .explanation("Swapping while memory is tight.")
+                .build(),
+            ],
+        );
+        let security = module(
+            "security",
+            vec![
+                Finding::builder(
+                    "SEC001",
+                    "Root Login Over SSH",
+                    Category::Security,
+                    Severity::Warning,
+                    Confidence::direct_observation(),
+                )
+                .explanation("sshd accepts passwords for root.")
+                .recommendation("Set PermitRootLogin to no.")
+                .build(),
+                Finding::builder(
+                    "SEC002",
+                    "Firewall",
+                    Category::Security,
+                    Severity::Info,
+                    Confidence::direct_observation(),
+                )
+                .explanation("A firewall is active.")
+                .build(),
+            ],
+        );
+        let network = module(
+            "network",
+            vec![Finding::builder(
+                "NET004",
+                "DNS Configuration",
+                Category::Network,
+                Severity::Info,
+                Confidence::direct_observation(),
+            )
+            .explanation("1 nameserver configured.")
+            .build()],
+        );
+        let mut storage = module("storage", Vec::new());
+        storage.error = Some("smartctl failed".into());
+        let mut gpu = module("gpu", Vec::new());
+        gpu.skipped = true;
+        Report {
+            context: ctx(),
+            results: vec![memory, security, network, storage, gpu],
+        }
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// Type some text, one key press per character, as the event loop would
+    /// see it. Returns what the last key asked for.
+    fn press(app: &mut TuiApp, text: &str) -> KeyAction {
+        let mut last = KeyAction::Nothing;
+        for c in text.chars() {
+            last = handle_key(app, key(KeyCode::Char(c)));
+        }
+        last
+    }
+
+    fn selected_id(app: &TuiApp) -> &'static str {
+        app.selected_module().unwrap().module_id
+    }
+
+    fn findings_per_module(app: &TuiApp) -> Vec<usize> {
+        app.report
+            .results
+            .iter()
+            .map(|r| r.findings.len())
+            .collect()
+    }
+
+    #[test]
+    fn nothing_is_filtered_until_asked_and_the_bottom_bar_says_how() {
+        let mut app = TuiApp::new(mixed_report());
+        let screen = screen_text(&mut app, 100, 24);
+        assert!(screen.contains("MEM001") && screen.contains("MEM002"));
+        assert!(screen.contains("All 5 findings shown"), "{screen}");
+        assert!(screen.contains("f filter by severity"), "{screen}");
+        assert!(screen.contains("/ search"), "{screen}");
+        assert!(!screen.contains("Filter:"), "{screen}");
+        // And no counts next to the module names.
+        assert!(screen.contains("memory"), "{screen}");
+        assert!(!screen.contains("memory ("), "{screen}");
+    }
+
+    #[test]
+    fn f_hides_what_is_below_the_severity_and_the_page_says_so() {
+        let mut app = TuiApp::new(mixed_report());
+        assert_eq!(press(&mut app, "f"), KeyAction::Nothing);
+        let screen = screen_text(&mut app, 120, 24);
+        assert!(screen.contains("MEM002"), "the warning stays: {screen}");
+        assert!(!screen.contains("MEM001"), "the info is hidden: {screen}");
+        assert!(
+            screen.contains("1 of 2 findings of this module shown"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("Filter: severity \u{2265} warning"),
+            "{screen}"
+        );
+        assert!(screen.contains("2 of 5 findings"), "{screen}");
+        assert!(screen.contains("Esc clears"), "{screen}");
+    }
+
+    #[test]
+    fn the_filter_never_changes_the_report() {
+        let mut app = TuiApp::new(mixed_report());
+        let before = findings_per_module(&app);
+        press(&mut app, "fff");
+        press(&mut app, "/");
+        press(&mut app, "zzz");
+        assert_eq!(findings_per_module(&app), before);
+        assert_eq!(app.shown_and_total(), (0, 5));
+    }
+
+    #[test]
+    fn a_module_keeps_its_health_symbol_when_the_filter_hides_its_findings() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "fff"); // critical only: nothing in this report
+        let screen = screen_text(&mut app, 100, 24);
+        assert!(
+            screen.contains(&format!("{} memory (0)", Severity::Warning.symbol())),
+            "memory has a warning, hidden or not: {screen}"
+        );
+    }
+
+    #[test]
+    fn with_a_filter_on_each_module_shows_how_many_findings_get_through() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "f"); // warning and above
+        let screen = screen_text(&mut app, 100, 24);
+        assert!(screen.contains("memory (1)"), "{screen}");
+        assert!(screen.contains("security (1)"), "{screen}");
+        assert!(screen.contains("network (0)"), "{screen}");
+        // A module that failed or was skipped has nothing to count.
+        assert!(screen.contains("storage"), "{screen}");
+        assert!(!screen.contains("storage ("), "{screen}");
+        assert!(!screen.contains("gpu ("), "{screen}");
+    }
+
+    /// The colour of the first cell of `word` on the screen.
+    fn colour_of(app: &mut TuiApp, word: &str) -> Option<Color> {
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        for y in 0..buffer.area.height {
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer.get(x, y).symbol().to_string())
+                .collect();
+            // Every symbol on these rows is one column wide, so a character
+            // index is a column.
+            if let Some(at) = row.find(word) {
+                let x = row[..at].chars().count() as u16;
+                return Some(buffer.get(x, y).fg);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn modules_left_with_nothing_are_greyed_out_and_the_others_are_not() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "f");
+        assert_eq!(colour_of(&mut app, "network (0)"), Some(Color::DarkGray));
+        assert_ne!(colour_of(&mut app, "security (1)"), Some(Color::DarkGray));
+        // Selected rows are drawn reversed, not grey: look at an unselected one.
+        assert_ne!(colour_of(&mut app, "memory (1)"), Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn a_search_jumps_to_the_first_module_that_has_a_match() {
+        let mut app = TuiApp::new(mixed_report());
+        assert_eq!(selected_id(&app), "memory");
+        press(&mut app, "/");
+        press(&mut app, "ssh");
+        assert_eq!(selected_id(&app), "security");
+        let screen = screen_text(&mut app, 120, 24);
+        assert!(screen.contains("SEC001"), "{screen}");
+        assert!(!screen.contains("SEC002"), "{screen}");
+    }
+
+    #[test]
+    fn the_selection_stays_where_it_is_while_it_still_has_a_match() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/ssh");
+        assert_eq!(selected_id(&app), "security");
+        handle_key(&mut app, key(KeyCode::Backspace)); // "ss": still matches
+        assert_eq!(selected_id(&app), "security");
+        handle_key(&mut app, key(KeyCode::Backspace)); // "s": matches memory first
+        assert_eq!(selected_id(&app), "security", "no reason to move");
+        handle_key(&mut app, key(KeyCode::Esc)); // clears the text
+        assert_eq!(selected_id(&app), "security");
+    }
+
+    #[test]
+    fn a_search_that_matches_nothing_says_so_and_stays_put() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/zzzz");
+        assert_eq!(selected_id(&app), "memory");
+        let screen = screen_text(&mut app, 120, 24);
+        assert!(
+            screen.contains("Nothing in this module matches the filter"),
+            "{screen}"
+        );
+        assert!(screen.contains("0 of 5 findings"), "{screen}");
+        assert!(!screen.contains("MEM00"), "{screen}");
+    }
+
+    #[test]
+    fn moving_between_modules_still_reaches_every_one_under_a_filter() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "f");
+        let mut visited = vec![selected_id(&app)];
+        for _ in 0..4 {
+            handle_key(&mut app, key(KeyCode::PageDown));
+            visited.push(selected_id(&app));
+        }
+        assert_eq!(visited, ["memory", "security", "network", "storage", "gpu"]);
+    }
+
+    #[test]
+    fn a_failed_module_still_shows_its_error_under_a_filter() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "fff");
+        app.module_state.select(Some(3));
+        let screen = screen_text(&mut app, 100, 24);
+        assert!(screen.contains("Error: smartctl failed"), "{screen}");
+    }
+
+    #[test]
+    fn the_sub_items_are_those_of_the_findings_that_pass_the_filter() {
+        let mut app = TuiApp::new(report_with_submenu());
+        assert!(app.has_submenu());
+        press(&mut app, "f"); // only socket 1 has a warning
+        assert!(!app.has_submenu(), "one instance left: shown flat");
+        let screen = screen_text(&mut app, 120, 30);
+        assert!(screen.contains("CPU004"), "{screen}");
+        assert!(screen.contains("something's off"), "{screen}");
+        assert!(!screen.contains("Socket 0 detail"), "{screen}");
+        assert!(!screen.contains("CPU001"), "the info overview is hidden");
+        assert!(!screen.contains("press Enter for detail"), "{screen}");
+        // Showing everything again brings the sub-items back.
+        handle_key(&mut app, key(KeyCode::Esc));
+        assert!(app.has_submenu());
+        assert_eq!(app.submenu_items().len(), 2);
+    }
+
+    #[test]
+    fn a_search_can_leave_both_instances_in_the_submenu() {
+        let mut app = TuiApp::new(report_with_submenu());
+        press(&mut app, "/socket");
+        assert_eq!(app.submenu_items().len(), 2);
+        handle_key(&mut app, key(KeyCode::Enter));
+        handle_key(&mut app, key(KeyCode::Enter)); // second Enter drills in
+        assert_eq!(app.focus, Focus::Submenu);
+    }
+
+    #[test]
+    fn changing_the_filter_while_inside_a_submenu_goes_back_to_the_module() {
+        let mut app = TuiApp::new(report_with_submenu());
+        app.drill_in();
+        assert_eq!(app.focus, Focus::Submenu);
+        app.scroll_down();
+        app.cycle_severity();
+        assert_eq!(app.focus, Focus::Modules);
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    #[test]
+    fn esc_undoes_one_level_at_a_time_and_only_then_quits() {
+        let mut app = TuiApp::new(report_with_submenu());
+        press(&mut app, "/socket");
+        handle_key(&mut app, key(KeyCode::Enter)); // keep the text
+        handle_key(&mut app, key(KeyCode::Enter)); // drill in
+        assert_eq!(app.focus, Focus::Submenu);
+        assert_eq!(
+            handle_key(&mut app, key(KeyCode::Esc)),
+            KeyAction::Nothing,
+            "leaves the submenu"
+        );
+        assert_eq!(app.focus, Focus::Modules);
+        assert!(app.filter.is_active());
+        assert_eq!(
+            handle_key(&mut app, key(KeyCode::Esc)),
+            KeyAction::Nothing,
+            "clears the filter"
+        );
+        assert!(!app.filter.is_active());
+        assert_eq!(handle_key(&mut app, key(KeyCode::Esc)), KeyAction::Quit);
+    }
+
+    #[test]
+    fn while_typing_letters_are_text_and_not_commands() {
+        let mut app = TuiApp::new(mixed_report());
+        assert_eq!(press(&mut app, "/"), KeyAction::Nothing);
+        assert!(app.typing);
+        // q quits, r rescans, f cycles, j scrolls -- not here.
+        for c in ['q', 'r', 'f', 'j', 'k', '/'] {
+            assert_eq!(
+                handle_key(&mut app, key(KeyCode::Char(c))),
+                KeyAction::Nothing
+            );
+        }
+        assert_eq!(app.filter.query(), "qrfjk/");
+        assert_eq!(app.filter.min_severity(), Severity::Info, "f was text");
+        assert!(app.typing);
+        // Enter keeps the text and gives the keys back.
+        handle_key(&mut app, key(KeyCode::Enter));
+        assert!(!app.typing);
+        assert_eq!(app.filter.query(), "qrfjk/");
+        assert_eq!(press(&mut app, "q"), KeyAction::Quit);
+    }
+
+    #[test]
+    fn r_still_asks_for_a_rescan_when_not_typing() {
+        let mut app = TuiApp::new(mixed_report());
+        assert_eq!(press(&mut app, "r"), KeyAction::Rescan);
+    }
+
+    #[test]
+    fn esc_while_typing_forgets_the_text_and_does_not_quit() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/ab");
+        assert_eq!(handle_key(&mut app, key(KeyCode::Esc)), KeyAction::Nothing);
+        assert!(!app.typing);
+        assert_eq!(app.filter.query(), "");
+        assert_eq!(handle_key(&mut app, key(KeyCode::Esc)), KeyAction::Quit);
+    }
+
+    #[test]
+    fn esc_while_typing_keeps_the_severity() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "f/ab");
+        handle_key(&mut app, key(KeyCode::Esc));
+        assert_eq!(app.filter.min_severity(), Severity::Warning);
+        assert!(app.filter.is_active());
+    }
+
+    #[test]
+    fn backspace_edits_the_text_and_widens_the_view_again() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/tight"); // only in the swap warning's explanation
+        assert_eq!(app.shown_and_total().0, 1);
+        for _ in 0..4 {
+            handle_key(&mut app, key(KeyCode::Backspace));
+        }
+        assert_eq!(app.filter.query(), "t");
+        assert!(app.shown_and_total().0 > 1, "a shorter text matches more");
+        handle_key(&mut app, key(KeyCode::Backspace));
+        assert_eq!(app.shown_and_total(), (5, 5));
+        // Nothing left to delete is not a problem.
+        handle_key(&mut app, key(KeyCode::Backspace));
+        assert_eq!(app.filter.query(), "");
+    }
+
+    #[test]
+    fn a_search_started_again_keeps_the_text_to_edit() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/ssh");
+        handle_key(&mut app, key(KeyCode::Enter));
+        press(&mut app, "/");
+        assert!(app.typing);
+        assert_eq!(app.filter.query(), "ssh");
+    }
+
+    #[test]
+    fn control_and_alt_combinations_are_not_text() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/");
+        for modifier in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+            let action = handle_key(&mut app, KeyEvent::new(KeyCode::Char('c'), modifier));
+            assert_eq!(action, KeyAction::Nothing);
+        }
+        assert_eq!(app.filter.query(), "");
+        // A capital letter is typed with Shift held: that is text.
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT),
+        );
+        assert_eq!(app.filter.query(), "S");
+    }
+
+    #[test]
+    fn the_arrows_and_page_keys_still_work_while_typing() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/");
+        handle_key(&mut app, key(KeyCode::PageDown));
+        assert_eq!(selected_id(&app), "security");
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.detail_scroll, 1);
+        handle_key(&mut app, key(KeyCode::Up));
+        assert_eq!(app.detail_scroll, 0);
+        assert!(app.typing, "still typing");
+    }
+
+    #[test]
+    fn the_bottom_bar_shows_the_text_as_it_is_typed_and_then_the_filter() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/ss");
+        let typing = screen_text(&mut app, 100, 24);
+        assert!(typing.contains("Search: ss\u{2588}"), "{typing}");
+        assert!(typing.contains("Enter keep"), "{typing}");
+        assert!(!typing.contains("q quit"), "q is text now: {typing}");
+
+        handle_key(&mut app, key(KeyCode::Enter));
+        let kept = screen_text(&mut app, 100, 24);
+        assert!(kept.contains("Filter: search \u{201c}ss\u{201d}"), "{kept}");
+        assert!(kept.contains("Esc clears"), "{kept}");
+        assert!(kept.contains("q quit"), "{kept}");
+        assert!(!kept.contains("Search: "), "{kept}");
+    }
+
+    #[test]
+    fn the_bottom_bar_still_fits_in_eighty_columns() {
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "f/ssh");
+        let typing = screen_text(&mut app, 80, 24);
+        assert!(typing.contains("Esc clear"), "{typing}");
+        handle_key(&mut app, key(KeyCode::Enter));
+        let kept = screen_text(&mut app, 80, 24);
+        assert!(kept.contains("Esc clears"), "{kept}");
+        assert!(kept.contains("q quit"), "{kept}");
+        assert!(kept.contains("1 of 5 findings"), "{kept}");
+    }
+
+    #[test]
+    fn a_refresh_keeps_the_filter_and_moves_off_a_module_with_nothing_to_show() {
+        let mut app = TuiApp::new(flat_report());
+        press(&mut app, "/dns"); // nothing in the memory module matches
+        assert_eq!(selected_id(&app), "memory");
+        app.replace_report(other_flat_report());
+        assert!(app.filter.is_active(), "the filter outlives a refresh");
+        assert_eq!(app.filter.query(), "dns");
+        assert_eq!(selected_id(&app), "network");
+    }
+
+    #[test]
+    fn text_from_the_audited_machine_never_reaches_the_screen_under_a_filter() {
+        use crate::output::common::testkit::{hostile_report, unsafe_char};
+        let mut app = TuiApp::new(hostile_report());
+        press(&mut app, "f/evil");
+        let modules = app.report.results.len();
+        let mut seen_payload = false;
+        for index in 0..modules {
+            app.module_state.select(Some(index));
+            let text = screen_text(&mut app, 200, 60);
+            assert_eq!(unsafe_char(&text), None, "module {index}: {text:?}");
+            seen_payload |= text.contains("EVIL");
+        }
+        assert!(seen_payload, "the test saw none of the hostile text");
+    }
+
+    #[test]
+    fn what_is_typed_cannot_put_control_characters_on_the_screen() {
+        use crate::output::common::testkit::unsafe_char;
+        let mut app = TuiApp::new(mixed_report());
+        press(&mut app, "/");
+        for c in ['\u{1b}', '\u{7}', '\u{9b}', '\r', 'a'] {
+            handle_key(&mut app, key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.filter.query(), "a");
+        let text = screen_text(&mut app, 100, 24);
+        assert_eq!(unsafe_char(&text), None, "{text:?}");
     }
 }

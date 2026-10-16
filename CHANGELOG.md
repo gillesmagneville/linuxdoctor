@@ -41,6 +41,36 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     l'en-tête et l'écran de chargement de la TUI. Ils échouent quand on retire
     l'affichage ou le nettoyage.
 
+- **La TUI se filtre et se cherche.** Avec 13 modules et des dizaines de constats,
+  voir seulement ce qui compte demandait de tout faire défiler.
+  - **`f` choisit une sévérité minimale** : tout, avertissement et plus, erreur et
+    plus, critique seul (les quatre niveaux de `--min-severity`).
+  - **`/` cherche un texte**, sans tenir compte de la casse, dans l'identifiant, le
+    titre, l'explication, la recommandation, l'instance et les preuves d'un constat.
+    Entrée le garde, Échap l'oublie ; pendant la saisie, `q`, `r`, `f`, `j` et `k`
+    sont des lettres, pas des commandes.
+  - **Un écran filtré ne peut pas passer pour complet** : la barre du bas indique
+    `Filter: … · N of M findings`, chaque module affiche le nombre de ses constats
+    retenus (ceux qui n'en ont plus sont grisés), et chaque page rappelle combien de
+    constats du module sont montrés. Un module en erreur ou ignoré garde son
+    affichage.
+  - **Le rapport n'est jamais modifié** : le ✓/⚠/✗ d'un module décrit toujours le
+    module entier et le code de sortie de `linuxdoctor tui` tient compte de tous les
+    constats, filtrés ou non.
+  - **Les sous-éléments suivent le filtre** : si une seule instance reste, elle est
+    montrée à plat, comme pour un module qui n'en a qu'une. L'écran passe au premier
+    module qui a une correspondance quand le filtre change.
+  - **Échap défait un niveau à la fois** : le sous-menu, puis le filtre, puis quitte.
+    Sans filtre, rien ne change. La barre du bas fait maintenant deux lignes (l'état
+    de l'affichage, puis les touches).
+  - Le texte tapé est limité à 40 caractères et refuse les caractères de contrôle,
+    puisqu'il est réaffiché.
+  - Tests : `output::tui_filter` (sévérité, texte, longueur, casse) et la TUI sans
+    terminal (touches, écran dessiné, couleurs des modules vides, sous-menus,
+    actualisation, texte hostile sous filtre). Ils échouent quand on retire le saut
+    vers le module qui correspond, le filtre de sévérité, le contrôle des touches
+    Ctrl/Alt ou le rôle de Échap.
+
 ## [1.8.0] - 2026-10-16
 
 Un fichier de configuration pour garder ses options sans les retaper, et la

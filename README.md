@@ -582,7 +582,17 @@ within its submenu), ↑/↓ (or j/k) to scroll a long finding, Enter to open
 a module's submenu when one is available (2+ items — a small "›" marks
 which modules have one), Esc to back out of a submenu, r to re-scan
 everything (same progress screen as startup, current module selection
-preserved), q or Esc to quit. The header shows a continuously-updating
+preserved), q or Esc to quit. **f** cycles a minimum severity (everything →
+warning and above → error and above → critical only, the same four levels as
+`--min-severity`) and **/** searches: type a word (case does not matter; it is
+looked for in a finding's id, title, explanation, recommendation, instance and
+evidence), Enter keeps it, Esc forgets it. While a filter is on, each module in
+the list shows how many of its findings get through and the ones left with none
+are greyed out; the screen jumps to the first module that has a match; the bottom
+bar says `Filter: … · N of M findings`, so a filtered screen cannot pass for a
+complete one. Esc undoes one level at a time — the submenu, then the filter, then
+it quits. The filter only changes what is drawn: a module's ✓/⚠/✗ still describes
+the whole module, and the exit code is still computed from every finding. The header shows a continuously-updating
 CPU/memory/disk-usage line (roughly once a second, no action needed) and
 how old the displayed findings are — separate freshness stories, since
 the gauges are cheap `/proc` reads but re-scanning the full module
@@ -594,7 +604,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 953 lib unit tests + 76 CLI unit tests + 155 integration tests
+cargo test               # 992 lib unit tests + 76 CLI unit tests + 155 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -703,6 +713,7 @@ linuxdoctor/
         ├── markdown.rs             # Markdown report
         ├── html.rs                   # self-contained HTML report
         ├── tui.rs                  # interactive UI (ratatui)
+        ├── tui_filter.rs             # what the TUI shows: minimum severity + search text
         └── live_stats.rs             # TUI header gauges (CPU/mem/disk %)
 
 tests/       # fixture-driven integration tests, one file per module,

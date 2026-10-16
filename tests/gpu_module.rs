@@ -36,6 +36,7 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         name: "card0".to_string(),
         pci_address: "0000:01:00.0".to_string(),
         vendor: GpuVendor::Amd,
+        drm_card: true,
         description: Some("Radeon RX 6800".to_string()),
         driver: Some("amdgpu".to_string()),
         driver_version: None,
@@ -67,6 +68,7 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         name: "card1".to_string(),
         pci_address: "0000:02:00.0".to_string(),
         vendor: GpuVendor::Nvidia,
+        drm_card: true,
         description: Some("NVIDIA GeForce RTX 4090".to_string()),
         driver: Some("nvidia".to_string()),
         driver_version: Some("550.78".to_string()),
@@ -140,6 +142,7 @@ fn intel_integrated_gpu_throttled_by_heat_is_a_warning() {
         name: "card0".to_string(),
         pci_address: "0000:00:02.0".to_string(),
         vendor: GpuVendor::Intel,
+        drm_card: true,
         description: Some("Alder Lake-P GT2 [Iris Xe Graphics]".to_string()),
         driver: Some("i915".to_string()),
         driver_version: None,
@@ -184,4 +187,56 @@ fn intel_integrated_gpu_throttled_by_heat_is_a_warning() {
         .evidence
         .iter()
         .any(|(k, v)| k == "throttle_reasons" && v == "thermal,pl1"));
+}
+
+/// A virtualization host as seen on the maintainer's own machine: one NVIDIA
+/// card in use by the host, one reserved for VM passthrough (no DRM card),
+/// and a management controller's video chip with no driver. Nothing here is
+/// a problem, and nothing should be reported as one.
+#[test]
+fn a_passthrough_host_is_reported_without_raising_any_alarm() {
+    let in_use = GpuInfo::new(
+        "card0".to_string(),
+        "0000:02:00.0".to_string(),
+        GpuVendor::Nvidia,
+        Some("NVIDIA GeForce GTX 1050 Ti".to_string()),
+        Some("nvidia".to_string()),
+        true,
+    );
+    let reserved = GpuInfo::new(
+        "0000:04:00.0".to_string(),
+        "0000:04:00.0".to_string(),
+        GpuVendor::Nvidia,
+        Some("NVIDIA GP102 [TITAN X Pascal]".to_string()),
+        Some("vfio-pci".to_string()),
+        false,
+    );
+    let bmc = GpuInfo::new(
+        "0000:0b:00.0".to_string(),
+        "0000:0b:00.0".to_string(),
+        GpuVendor::Other,
+        Some("ASPEED Graphics Family".to_string()),
+        None,
+        false,
+    );
+    let data = GpuRawData {
+        gpus: vec![in_use, reserved, bmc],
+        nvidia_max_cuda_version: None,
+    };
+    let findings = analyze(&data, &test_context());
+
+    assert!(
+        findings.iter().all(|f| f.severity == Severity::Info),
+        "{:?}",
+        findings
+            .iter()
+            .map(|f| (&f.id, f.severity))
+            .collect::<Vec<_>>()
+    );
+    let gpu001 = findings.iter().find(|f| f.id == "GPU001").unwrap();
+    assert!(gpu001
+        .explanation
+        .contains("3 GPUs detected: 2 NVIDIA, 1 unknown vendor."));
+    assert!(gpu001.explanation.contains("1 of 3 is bound to vfio-pci"));
+    assert_eq!(findings.iter().filter(|f| f.id == "GPU002").count(), 3);
 }

@@ -29,6 +29,7 @@ pub fn render(report: &Report, meta: &RenderMeta) -> String {
         "# LinuxDoctor report \u{2014} {}\n\n",
         escape_text(&ctx.hostname)
     ));
+    out.push_str(&format!("- **LinuxDoctor:** {}\n", meta.tool_version));
     out.push_str(&format!(
         "- **Kernel:** {}\n",
         code_span(&ctx.kernel_version)
@@ -44,9 +45,8 @@ pub fn render(report: &Report, meta: &RenderMeta) -> String {
         ctx.mem_total_kb / 1024
     ));
     out.push_str(&format!(
-        "- **Generated:** {} by LinuxDoctor {}\n\n",
-        format_utc(meta.generated_at_unix),
-        meta.tool_version
+        "- **Generated:** {}\n\n",
+        format_utc(meta.generated_at_unix)
     ));
 
     if let Some(filter) = &meta.filter {
@@ -420,8 +420,19 @@ mod tests {
         assert!(md.contains("- **Kernel:** `6.8.0-31-generic`"));
         assert!(md.contains("- **Distribution:** Ubuntu 24.04"));
         assert!(md.contains("x86_64 \u{00b7} 8 CPUs \u{00b7} 16000 MB RAM"));
-        assert!(md.contains("- **Generated:** 2026-10-14 06:30:00 UTC by LinuxDoctor 9.9.9"));
+        assert!(md.contains("- **Generated:** 2026-10-14 06:30:00 UTC\n"));
         assert!(md.contains("never run by the tool"));
+    }
+
+    #[test]
+    fn the_version_is_the_first_line_under_the_title() {
+        let md = render(&report(vec![]), &meta());
+        let mut lines = md.lines();
+        assert_eq!(lines.next(), Some("# LinuxDoctor report \u{2014} web01"));
+        assert_eq!(lines.next(), Some(""));
+        assert_eq!(lines.next(), Some("- **LinuxDoctor:** 9.9.9"));
+        // Still in the footer.
+        assert!(md.contains("LinuxDoctor 9.9.9 only reads system state"));
     }
 
     #[test]

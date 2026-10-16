@@ -367,7 +367,10 @@ fn help_text(app: &TuiApp) -> &'static str {
 fn draw_header(f: &mut Frame, app: &TuiApp, area: Rect) {
     let ctx = &app.report.context;
     let line1 = Line::from(vec![
-        Span::styled("LinuxDoctor", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("LinuxDoctor {}", crate::VERSION),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
         Span::raw(format!(
             " \u{2014} {}  |  kernel {} \u{00b7} {} \u{00b7} {} CPUs \u{00b7} {} MB RAM",
             ctx.hostname,
@@ -712,7 +715,7 @@ pub fn draw_progress_screen(f: &mut Frame, done: usize, total: usize, pending: &
         .split(area);
 
     let title = Paragraph::new(Line::from(Span::styled(
-        "LinuxDoctor",
+        format!("LinuxDoctor {}", crate::VERSION),
         Style::default().add_modifier(Modifier::BOLD),
     )))
     .alignment(Alignment::Center);
@@ -971,6 +974,27 @@ mod tests {
         assert!(content.contains("memory"));
         assert!(content.contains("MEM002"));
         assert!(content.contains("test-host"));
+    }
+
+    #[test]
+    fn the_header_and_the_loading_screen_say_which_version_this_is() {
+        let expected = format!("LinuxDoctor {}", crate::VERSION);
+        let mut app = TuiApp::new(flat_report());
+        let content = screen_text(&mut app, 100, 20);
+        assert!(content.contains(&expected), "header: {content}");
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|f| draw_progress_screen(f, 1, 5, &["storage"]))
+            .unwrap();
+        let loading: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(loading.contains(&expected), "loading screen: {loading}");
     }
 
     #[test]

@@ -10,17 +10,20 @@ use super::collect::{is_thermal_throttle_reason, GpuInfo, GpuProcess, GpuRawData
 pub fn analyze(data: &GpuRawData, _ctx: &Context) -> Vec<Finding> {
     let mut findings = vec![summary_finding(data)];
     for gpu in &data.gpus {
-        findings.push(detail_finding(gpu));
+        findings.push(detail_finding(gpu, &data.gpus));
     }
     findings
 }
 
-fn vendor_label(vendor: GpuVendor) -> &'static str {
-    match vendor {
+/// How the maker is written in the report: one of the three GPU makers, a
+/// well-known display chip maker recognised by its PCI id (ASPEED...), or
+/// "unknown vendor".
+fn vendor_label(gpu: &GpuInfo) -> &'static str {
+    match gpu.vendor {
         GpuVendor::Nvidia => "NVIDIA",
         GpuVendor::Amd => "AMD",
         GpuVendor::Intel => "Intel",
-        GpuVendor::Other => "unknown vendor",
+        GpuVendor::Other => gpu.vendor_name.unwrap_or("unknown vendor"),
     }
 }
 
@@ -54,7 +57,7 @@ fn summary_finding(data: &GpuRawData) -> Finding {
     } else {
         let mut vendor_counts: Vec<(&str, usize)> = Vec::new();
         for gpu in &data.gpus {
-            let label = vendor_label(gpu.vendor);
+            let label = vendor_label(gpu);
             if let Some(entry) = vendor_counts.iter_mut().find(|(v, _)| *v == label) {
                 entry.1 += 1;
             } else {
@@ -185,6 +188,75 @@ fn throttle_note(gpu: &GpuInfo, thermal: bool) -> String {
     }
 }
 
+/// What to make of a link that runs narrower than the card supports.
+///
+/// A narrow link has several ordinary causes that are not faults of the card
+/// -- a slot wired for fewer lanes than its size, lanes the motherboard
+/// shares between slots or devices (two cards at x8 each is the classic
+/// case) -- and a few that are (a poorly seated card, a riser). The port the
+/// card is plugged into tells them apart when it reports its own width: if it
+/// can carry no more than the link runs at, the slot sets the limit.
+fn width_note(gpu: &GpuInfo, all: &[GpuInfo], cur: u32) -> String {
+    let same_width_peers = all
+        .iter()
+        .filter(|other| {
+            other.pci_address != gpu.pci_address
+                && other.pcie_link_width_current == Some(cur)
+                && other.pcie_link_width_max.is_some_and(|m| m > cur)
+        })
+        .count();
+    let peers = match same_width_peers {
+        0 => String::new(),
+        1 => format!(
+            " One other GPU in this machine also runs at x{cur}: cards that \
+             share lanes often split them evenly."
+        ),
+        n => format!(
+            " {n} other GPUs in this machine also run at x{cur}: cards that \
+             share lanes often split them evenly."
+        ),
+    };
+    match gpu.pcie_port_width_max {
+        Some(port) if cur >= port => format!(
+            " The port it is plugged into allows at most x{port}, so the \
+             slot (or the way the motherboard shares lanes between slots \
+             and devices) sets this limit: that is the platform's layout, \
+             not a fault of the card.{peers}"
+        ),
+        Some(port) if port > cur => format!(
+            " Its port reports it can carry x{port}, so the narrowing is not \
+             the port's own limit. Lanes shared with another card or slot, a \
+             lane setting in the BIOS, a riser or a poorly seated card can \
+             each cause it: check the motherboard manual first, then the \
+             seating.{peers}"
+        ),
+        _ => format!(
+            " Common causes: lanes shared with another card or slot, a slot \
+             wired for fewer lanes than its size, a lane setting in the \
+             BIOS; less often a riser or a poorly seated card.{peers}"
+        ),
+    }
+}
+
+/// What to make of a link running below the speed the card supports.
+fn speed_note(gpu: &GpuInfo, cur_speed: &str, max_speed: &str) -> String {
+    if is_passthrough(gpu) {
+        format!(
+            " The link runs at {cur_speed}, below the {max_speed} the card \
+             supports. No driver on this machine manages a card reserved \
+             for a virtual machine, so the speed it rests at says nothing \
+             about the card."
+        )
+    } else {
+        format!(
+            " The link runs at {cur_speed}, below the {max_speed} the card \
+             supports. Links slow down when the card is idle to save power, \
+             which is normal; if it stays low while the GPU is busy, look at \
+             the slot and the BIOS PCIe settings."
+        )
+    }
+}
+
 /// GPU002 — one finding per GPU. Temperature is the one metric this
 /// escalates severity on (Intel's driver-reported thermal throttling too, as
 /// a direct statement from the kernel that the GPU is being slowed down by
@@ -192,8 +264,8 @@ fn throttle_note(gpu: &GpuInfo, thermal: bool) -> String {
 /// the card's limit are often *intentional* (a card doing real work),
 /// not a problem, so they stay Info-level context rather than alerts —
 /// same reasoning Virtualization's resource-usage findings use.
-fn detail_finding(gpu: &GpuInfo) -> Finding {
-    let vendor = vendor_label(gpu.vendor);
+fn detail_finding(gpu: &GpuInfo, all: &[GpuInfo]) -> Finding {
+    let vendor = vendor_label(gpu);
     let model = gpu.description.as_deref().unwrap_or("model unknown");
     // Avoid "NVIDIA NVIDIA GeForce RTX 4090": nvidia-smi's own reported
     // name (used as `description` when lspci found nothing better)
@@ -343,13 +415,20 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
         gpu.pcie_link_width_max,
     ) {
         (Some(cur_speed), Some(max_speed), Some(cur_width), Some(max_width)) => {
-            if cur_speed != max_speed || cur_width != max_width {
-                format!(
-                    " PCIe: currently {cur_speed} x{cur_width}, below this \
-                     card's maximum of {max_speed} x{max_width} — worth \
-                     checking the physical slot/cable if unexpected (could \
-                     also just be a normal idle power-saving state)."
-                )
+            let narrow = cur_width < max_width;
+            let slow = cur_speed != max_speed;
+            if narrow || slow {
+                let mut note = format!(
+                    " PCIe: {cur_speed} x{cur_width} (this card supports up \
+                     to {max_speed} x{max_width})."
+                );
+                if narrow {
+                    note.push_str(&width_note(gpu, all, cur_width));
+                }
+                if slow {
+                    note.push_str(&speed_note(gpu, cur_speed, max_speed));
+                }
+                note
             } else {
                 format!(
                     " PCIe: {cur_speed} x{cur_width} (matches this card's \
@@ -488,6 +567,9 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
     if let Some(w) = gpu.pcie_link_width_max {
         builder = builder.evidence("pcie_link_width_max", w.to_string());
     }
+    if let Some(w) = gpu.pcie_port_width_max {
+        builder = builder.evidence("pcie_port_width_max", w.to_string());
+    }
     if !gpu.processes.is_empty() {
         builder = builder.evidence("process_count", gpu.processes.len().to_string());
     }
@@ -541,6 +623,7 @@ mod tests {
             name: "card0".to_string(),
             pci_address: "0000:01:00.0".to_string(),
             vendor: GpuVendor::Amd,
+            vendor_name: None,
             drm_card: true,
             description: Some("Radeon RX 6800".to_string()),
             driver: Some("amdgpu".to_string()),
@@ -566,6 +649,7 @@ mod tests {
             pcie_link_speed_max: None,
             pcie_link_width_current: None,
             pcie_link_width_max: None,
+            pcie_port_width_max: None,
             processes: vec![],
         }
     }
@@ -764,12 +848,13 @@ mod tests {
         assert!(gpu002
             .explanation
             .contains("2100 MHz core, 1750 MHz memory"));
-        assert!(gpu002.explanation.contains(
-            "currently 8.0 GT/s PCIe x8, below this card's maximum of 16.0 GT/s PCIe x16"
-        ));
         assert!(gpu002
             .explanation
-            .contains("checking the physical slot/cable"));
+            .contains("PCIe: 8.0 GT/s PCIe x8 (this card supports up to 16.0 GT/s PCIe x16)."));
+        // Nothing is known about the port: the causes are listed, none is
+        // blamed, and the old "check the cable" advice is gone.
+        assert!(gpu002.explanation.contains("Common causes: lanes shared"));
+        assert!(!gpu002.explanation.contains("physical slot/cable"));
         assert!(gpu002
             .evidence
             .iter()
@@ -1177,5 +1262,340 @@ mod tests {
         let f = &analyze(&data, &ctx())[0];
         assert!(f.explanation.contains("no DRM card under /sys/class/drm"));
         assert!(f.explanation.contains("PCI bus"));
+    }
+
+    // ----- the PCIe link: what is said about a narrow or slow one -----
+
+    /// A card whose link runs at `cur_width` lanes of `max_width`, with the
+    /// speeds given, at the PCI address given.
+    fn linked(
+        address: &str,
+        (cur_speed, max_speed): (&str, &str),
+        (cur_width, max_width): (u32, u32),
+    ) -> GpuInfo {
+        let mut gpu = base_gpu();
+        gpu.name = address.to_string();
+        gpu.pci_address = address.to_string();
+        gpu.pcie_link_speed_current = Some(cur_speed.to_string());
+        gpu.pcie_link_speed_max = Some(max_speed.to_string());
+        gpu.pcie_link_width_current = Some(cur_width);
+        gpu.pcie_link_width_max = Some(max_width);
+        gpu
+    }
+
+    const GEN3: &str = "8.0 GT/s PCIe";
+    const GEN1: &str = "2.5 GT/s PCIe";
+
+    fn narrow_gpu(port: Option<u32>) -> GpuInfo {
+        let mut gpu = linked("0000:01:00.0", (GEN3, GEN3), (8, 16));
+        gpu.pcie_port_width_max = port;
+        gpu
+    }
+
+    #[test]
+    fn a_port_that_carries_no_more_says_the_slot_sets_the_limit() {
+        let f = gpu002_of(narrow_gpu(Some(8)));
+        assert!(f
+            .explanation
+            .contains("The port it is plugged into allows at most x8, so the slot"));
+        assert!(f.explanation.contains("not a fault of the card"));
+        assert!(!f.explanation.contains("Common causes"));
+        assert!(!f.explanation.contains("poorly seated"));
+        assert_eq!(f.severity, Severity::Info);
+        assert_eq!(evidence(&f, "pcie_port_width_max"), Some("8"));
+    }
+
+    #[test]
+    fn a_port_that_could_carry_more_does_not_blame_the_slot() {
+        let f = gpu002_of(narrow_gpu(Some(16)));
+        assert!(f.explanation.contains(
+            "Its port reports it can carry x16, so the narrowing is not the port's own limit."
+        ));
+        assert!(f.explanation.contains("check the motherboard manual first"));
+        assert!(!f.explanation.contains("allows at most"));
+        assert!(!f.explanation.contains("not a fault of the card"));
+        assert_eq!(f.severity, Severity::Info, "a width is never an alert");
+    }
+
+    #[test]
+    fn a_port_between_the_link_and_the_card_maximum_is_not_the_limit_either() {
+        // x4 link, x16 card, x8 port: the port could carry twice what it does.
+        let mut gpu = linked("0000:01:00.0", (GEN3, GEN3), (4, 16));
+        gpu.pcie_port_width_max = Some(8);
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.contains("Its port reports it can carry x8"));
+        assert!(!f.explanation.contains("allows at most"));
+    }
+
+    #[test]
+    fn a_link_exactly_as_wide_as_the_port_is_the_ports_limit() {
+        let mut gpu = linked("0000:01:00.0", (GEN3, GEN3), (4, 16));
+        gpu.pcie_port_width_max = Some(4);
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.contains("allows at most x4"));
+    }
+
+    #[test]
+    fn a_port_that_says_nothing_leaves_the_causes_open() {
+        let f = gpu002_of(narrow_gpu(None));
+        assert!(f.explanation.contains(
+            "Common causes: lanes shared with another card or slot, a slot wired for fewer lanes than its size, a lane setting in the BIOS; less often a riser or a poorly seated card."
+        ));
+        assert!(!f.explanation.contains("allows at most"));
+        assert!(!f.explanation.contains("Its port reports"));
+        assert_eq!(evidence(&f, "pcie_port_width_max"), None);
+    }
+
+    #[test]
+    fn a_card_that_runs_at_full_width_gets_no_width_note_even_with_a_port_known() {
+        let mut gpu = linked("0000:01:00.0", (GEN3, GEN3), (16, 16));
+        gpu.pcie_port_width_max = Some(16);
+        let f = gpu002_of(gpu);
+        for word in ["Common causes", "allows at most", "Its port reports"] {
+            assert!(!f.explanation.contains(word), "{word}");
+        }
+        assert!(f.explanation.contains("known kernel/driver quirk"));
+        assert_eq!(evidence(&f, "pcie_port_width_max"), Some("16"));
+    }
+
+    fn peers_of(gpus: Vec<GpuInfo>) -> Vec<Finding> {
+        let data = GpuRawData {
+            gpus,
+            nvidia_max_cuda_version: None,
+        };
+        analyze(&data, &ctx())
+            .into_iter()
+            .filter(|f| f.id == "GPU002")
+            .collect()
+    }
+
+    #[test]
+    fn a_card_alone_never_counts_itself_as_a_peer() {
+        let f = gpu002_of(narrow_gpu(Some(8)));
+        assert!(!f.explanation.contains("other GPU"));
+    }
+
+    #[test]
+    fn two_cards_at_the_same_reduced_width_point_at_each_other() {
+        for port in [Some(8), Some(16), None] {
+            let mut a = narrow_gpu(port);
+            a.pci_address = "0000:02:00.0".into();
+            a.name = "card1".into();
+            let mut b = narrow_gpu(port);
+            b.pci_address = "0000:04:00.0".into();
+            b.name = "card2".into();
+            for f in peers_of(vec![a, b]) {
+                assert!(
+                    f.explanation.contains(
+                        "One other GPU in this machine also runs at x8: cards that share lanes often split them evenly."
+                    ),
+                    "{port:?}: {}",
+                    f.explanation
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn several_peers_are_counted() {
+        let gpus: Vec<GpuInfo> = (1..=3)
+            .map(|n| {
+                let mut gpu = narrow_gpu(None);
+                gpu.pci_address = format!("0000:0{n}:00.0");
+                gpu.name = format!("card{n}");
+                gpu
+            })
+            .collect();
+        for f in peers_of(gpus) {
+            assert!(
+                f.explanation
+                    .contains("2 other GPUs in this machine also run at x8"),
+                "{}",
+                f.explanation
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_card_with_the_same_reduced_width_counts_as_a_peer() {
+        let narrow = narrow_gpu(None);
+        // Another width...
+        let mut other_width = linked("0000:04:00.0", (GEN3, GEN3), (4, 16));
+        other_width.name = "card2".into();
+        // ...full width (it is not sharing anything)...
+        let mut full = linked("0000:05:00.0", (GEN3, GEN3), (8, 8));
+        full.name = "card3".into();
+        // ...and no reading at all.
+        let mut unknown = base_gpu();
+        unknown.pci_address = "0000:06:00.0".into();
+        unknown.name = "card4".into();
+        let found = peers_of(vec![narrow, other_width, full, unknown]);
+        assert!(!found[0].explanation.contains("other GPU"));
+    }
+
+    #[test]
+    fn a_slow_link_alone_is_explained_by_idle_power_saving() {
+        let f = gpu002_of(linked("0000:01:00.0", (GEN1, GEN3), (16, 16)));
+        assert!(f
+            .explanation
+            .contains("PCIe: 2.5 GT/s PCIe x16 (this card supports up to 8.0 GT/s PCIe x16)."));
+        assert!(f.explanation.contains(
+            "The link runs at 2.5 GT/s PCIe, below the 8.0 GT/s PCIe the card supports. Links slow down when the card is idle to save power, which is normal"
+        ));
+        assert!(f
+            .explanation
+            .contains("look at the slot and the BIOS PCIe settings"));
+        // Full width: nothing about lanes.
+        assert!(!f.explanation.contains("Common causes"));
+        assert!(!f.explanation.contains("known kernel/driver quirk"));
+        assert_eq!(f.severity, Severity::Info);
+    }
+
+    #[test]
+    fn a_narrow_link_at_full_speed_has_no_speed_note() {
+        let f = gpu002_of(narrow_gpu(None));
+        assert!(!f.explanation.contains("The link runs at"));
+        assert!(!f.explanation.contains("idle to save power"));
+    }
+
+    #[test]
+    fn a_link_both_narrow_and_slow_gets_both_notes_width_first() {
+        let mut gpu = linked("0000:01:00.0", (GEN1, GEN3), (8, 16));
+        gpu.pcie_port_width_max = Some(8);
+        let f = gpu002_of(gpu);
+        let width = f.explanation.find("allows at most x8").expect("width note");
+        let speed = f.explanation.find("The link runs at").expect("speed note");
+        assert!(width < speed);
+    }
+
+    #[test]
+    fn a_card_reserved_for_a_vm_is_not_told_it_is_idle_to_save_power() {
+        let mut gpu = linked("0000:04:00.0", (GEN1, GEN3), (16, 16));
+        gpu.driver = Some("vfio-pci".to_string());
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.contains(
+            "No driver on this machine manages a card reserved for a virtual machine, so the speed it rests at says nothing about the card."
+        ));
+        assert!(!f.explanation.contains("idle to save power"));
+        assert!(!f.explanation.contains("look at the slot"));
+    }
+
+    // ----- makers recognised by their PCI id -----
+
+    fn aspeed_gpu() -> GpuInfo {
+        let mut gpu = GpuInfo::new(
+            "0000:0b:00.0".to_string(),
+            "0000:0b:00.0".to_string(),
+            GpuVendor::Other,
+            Some("VGA compatible controller: ASPEED Technology, Inc. ASPEED Graphics Family (rev 30)".to_string()),
+            None,
+            false,
+        );
+        gpu.vendor_name = Some("ASPEED");
+        gpu
+    }
+
+    #[test]
+    fn a_recognised_display_chip_maker_is_written_in_clear() {
+        let f = gpu002_of(aspeed_gpu());
+        assert_eq!(evidence(&f, "vendor"), Some("ASPEED"));
+        assert!(f
+            .explanation
+            .starts_with("ASPEED VGA compatible controller"));
+        assert!(!f.explanation.contains("unknown vendor"));
+        // Still a plain display adapter on a server: not an alert.
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f
+            .explanation
+            .contains("often the video chip of a server's management controller"));
+    }
+
+    #[test]
+    fn an_unrecognised_maker_stays_unknown() {
+        let mut gpu = aspeed_gpu();
+        gpu.vendor_name = None;
+        let f = gpu002_of(gpu);
+        assert_eq!(evidence(&f, "vendor"), Some("unknown vendor"));
+        assert!(f
+            .explanation
+            .starts_with("unknown vendor VGA compatible controller"));
+    }
+
+    #[test]
+    fn a_name_never_replaces_one_of_the_three_gpu_makers() {
+        for (vendor, label) in [
+            (GpuVendor::Nvidia, "NVIDIA"),
+            (GpuVendor::Amd, "AMD"),
+            (GpuVendor::Intel, "Intel"),
+        ] {
+            let mut gpu = aspeed_gpu();
+            gpu.vendor = vendor;
+            let f = gpu002_of(gpu);
+            assert_eq!(evidence(&f, "vendor"), Some(label));
+        }
+    }
+
+    #[test]
+    fn the_summary_counts_a_recognised_maker_under_its_name() {
+        let mut nvidia = base_gpu();
+        nvidia.vendor = GpuVendor::Nvidia;
+        let mut unknown = aspeed_gpu();
+        unknown.vendor_name = None;
+        unknown.pci_address = "0000:0c:00.0".into();
+        let data = GpuRawData {
+            gpus: vec![nvidia, aspeed_gpu(), unknown],
+            nvidia_max_cuda_version: None,
+        };
+        let summary = &analyze(&data, &ctx())[0];
+        assert!(
+            summary
+                .explanation
+                .starts_with("3 GPUs detected: 1 NVIDIA, 1 ASPEED, 1 unknown vendor."),
+            "{}",
+            summary.explanation
+        );
+    }
+
+    #[test]
+    fn a_description_that_already_starts_with_the_maker_is_not_prefixed_twice() {
+        let mut gpu = aspeed_gpu();
+        gpu.description = Some("ASPEED Graphics Family".to_string());
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.starts_with("ASPEED Graphics Family"));
+    }
+
+    // ----- the machine that prompted all of this -----
+
+    #[test]
+    fn a_workstation_with_two_cards_sharing_lanes_and_a_management_chip() {
+        let mut gtx = linked("0000:02:00.0", (GEN1, GEN3), (8, 16));
+        gtx.name = "card1".into();
+        gtx.vendor = GpuVendor::Nvidia;
+        gtx.driver = Some("nvidia".to_string());
+        gtx.pcie_port_width_max = Some(8);
+        let mut titan = linked("0000:04:00.0", (GEN1, GEN3), (8, 16));
+        titan.vendor = GpuVendor::Nvidia;
+        titan.driver = Some("vfio-pci".to_string());
+        titan.drm_card = false;
+        titan.pcie_port_width_max = Some(8);
+        let found = peers_of(vec![gtx, titan, aspeed_gpu()]);
+        assert_eq!(found.len(), 3);
+
+        let (gtx, titan, aspeed) = (&found[0], &found[1], &found[2]);
+        assert!(gtx.explanation.contains("allows at most x8"));
+        assert!(gtx
+            .explanation
+            .contains("One other GPU in this machine also runs at x8"));
+        assert!(gtx.explanation.contains("idle to save power"));
+        assert!(titan.explanation.contains("allows at most x8"));
+        assert!(titan
+            .explanation
+            .contains("One other GPU in this machine also runs at x8"));
+        assert!(titan.explanation.contains("says nothing about the card"));
+        assert!(!aspeed.explanation.contains("PCIe:"));
+        assert_eq!(evidence(aspeed, "vendor"), Some("ASPEED"));
+        for f in &found {
+            assert_eq!(f.severity, Severity::Info, "{}", f.title);
+        }
     }
 }

@@ -31,6 +31,12 @@ pub struct GpuInfo {
     pub name: String,
     pub pci_address: String,
     pub vendor: GpuVendor,
+    /// The name of the maker when it is none of the three GPU makers but a
+    /// well-known one (ASPEED, whose chip is the video output of a server's
+    /// management controller; see [`other_vendor_name`]). `None` for the
+    /// three makers (the [`GpuVendor`] says it) and for an id nobody here
+    /// knows.
+    pub vendor_name: Option<&'static str>,
     /// Whether the kernel exposes a DRM card (`/sys/class/drm/cardN`) for
     /// this GPU. `false` for a GPU only found on the PCI bus: one reserved
     /// for VM passthrough (`vfio-pci`), one with no driver, or a compute
@@ -98,6 +104,12 @@ pub struct GpuInfo {
     pub pcie_link_speed_max: Option<String>,
     pub pcie_link_width_current: Option<u32>,
     pub pcie_link_width_max: Option<u32>,
+    /// The widest link the *port* this card is plugged into (the root port
+    /// or switch port above it) can carry. Lower than the card's own
+    /// maximum when the slot is wired for fewer lanes or the board shares
+    /// its lanes between slots; `None` when the card sits directly on the
+    /// root complex (an integrated GPU) or the port does not say.
+    pub pcie_port_width_max: Option<u32>,
     /// NVIDIA only, and only when exactly one NVIDIA GPU is present —
     /// see `collect()` for why multi-GPU systems don't get per-process
     /// attribution here.
@@ -118,6 +130,7 @@ impl GpuInfo {
             name,
             pci_address,
             vendor,
+            vendor_name: None,
             drm_card,
             description,
             driver,
@@ -143,6 +156,7 @@ impl GpuInfo {
             pcie_link_speed_max: None,
             pcie_link_width_current: None,
             pcie_link_width_max: None,
+            pcie_port_width_max: None,
             processes: Vec::new(),
         }
     }
@@ -216,6 +230,33 @@ pub fn classify_vendor(pci_id: &str) -> GpuVendor {
         "1002" => GpuVendor::Amd,
         "8086" => GpuVendor::Intel,
         _ => GpuVendor::Other,
+    }
+}
+
+/// The name of a well-known display chip maker that is not one of the three
+/// GPU makers, from the vendor half of the PCI id (`"1a03:2000"`, or the
+/// bare `"1a03"`). These are the chips found on servers' management
+/// controllers (ASPEED, Matrox), in virtual machines (VMware, Red Hat's
+/// virtio and QXL) and in old hardware (Cirrus Logic): naming them tells a
+/// reader what the device is, and the vendor stays [`GpuVendor::Other`], so
+/// nothing about how it is judged changes. Confirmed PCI vendor ids:
+/// `0x1a03` ASPEED Technology, `0x102b` Matrox Electronics Systems,
+/// `0x15ad` VMware, `0x1af4` and `0x1b36` Red Hat, `0x1013` Cirrus Logic.
+pub fn other_vendor_name(pci_id: &str) -> Option<&'static str> {
+    match pci_id
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "1a03" => Some("ASPEED"),
+        "102b" => Some("Matrox"),
+        "15ad" => Some("VMware"),
+        "1af4" | "1b36" => Some("Red Hat"),
+        "1013" => Some("Cirrus Logic"),
+        _ => None,
     }
 }
 
@@ -341,6 +382,25 @@ fn enrich_pcie_link_info(gpu: &mut GpuInfo, device_dir: &Path) {
     gpu.pcie_link_width_max = fs::read_to_string(device_dir.join("max_link_width"))
         .ok()
         .and_then(|s| s.trim().parse().ok());
+    gpu.pcie_port_width_max = upstream_port_width_max(device_dir);
+}
+
+/// The widest link the port above a PCI device can carry: the
+/// `max_link_width` of the bridge the device hangs from. Found from the
+/// device's real location in the sysfs tree (`.../0000:00:03.1/0000:04:00.0`:
+/// the directory above a device is its bridge). A device on the root complex
+/// is directly under a `pci0000:00` directory, which is not a PCI address,
+/// so it has no port and gets `None`, as does a port that does not report
+/// its width.
+fn upstream_port_width_max(device_dir: &Path) -> Option<u32> {
+    let real = fs::canonicalize(device_dir).ok()?;
+    let port = real.parent()?;
+    normalize_pci_address(port.file_name()?.to_str()?)?;
+    fs::read_to_string(port.join("max_link_width"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// What an Intel GPU's throttle reasons are called in the i915 driver: one
@@ -690,6 +750,8 @@ pub struct PciDisplayDevice {
     /// Canonical "DDDD:BB:SS.F" address.
     pub address: String,
     pub vendor: GpuVendor,
+    /// See [`GpuInfo::vendor_name`].
+    pub vendor_name: Option<&'static str>,
     /// Kernel driver bound to it (the `driver` symlink's target name), or
     /// `None` when nothing is bound.
     pub driver: Option<String>,
@@ -728,15 +790,19 @@ pub fn scan_pci_display_devices(pci_root: &Path) -> Vec<PciDisplayDevice> {
             if !is_display_class(class) || dir.join("physfn").exists() {
                 return None;
             }
-            let vendor = read_trimmed(&dir.join("vendor"))
-                .map(|v| classify_vendor(v.strip_prefix("0x").unwrap_or(&v)))
-                .unwrap_or(GpuVendor::Other);
+            let vendor_id = read_trimmed(&dir.join("vendor"));
+            let vendor_id = vendor_id
+                .as_deref()
+                .map(|v| v.strip_prefix("0x").unwrap_or(v));
+            let vendor = vendor_id.map(classify_vendor).unwrap_or(GpuVendor::Other);
+            let vendor_name = vendor_id.and_then(other_vendor_name);
             let driver = fs::read_link(dir.join("driver"))
                 .ok()
                 .and_then(|target| target.file_name()?.to_str().map(str::to_string));
             Some(PciDisplayDevice {
                 address,
                 vendor,
+                vendor_name,
                 driver,
                 dir,
             })
@@ -798,6 +864,7 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
         let description = lookup_pci_description(&pci_address);
 
         let mut gpu = GpuInfo::new(card.clone(), pci_address, vendor, description, driver, true);
+        gpu.vendor_name = other_vendor_name(&pci_id);
 
         // Generic PCI feature, applied uniformly regardless of vendor —
         // see enrich_pcie_link_info's doc comment for the known
@@ -828,6 +895,7 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
             device.driver.clone(),
             false,
         );
+        gpu.vendor_name = device.vendor_name;
         enrich_pcie_link_info(&mut gpu, &device.dir);
         gpus.push(gpu);
     }
@@ -1510,6 +1578,128 @@ MODALIAS=pci:v00001002d000067DFsv00001DA2sd0000E387bc03sc00i00
             "sorted by address; the `drivers` directory is not a device"
         );
         assert_eq!(found[1].dir, root.join("0000:04:00.0"));
+        // The well-known maker that is not a GPU maker is named; the three
+        // GPU makers are not (their vendor says it).
+        let names: Vec<Option<&str>> = found.iter().map(|d| d.vendor_name).collect();
+        assert_eq!(names, [None, None, Some("ASPEED"), None]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn well_known_display_chip_makers_are_named_by_their_pci_vendor_id() {
+        for (id, name) in [
+            ("1a03", "ASPEED"),
+            ("102b", "Matrox"),
+            ("15ad", "VMware"),
+            ("1af4", "Red Hat"),
+            ("1b36", "Red Hat"),
+            ("1013", "Cirrus Logic"),
+        ] {
+            assert_eq!(other_vendor_name(id), Some(name), "{id}");
+            // As the vendor half of a uevent PCI_ID, in either case.
+            assert_eq!(other_vendor_name(&format!("{id}:2000")), Some(name));
+            assert_eq!(other_vendor_name(&id.to_uppercase()), Some(name));
+        }
+        // Not named: the three GPU makers (the vendor already says so), AMD's
+        // CPU/chipset id, an id nobody here knows, and nothing at all.
+        for other in ["10de", "1002", "8086", "1022", "1234", "", "zz"] {
+            assert_eq!(other_vendor_name(other), None, "{other:?}");
+        }
+        // Naming a maker never changes how the device is classified.
+        assert_eq!(classify_vendor("1a03:2000"), GpuVendor::Other);
+    }
+
+    // ----- the port a card is plugged into -----
+
+    /// A fake sysfs tree shaped like the real one: devices live under
+    /// `devices/pci0000:00/<bridge>/<device>` and `bus/pci/devices/<device>`
+    /// is a link to them. Returns the link, as the collector sees a card.
+    fn plugged_card(root: &Path, bridge: Option<(&str, Option<&str>)>, device: &str) -> PathBuf {
+        let parent = match bridge {
+            Some((address, width)) => {
+                let dir = format!("devices/pci0000:00/{address}");
+                put(root, &format!("{dir}/class"), "0x060400\n");
+                if let Some(width) = width {
+                    put(root, &format!("{dir}/max_link_width"), width);
+                }
+                dir
+            }
+            None => "devices/pci0000:00".to_string(),
+        };
+        put(root, &format!("{parent}/{device}/class"), "0x030000\n");
+        put(root, &format!("{parent}/{device}/max_link_width"), "16\n");
+        put(
+            root,
+            &format!("{parent}/{device}/current_link_width"),
+            "8\n",
+        );
+        put(
+            root,
+            &format!("{parent}/{device}/max_link_speed"),
+            "8.0 GT/s PCIe\n",
+        );
+        put(
+            root,
+            &format!("{parent}/{device}/current_link_speed"),
+            "2.5 GT/s PCIe\n",
+        );
+        let link_dir = root.join("bus/pci/devices");
+        fs::create_dir_all(&link_dir).unwrap();
+        let link = link_dir.join(device);
+        std::os::unix::fs::symlink(root.join(parent).join(device), &link).unwrap();
+        link
+    }
+
+    #[test]
+    fn the_width_the_port_above_a_card_can_carry_is_read_through_the_link() {
+        let root = fake_card("port-width");
+        let card = plugged_card(&root, Some(("0000:00:03.1", Some("8\n"))), "0000:04:00.0");
+        // The collector is handed the *link* (`/sys/bus/pci/devices/<addr>`
+        // or `/sys/class/drm/cardN/device`), not the real directory.
+        assert_eq!(upstream_port_width_max(&card), Some(8));
+        let mut gpu = blank_gpu("nvidia");
+        enrich_pcie_link_info(&mut gpu, &card);
+        assert_eq!(gpu.pcie_link_width_current, Some(8));
+        assert_eq!(gpu.pcie_link_width_max, Some(16));
+        assert_eq!(gpu.pcie_port_width_max, Some(8));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_port_that_allows_the_full_width_is_read_as_such() {
+        let root = fake_card("port-wide");
+        let card = plugged_card(&root, Some(("0000:00:01.1", Some("16\n"))), "0000:02:00.0");
+        assert_eq!(upstream_port_width_max(&card), Some(16));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_card_on_the_root_complex_has_no_port() {
+        // An integrated GPU sits directly under `pci0000:00`: the directory
+        // above it is the root complex, not a bridge to read a width from.
+        let root = fake_card("port-none");
+        put(&root, "devices/pci0000:00/max_link_width", "16\n"); // must not be read
+        let card = plugged_card(&root, None, "0000:00:02.0");
+        assert_eq!(upstream_port_width_max(&card), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_port_that_does_not_say_or_says_nonsense_gives_no_width() {
+        let root = fake_card("port-odd");
+        let silent = plugged_card(&root, Some(("0000:00:03.1", None)), "0000:04:00.0");
+        assert_eq!(upstream_port_width_max(&silent), None);
+        let garbage = plugged_card(
+            &root,
+            Some(("0000:00:03.2", Some("wide\n"))),
+            "0000:05:00.0",
+        );
+        assert_eq!(upstream_port_width_max(&garbage), None);
+        assert_eq!(
+            upstream_port_width_max(&root.join("no-such-device")),
+            None,
+            "a path that does not exist"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1568,6 +1758,7 @@ MODALIAS=pci:v00001002d000067DFsv00001DA2sd0000E387bc03sc00i00
         let device = |address: &str| PciDisplayDevice {
             address: address.to_string(),
             vendor: GpuVendor::Nvidia,
+            vendor_name: None,
             driver: None,
             dir: PathBuf::from("/nonexistent"),
         };

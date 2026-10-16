@@ -9,6 +9,13 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.9.0] - 2026-10-16
+
+Chaque sortie dit quelle version de LinuxDoctor l'a produite, la TUI se filtre et
+se cherche, et `diff` prévient quand il compare des rapports de versions
+différentes. La disposition du rapport JSON ne change pas : `linuxdoctor_version`
+est un champ ajouté, `schema_version` reste 1.
+
 ### Ajouté
 
 - **`diff` prévient quand les deux rapports ne viennent pas de la même version de

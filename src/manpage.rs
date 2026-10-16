@@ -29,7 +29,9 @@ fn module_summary(id: &str) -> Option<&'static str> {
         }
         "cpu" => "CPU topology, load, sustained overload and CPU isolation.",
         "numa" => "NUMA nodes: per-node CPU and memory, usage balance and topology symmetry.",
-        "gpu" => "AMD and NVIDIA graphics cards: temperature, memory, clocks and PCIe link.",
+        "gpu" => {
+            "AMD, Intel and NVIDIA graphics cards: temperature, memory, clocks, throttling and PCIe link."
+        }
         "storage" => "Disk space and inodes per filesystem, and the SMART health of each disk.",
         "systemd" => "Overall systemd state and failed units.",
         "ntp" => "Clock synchronization and real-time clock mode.",

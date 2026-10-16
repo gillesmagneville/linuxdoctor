@@ -3,7 +3,7 @@
 use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
 
-use super::collect::{GpuInfo, GpuProcess, GpuRawData, GpuVendor};
+use super::collect::{is_thermal_throttle_reason, GpuInfo, GpuProcess, GpuRawData, GpuVendor};
 
 /// Pure function: RawData -> Findings. No I/O — see ARCHITECTURE.md
 /// "Testing Strategy".
@@ -108,8 +108,58 @@ fn format_processes(processes: &[GpuProcess]) -> Option<String> {
     Some(parts.join(", "))
 }
 
+/// A throttle reason as the kernel names it, with a plain-words gloss for the
+/// names this tool knows. An unknown name is shown as it is, never explained
+/// by guesswork.
+fn throttle_reason_label(name: &str) -> String {
+    let gloss = match name {
+        "pl1" => "sustained power limit",
+        "pl2" => "short-term power limit",
+        "pl4" => "peak power limit",
+        "thermal" => "GPU temperature limit",
+        "prochot" => "processor-hot signal",
+        "ratl" => "running-average thermal limit",
+        "vr_thermalert" => "voltage-regulator thermal alert",
+        "vr_tdc" => "voltage-regulator current limit",
+        _ => return name.to_string(),
+    };
+    format!("{name} ({gloss})")
+}
+
+/// Intel only (the fields stay empty for the other vendors): is the driver
+/// holding the GPU below its target frequency right now, and why?
+fn throttle_note(gpu: &GpuInfo, thermal: bool) -> String {
+    let reasons: Vec<String> = gpu
+        .throttle_reasons
+        .iter()
+        .map(|r| throttle_reason_label(r))
+        .collect();
+    match (gpu.throttled, reasons.is_empty()) {
+        (Some(true), false) if thermal => format!(
+            " Thermal throttling: the driver reports the GPU is held below \
+             its target frequency right now by {}. This is a single reading \
+             and can come and go.",
+            reasons.join(", ")
+        ),
+        (Some(true), false) => format!(
+            " Throttling: the driver reports the GPU is held below its \
+             target frequency right now by {} — a power limit being reached \
+             under load is how a GPU stays within its budget, not a fault \
+             by itself.",
+            reasons.join(", ")
+        ),
+        (Some(true), true) => " Throttling: the driver reports the GPU is held below its \
+             target frequency right now, without saying why."
+            .to_string(),
+        (Some(false), _) => " Throttling: none reported.".to_string(),
+        (None, _) => String::new(),
+    }
+}
+
 /// GPU002 — one finding per GPU. Temperature is the one metric this
-/// escalates severity on: utilization, VRAM usage, and power draw near
+/// escalates severity on (Intel's driver-reported thermal throttling too, as
+/// a direct statement from the kernel that the GPU is being slowed down by
+/// heat): utilization, VRAM usage, and power draw near
 /// the card's limit are often *intentional* (a card doing real work),
 /// not a problem, so they stay Info-level context rather than alerts —
 /// same reasoning Virtualization's resource-usage findings use.
@@ -186,6 +236,20 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
         ),
     };
 
+    // The Intel drivers say outright when temperature is slowing the GPU
+    // down. That is a direct observation, worth a Warning even when the
+    // reading itself looks unremarkable (or there is no reading at all, as
+    // on an integrated GPU).
+    let thermal_throttled = gpu
+        .throttle_reasons
+        .iter()
+        .any(|r| is_thermal_throttle_reason(r));
+    let (severity, confidence) = if thermal_throttled && severity < Severity::Warning {
+        (Severity::Warning, Confidence::direct_observation())
+    } else {
+        (severity, confidence)
+    };
+
     let util_note = match (gpu.utilization_percent, gpu.memory_utilization_percent) {
         (Some(u), Some(mu)) => format!(" Utilization: {u:.0}% GPU, {mu:.0}% memory controller."),
         (Some(u), None) => format!(" Utilization: {u:.0}% GPU."),
@@ -204,6 +268,7 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
             )
         }
         (Some(draw), None) => format!(" Power: {draw:.1} W."),
+        (None, Some(limit)) if limit > 0.0 => format!(" Power limit: {limit:.1} W."),
         _ => String::new(),
     };
 
@@ -219,6 +284,28 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
         (None, Some(mem)) => format!(" Clock: {mem} MHz memory."),
         (None, None) => String::new(),
     };
+
+    let idle_note = if gpu.idle == Some(true) {
+        " Clock: idle (the driver reports 0 MHz while the GPU sleeps in its \
+         power-saving state, so no frequency is running at this moment)."
+            .to_string()
+    } else {
+        String::new()
+    };
+
+    let range_note = match (gpu.clock_hw_max_mhz, gpu.clock_limit_mhz) {
+        (Some(hw), Some(limit)) if limit < hw => format!(
+            " Frequency cap: the highest frequency allowed is {limit} MHz, \
+             below the {hw} MHz the hardware can reach. Something set that \
+             limit (this tool cannot tell what); harmless if intended, a \
+             loss of performance if not."
+        ),
+        (Some(hw), _) => format!(" Highest frequency this hardware can reach: {hw} MHz."),
+        (None, Some(limit)) => format!(" Highest frequency allowed: {limit} MHz."),
+        (None, None) => String::new(),
+    };
+
+    let throttle_note = throttle_note(gpu, thermal_throttled);
 
     let pcie_note = match (
         &gpu.pcie_link_speed_current,
@@ -260,7 +347,7 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
         .unwrap_or_default();
 
     let explanation = format!(
-        "{model_prefix}{model}{driver_note}{driver_version_note}.{temp_note}{util_note}{vram_note}{power_note}{fan_note}{clock_note}{pcie_note}{no_driver_note}{processes_note}"
+        "{model_prefix}{model}{driver_note}{driver_version_note}.{temp_note}{util_note}{vram_note}{power_note}{fan_note}{clock_note}{idle_note}{range_note}{throttle_note}{pcie_note}{no_driver_note}{processes_note}"
     );
 
     // A missing driver is a distinct, always-worth-flagging concern,
@@ -326,6 +413,21 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
     if let Some(c) = gpu.clock_memory_mhz {
         builder = builder.evidence("clock_memory_mhz", c.to_string());
     }
+    if let Some(c) = gpu.clock_hw_max_mhz {
+        builder = builder.evidence("clock_hw_max_mhz", c.to_string());
+    }
+    if let Some(c) = gpu.clock_limit_mhz {
+        builder = builder.evidence("clock_limit_mhz", c.to_string());
+    }
+    if let Some(idle) = gpu.idle {
+        builder = builder.evidence("idle", idle.to_string());
+    }
+    if let Some(throttled) = gpu.throttled {
+        builder = builder.evidence("throttled", throttled.to_string());
+    }
+    if !gpu.throttle_reasons.is_empty() {
+        builder = builder.evidence("throttle_reasons", gpu.throttle_reasons.join(","));
+    }
     if let Some(s) = &gpu.pcie_link_speed_current {
         builder = builder.evidence("pcie_link_speed_current", s.clone());
     }
@@ -349,8 +451,14 @@ fn detail_finding(gpu: &GpuInfo) -> Finding {
             "Check `dmesg` and `lspci -k` for why no driver bound to this \
              device. For NVIDIA cards, install the proprietary driver \
              package for your distro; for AMD/Intel, the in-tree \
-             amdgpu/i915 driver should bind automatically unless \
+             amdgpu, i915 or xe driver should bind automatically unless \
              blacklisted."
+        } else if thermal_throttled {
+            "The driver reports the GPU is being slowed down by \
+             temperature right now. Check airflow, dust and case or laptop \
+             cooling (fans turning, vents clear). One reading can be a \
+             passing peak; if it repeats under light load, suspect the \
+             cooling first."
         } else {
             "Check airflow/dust and case cooling. Sustained high \
              temperature accelerates hardware wear and can trigger \
@@ -400,6 +508,11 @@ mod tests {
             fan_rpm: Some(1800),
             clock_core_mhz: None,
             clock_memory_mhz: None,
+            clock_hw_max_mhz: None,
+            clock_limit_mhz: None,
+            idle: None,
+            throttled: None,
+            throttle_reasons: vec![],
             pcie_link_speed_current: None,
             pcie_link_speed_max: None,
             pcie_link_width_current: None,
@@ -705,6 +818,196 @@ mod tests {
             for f in analyze(&data, &ctx()) {
                 assert!(f.confidence.percent >= 60);
             }
+        }
+    }
+
+    // ----- Intel -----
+
+    /// An integrated Intel GPU as the i915 driver reports it: frequencies
+    /// and throttling, no temperature, no VRAM, no utilization.
+    fn intel_gpu() -> GpuInfo {
+        let mut gpu = base_gpu();
+        gpu.vendor = GpuVendor::Intel;
+        gpu.description = Some("Alder Lake-P GT2 [Iris Xe Graphics]".to_string());
+        gpu.driver = Some("i915".to_string());
+        gpu.vram_total_mb = None;
+        gpu.vram_used_mb = None;
+        gpu.utilization_percent = None;
+        gpu.memory_utilization_percent = None;
+        gpu.temperature_c = None;
+        gpu.temperature_crit_c = None;
+        gpu.power_draw_w = None;
+        gpu.power_limit_w = None;
+        gpu.fan_rpm = None;
+        gpu.clock_core_mhz = Some(650);
+        gpu.clock_hw_max_mhz = Some(1100);
+        gpu.clock_limit_mhz = Some(1100);
+        gpu.idle = Some(false);
+        gpu.throttled = Some(false);
+        gpu
+    }
+
+    fn gpu002_of(gpu: GpuInfo) -> Finding {
+        let data = GpuRawData {
+            gpus: vec![gpu],
+            nvidia_max_cuda_version: None,
+        };
+        analyze(&data, &ctx())
+            .into_iter()
+            .find(|f| f.id == "GPU002")
+            .unwrap()
+    }
+
+    fn evidence<'a>(finding: &'a Finding, key: &str) -> Option<&'a str> {
+        finding
+            .evidence
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn a_quiet_intel_gpu_shows_its_frequency_and_stays_info() {
+        let f = gpu002_of(intel_gpu());
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.explanation.starts_with("Intel Alder Lake-P GT2"));
+        assert!(f.explanation.contains("driver i915"));
+        assert!(f.explanation.contains("Clock: 650 MHz core."));
+        assert!(f
+            .explanation
+            .contains("Highest frequency this hardware can reach: 1100 MHz."));
+        assert!(f.explanation.contains("Throttling: none reported."));
+        assert!(f.recommendation.is_none());
+        assert_eq!(evidence(&f, "clock_core_mhz"), Some("650"));
+        assert_eq!(evidence(&f, "clock_hw_max_mhz"), Some("1100"));
+        assert_eq!(evidence(&f, "clock_limit_mhz"), Some("1100"));
+        assert_eq!(evidence(&f, "idle"), Some("false"));
+        assert_eq!(evidence(&f, "throttled"), Some("false"));
+        assert_eq!(evidence(&f, "throttle_reasons"), None);
+    }
+
+    #[test]
+    fn thermal_throttling_is_a_warning_even_with_no_temperature_reading() {
+        for reason in ["thermal", "ratl", "vr_thermalert"] {
+            let mut gpu = intel_gpu();
+            gpu.throttled = Some(true);
+            gpu.throttle_reasons = vec![reason.to_string()];
+            let f = gpu002_of(gpu);
+            assert_eq!(f.severity, Severity::Warning, "{reason}");
+            assert!(f.explanation.contains("Thermal throttling"), "{reason}");
+            assert_eq!(evidence(&f, "throttle_reasons"), Some(reason));
+            assert!(f.confidence.percent >= 60);
+            let advice = f.recommendation.as_deref().unwrap();
+            assert!(advice.contains("slowed down by temperature"), "{advice}");
+        }
+    }
+
+    #[test]
+    fn thermal_throttling_never_lowers_a_severity_the_temperature_already_set() {
+        let mut gpu = base_gpu();
+        gpu.temperature_c = Some(109.0); // Error on its own
+        gpu.throttled = Some(true);
+        gpu.throttle_reasons = vec!["thermal".to_string()];
+        assert_eq!(gpu002_of(gpu).severity, Severity::Error);
+    }
+
+    #[test]
+    fn power_limit_throttling_is_explained_but_stays_info() {
+        let mut gpu = intel_gpu();
+        gpu.throttled = Some(true);
+        gpu.throttle_reasons = vec!["pl1".to_string(), "pl2".to_string()];
+        let f = gpu002_of(gpu);
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f
+            .explanation
+            .contains("by pl1 (sustained power limit), pl2 (short-term power limit)"));
+        assert!(!f.explanation.contains("Thermal throttling"));
+        assert!(f.recommendation.is_none());
+        assert_eq!(evidence(&f, "throttle_reasons"), Some("pl1,pl2"));
+    }
+
+    #[test]
+    fn a_hot_signal_alone_is_not_called_thermal() {
+        let mut gpu = intel_gpu();
+        gpu.throttled = Some(true);
+        gpu.throttle_reasons = vec!["prochot".to_string()];
+        let f = gpu002_of(gpu);
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.explanation.contains("prochot (processor-hot signal)"));
+    }
+
+    #[test]
+    fn a_reason_the_tool_does_not_know_is_shown_as_the_kernel_named_it() {
+        let mut gpu = intel_gpu();
+        gpu.throttled = Some(true);
+        gpu.throttle_reasons = vec!["mystery".to_string()];
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.contains("by mystery —"), "{}", f.explanation);
+        assert_eq!(f.severity, Severity::Info);
+    }
+
+    #[test]
+    fn throttling_without_a_reason_says_so_instead_of_inventing_one() {
+        let mut gpu = intel_gpu();
+        gpu.throttled = Some(true);
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.contains("without saying why"));
+        assert_eq!(f.severity, Severity::Info);
+    }
+
+    #[test]
+    fn when_the_driver_says_nothing_about_throttling_the_report_says_nothing() {
+        let mut gpu = intel_gpu();
+        gpu.throttled = None;
+        let f = gpu002_of(gpu);
+        assert!(!f.explanation.contains("Throttling"));
+        assert_eq!(evidence(&f, "throttled"), None);
+    }
+
+    #[test]
+    fn a_frequency_cap_below_the_hardware_maximum_is_pointed_out() {
+        let mut gpu = intel_gpu();
+        gpu.clock_limit_mhz = Some(900);
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.contains(
+            "Frequency cap: the highest frequency allowed is 900 MHz, below the 1100 MHz"
+        ));
+        assert!(f.explanation.contains("this tool cannot tell what"));
+        assert_eq!(f.severity, Severity::Info, "a cap can be intentional");
+    }
+
+    #[test]
+    fn no_cap_is_mentioned_when_the_limit_is_the_hardware_maximum() {
+        let f = gpu002_of(intel_gpu());
+        assert!(!f.explanation.contains("Frequency cap"));
+    }
+
+    #[test]
+    fn a_sleeping_gpu_is_idle_not_clocked_at_zero() {
+        let mut gpu = intel_gpu();
+        gpu.clock_core_mhz = None;
+        gpu.idle = Some(true);
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.contains("Clock: idle"));
+        assert!(!f.explanation.contains("0 MHz core"));
+        assert_eq!(evidence(&f, "idle"), Some("true"));
+        assert_eq!(evidence(&f, "clock_core_mhz"), None);
+    }
+
+    #[test]
+    fn a_power_limit_is_shown_even_when_the_draw_is_not_known() {
+        let mut gpu = intel_gpu();
+        gpu.power_limit_w = Some(190.0);
+        let f = gpu002_of(gpu);
+        assert!(f.explanation.contains("Power limit: 190.0 W."));
+        assert_eq!(evidence(&f, "power_limit_w"), Some("190.0"));
+    }
+
+    #[test]
+    fn the_intel_only_notes_never_appear_for_other_vendors() {
+        let f = gpu002_of(base_gpu());
+        for word in ["Throttling", "Frequency cap", "Highest frequency", "idle"] {
+            assert!(!f.explanation.contains(word), "{word}");
         }
     }
 }

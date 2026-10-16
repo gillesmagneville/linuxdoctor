@@ -61,6 +61,26 @@ pub struct GpuInfo {
     /// Memory clock — NVIDIA's `clocks.mem`, or AMD's currently active
     /// state from `pp_dpm_mclk`.
     pub clock_memory_mhz: Option<u64>,
+    /// Intel only: the highest frequency the hardware can run at (i915
+    /// `RP0`, xe `rp0_freq`).
+    pub clock_hw_max_mhz: Option<u64>,
+    /// Intel only: the highest frequency the driver is currently allowed to
+    /// use (i915 `rps_max_freq_mhz`, xe `max_freq`). Lower than
+    /// `clock_hw_max_mhz` means a cap was set by someone or something.
+    pub clock_limit_mhz: Option<u64>,
+    /// Intel only: `Some(true)` when the driver reported an actual
+    /// frequency of 0 MHz. It does that when the GPU is asleep in its
+    /// power-saving state (the i915 code only reads the real value while
+    /// the device is in use), so 0 means "idle", not "clocked at 0 MHz" --
+    /// `clock_core_mhz` is left empty in that case.
+    pub idle: Option<bool>,
+    /// Intel only: whether the driver says the GPU is being held below its
+    /// target frequency at this very moment. `None` when it doesn't say.
+    pub throttled: Option<bool>,
+    /// Intel only: the kernel's own names for what is holding the GPU back
+    /// ("pl1", "thermal", ...), see `INTEL_THROTTLE_REASONS`. Empty when not
+    /// throttled, or when the driver doesn't list reasons.
+    pub throttle_reasons: Vec<String>,
     /// Generic PCI sysfs (`current_link_speed`/`max_link_speed`) — works
     /// for any vendor, not just one. Kept as the kernel's own display
     /// string (e.g. "8.0 GT/s PCIe") rather than reparsed into a bare
@@ -271,6 +291,228 @@ fn enrich_pcie_link_info(gpu: &mut GpuInfo, device_dir: &Path) {
         .and_then(|s| s.trim().parse().ok());
 }
 
+/// What an Intel GPU's throttle reasons are called in the i915 driver: one
+/// `throttle_reason_<name>` file (holding 0 or 1) per name, under `gt/gt0/`.
+/// The xe driver lists the same names in its `throttle/reasons` file (plus a
+/// few more on data-centre parts, which are kept as they come).
+const INTEL_THROTTLE_REASONS: [&str; 8] = [
+    "pl1",
+    "pl2",
+    "pl4",
+    "thermal",
+    "prochot",
+    "ratl",
+    "vr_thermalert",
+    "vr_tdc",
+];
+
+/// The `name` the Intel drivers give their hwmon chip.
+const INTEL_HWMON_NAMES: [&str; 2] = ["i915", "xe"];
+
+/// Longest reason name and longest list accepted from a driver's own list.
+const MAX_REASON_NAME_LEN: usize = 24;
+const MAX_REASONS: usize = 12;
+
+fn read_trimmed(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+}
+
+fn read_number<T: std::str::FromStr>(path: &Path) -> Option<T> {
+    read_trimmed(path)?.parse().ok()
+}
+
+/// A sysfs boolean: `1` or `0`, nothing else.
+pub fn parse_flag(text: &str) -> Option<bool> {
+    match text.trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+
+fn read_flag(path: &Path) -> Option<bool> {
+    parse_flag(&fs::read_to_string(path).ok()?)
+}
+
+/// Parse the xe driver's `freq0/throttle/reasons`: names separated by spaces
+/// (with a trailing space), or the single word `none` -- confirmed in the
+/// kernel's `xe_gt_throttle.c`. Only plain lowercase names are kept: they
+/// end up in a report, and a name that isn't one is not worth showing.
+pub fn parse_throttle_reasons(text: &str) -> Vec<String> {
+    let mut reasons: Vec<String> = Vec::new();
+    for token in text.split_whitespace() {
+        let token = token.to_ascii_lowercase();
+        let plain = !token.is_empty()
+            && token.len() <= MAX_REASON_NAME_LEN
+            && token
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if token == "none" || !plain || reasons.contains(&token) {
+            continue;
+        }
+        if reasons.len() < MAX_REASONS {
+            reasons.push(token);
+        }
+    }
+    reasons
+}
+
+/// Does this throttle reason come from temperature? `thermal`, `ratl` (the
+/// running-average thermal limit), `vr_thermalert`, and the `*_thermal`
+/// names of the data-centre parts. `prochot` is deliberately left out: it is
+/// an external "hot" signal that the kernel doesn't tie to temperature.
+pub fn is_thermal_throttle_reason(name: &str) -> bool {
+    name == "ratl" || name.contains("thermal")
+}
+
+/// Combine the overall status with the list of reasons. The two are read at
+/// slightly different moments, so a reason seen is taken as proof of
+/// throttling even if the status read a moment earlier said otherwise.
+fn settle_throttle(status: Option<bool>, reasons: Vec<String>) -> (Option<bool>, Vec<String>) {
+    let throttled = match status {
+        Some(true) => Some(true),
+        _ if !reasons.is_empty() => Some(true),
+        Some(false) => Some(false),
+        None => None,
+    };
+    (throttled, reasons)
+}
+
+/// The Intel driver's hwmon directory under a device, whichever number the
+/// kernel gave it -- found by its `name` rather than by position, since a
+/// device can have more than one hwmon chip.
+fn find_intel_hwmon(device_dir: &Path) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = fs::read_dir(device_dir.join("hwmon"))
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    dirs.sort();
+    dirs.into_iter().find(|dir| {
+        read_trimmed(&dir.join("name")).is_some_and(|n| INTEL_HWMON_NAMES.contains(&n.as_str()))
+    })
+}
+
+fn apply_intel_frequencies(
+    gpu: &mut GpuInfo,
+    actual: Option<u64>,
+    hw_max: Option<u64>,
+    limit: Option<u64>,
+) {
+    match actual {
+        Some(0) => gpu.idle = Some(true),
+        Some(mhz) => {
+            gpu.clock_core_mhz = Some(mhz);
+            gpu.idle = Some(false);
+        }
+        None => {}
+    }
+    gpu.clock_hw_max_mhz = hw_max.filter(|&mhz| mhz > 0);
+    gpu.clock_limit_mhz = limit.filter(|&mhz| mhz > 0);
+}
+
+/// Intel (`i915` and `xe` drivers) sysfs enrichment. Paths, units and
+/// formats come from the kernel's own sources and ABI documentation
+/// (`intel_gt_sysfs_pm.c`, `i915_hwmon.c`, `xe_gt_freq.c`,
+/// `xe_gt_throttle.c`, `Documentation/ABI/testing/sysfs-driver-intel-*-hwmon`),
+/// not from guesswork. They have not been exercised on real Intel
+/// hardware by this project -- which is why every read is optional and a
+/// missing file simply leaves the field empty.
+///
+/// `card_dir` is `/sys/class/drm/cardN`: the i915 driver puts its frequency
+/// files there (`gt/gt0/` on current kernels, `gt_*_freq_mhz` on older
+/// ones), the xe driver and both hwmon chips live under its `device/`.
+/// Only the first graphics GT (`gt0`) is read -- media GTs on recent parts
+/// have their own frequency, which this doesn't try to report.
+fn enrich_intel(gpu: &mut GpuInfo, card_dir: &Path) {
+    let device_dir = card_dir.join("device");
+    match gpu.driver.as_deref() {
+        Some("i915") => enrich_intel_i915(gpu, card_dir),
+        Some("xe") => enrich_intel_xe(gpu, &device_dir),
+        // Another driver (or none): nothing Intel-specific to read.
+        _ => return,
+    }
+    enrich_intel_hwmon(gpu, &device_dir);
+}
+
+/// i915: `rps_*_freq_mhz` are decimal MHz. `rps_act_freq_mhz` is the real
+/// frequency, 0 while the device is asleep; `cur` is deliberately not used,
+/// it is only what was last *requested*.
+fn enrich_intel_i915(gpu: &mut GpuInfo, card_dir: &Path) {
+    let gt = card_dir.join("gt").join("gt0");
+    if gt.is_dir() {
+        apply_intel_frequencies(
+            gpu,
+            read_number(&gt.join("rps_act_freq_mhz")),
+            read_number(&gt.join("rps_RP0_freq_mhz")),
+            read_number(&gt.join("rps_max_freq_mhz")),
+        );
+        let status = read_flag(&gt.join("throttle_reason_status"));
+        let reasons: Vec<String> = INTEL_THROTTLE_REASONS
+            .iter()
+            .filter(|name| read_flag(&gt.join(format!("throttle_reason_{name}"))) == Some(true))
+            .map(|name| name.to_string())
+            .collect();
+        (gpu.throttled, gpu.throttle_reasons) = settle_throttle(status, reasons);
+    } else {
+        // Kernels before the per-GT layout: same values, flat names.
+        apply_intel_frequencies(
+            gpu,
+            read_number(&card_dir.join("gt_act_freq_mhz")),
+            read_number(&card_dir.join("gt_RP0_freq_mhz")),
+            read_number(&card_dir.join("gt_max_freq_mhz")),
+        );
+    }
+}
+
+/// xe: `tile0/gt0/freq0/*_freq` are decimal MHz. `cur_freq` is not read: the
+/// kernel takes a forcewake (wakes the GPU up) to answer it, which a
+/// read-only audit has no business doing. `act_freq` can be 0 in the
+/// power-saving state.
+fn enrich_intel_xe(gpu: &mut GpuInfo, device_dir: &Path) {
+    let freq = device_dir.join("tile0").join("gt0").join("freq0");
+    apply_intel_frequencies(
+        gpu,
+        read_number(&freq.join("act_freq")),
+        read_number(&freq.join("rp0_freq")),
+        read_number(&freq.join("max_freq")),
+    );
+    let throttle = freq.join("throttle");
+    let status = read_flag(&throttle.join("status"));
+    let reasons = fs::read_to_string(throttle.join("reasons"))
+        .map(|text| parse_throttle_reasons(&text))
+        .unwrap_or_default();
+    (gpu.throttled, gpu.throttle_reasons) = settle_throttle(status, reasons);
+}
+
+/// Temperature, fan and power limit from the driver's hwmon chip. Only
+/// discrete cards have one under i915; xe's package temperature needs
+/// kernel 6.15 (its critical threshold 7.0) and its fan 6.16. Integrated
+/// GPUs show none of this, and that's normal.
+///
+/// Units, per the hwmon ABI: `temp*` in millidegrees Celsius, `fan*` in
+/// RPM, `power1_max` in microwatts (0 meaning the limit is disabled).
+fn enrich_intel_hwmon(gpu: &mut GpuInfo, device_dir: &Path) {
+    let Some(hwmon) = find_intel_hwmon(device_dir) else {
+        return;
+    };
+    // i915 numbers its package temperature 1; xe numbers it 2.
+    let temp = if gpu.driver.as_deref() == Some("xe") {
+        "temp2"
+    } else {
+        "temp1"
+    };
+    gpu.temperature_c =
+        read_number::<f64>(&hwmon.join(format!("{temp}_input"))).map(|m| m / 1000.0);
+    gpu.temperature_crit_c = read_number::<f64>(&hwmon.join(format!("{temp}_crit")))
+        .map(|m| m / 1000.0)
+        .filter(|&c| c > 0.0);
+    gpu.fan_rpm = read_number(&hwmon.join("fan1_input"));
+    gpu.power_limit_w = read_number::<f64>(&hwmon.join("power1_max"))
+        .map(|uw| uw / 1_000_000.0)
+        .filter(|&w| w > 0.0);
+}
+
 /// NVIDIA field order for the combined `--query-gpu` call — position in
 /// this list must match the parsing indices in `parse_nvidia_smi_csv`.
 /// PCIe link info deliberately isn't queried here: it's covered
@@ -391,20 +633,21 @@ pub fn parse_nvidia_compute_apps(text: &str) -> Vec<GpuProcess> {
 }
 
 /// Thin I/O wrapper: enumerates DRM cards, classifies each by vendor from
-/// its own `uevent`, then applies vendor-specific enrichment — AMD via
-/// direct sysfs reads (no external tool needed), NVIDIA via one combined
-/// `nvidia-smi` call for every NVIDIA GPU at once. Intel and unrecognized
+/// its own `uevent`, then applies vendor-specific enrichment — AMD and
+/// Intel via direct sysfs reads (no external tool needed), NVIDIA via one
+/// combined `nvidia-smi` call for every NVIDIA GPU at once. Unrecognized
 /// vendors get the structural facts (PCI address, driver, description)
-/// without utilization/thermal data — there's no equally-confirmed,
-/// dependency-free source for those on Intel the way there is for AMD's
-/// sysfs or NVIDIA's tooling, and this project doesn't guess where it
-/// can't verify.
+/// only. Intel's figures are frequency, throttling and, on discrete cards,
+/// temperature/fan/power limit — not utilization or VRAM, which the Intel
+/// drivers don't expose in sysfs; this project doesn't guess where it can't
+/// verify.
 pub fn collect() -> Result<GpuRawData, ModuleError> {
     let cards = list_drm_cards();
     let mut gpus = Vec::new();
 
     for card in &cards {
-        let device_dir = PathBuf::from(format!("/sys/class/drm/{card}/device"));
+        let card_dir = PathBuf::from(format!("/sys/class/drm/{card}"));
+        let device_dir = card_dir.join("device");
         let Ok(uevent_text) = fs::read_to_string(device_dir.join("uevent")) else {
             continue;
         };
@@ -434,6 +677,11 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
             fan_rpm: None,
             clock_core_mhz: None,
             clock_memory_mhz: None,
+            clock_hw_max_mhz: None,
+            clock_limit_mhz: None,
+            idle: None,
+            throttled: None,
+            throttle_reasons: Vec::new(),
             pcie_link_speed_current: None,
             pcie_link_speed_max: None,
             pcie_link_width_current: None,
@@ -446,8 +694,10 @@ pub fn collect() -> Result<GpuRawData, ModuleError> {
         // current-vs-max reliability caveat this carries.
         enrich_pcie_link_info(&mut gpu, &device_dir);
 
-        if vendor == GpuVendor::Amd {
-            enrich_amd(&mut gpu, &device_dir);
+        match vendor {
+            GpuVendor::Amd => enrich_amd(&mut gpu, &device_dir),
+            GpuVendor::Intel => enrich_intel(&mut gpu, &card_dir),
+            _ => {}
         }
 
         gpus.push(gpu);
@@ -706,5 +956,359 @@ MODALIAS=pci:v00001002d000067DFsv00001DA2sd0000E387bc03sc00i00
         // "CUDA Version: N/A" instead of a real number.
         let text = "CUDA Version: N/A |";
         assert_eq!(parse_nvidia_max_cuda_version(text), None);
+    }
+
+    // ----- Intel -----
+    //
+    // Fake sysfs trees laid out as the kernel's own sources describe them
+    // (see `enrich_intel`). They prove the paths, the units and the
+    // fall-backs; they cannot prove that a given real card fills them.
+
+    fn fake_card(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("linuxdoctor-gpu-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn put(root: &Path, relative: &str, content: &str) {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    fn blank_gpu(driver: &str) -> GpuInfo {
+        GpuInfo {
+            name: "card0".to_string(),
+            pci_address: "0000:00:02.0".to_string(),
+            vendor: GpuVendor::Intel,
+            description: None,
+            driver: Some(driver.to_string()),
+            driver_version: None,
+            vram_total_mb: None,
+            vram_used_mb: None,
+            utilization_percent: None,
+            memory_utilization_percent: None,
+            temperature_c: None,
+            temperature_crit_c: None,
+            power_draw_w: None,
+            power_limit_w: None,
+            fan_percent: None,
+            fan_rpm: None,
+            clock_core_mhz: None,
+            clock_memory_mhz: None,
+            clock_hw_max_mhz: None,
+            clock_limit_mhz: None,
+            idle: None,
+            throttled: None,
+            throttle_reasons: Vec::new(),
+            pcie_link_speed_current: None,
+            pcie_link_speed_max: None,
+            pcie_link_width_current: None,
+            pcie_link_width_max: None,
+            processes: Vec::new(),
+        }
+    }
+
+    /// An i915 card with the per-GT layout, every throttle flag at 0 except
+    /// the ones listed.
+    fn i915_card(name: &str, raised: &[&str]) -> PathBuf {
+        let card = fake_card(name);
+        put(&card, "gt/gt0/rps_act_freq_mhz", "650\n");
+        put(&card, "gt/gt0/rps_RP0_freq_mhz", "1100\n");
+        put(&card, "gt/gt0/rps_max_freq_mhz", "900\n");
+        let any = !raised.is_empty();
+        put(
+            &card,
+            "gt/gt0/throttle_reason_status",
+            if any { "1\n" } else { "0\n" },
+        );
+        for reason in INTEL_THROTTLE_REASONS {
+            let value = if raised.contains(&reason) {
+                "1\n"
+            } else {
+                "0\n"
+            };
+            put(&card, &format!("gt/gt0/throttle_reason_{reason}"), value);
+        }
+        card
+    }
+
+    #[test]
+    fn a_sysfs_flag_is_one_or_zero_and_nothing_else() {
+        assert_eq!(parse_flag("1\n"), Some(true));
+        assert_eq!(parse_flag("0\n"), Some(false));
+        assert_eq!(parse_flag(" 1 "), Some(true));
+        for odd in ["", "2", "yes", "true", "-1", "10"] {
+            assert_eq!(parse_flag(odd), None, "{odd:?}");
+        }
+    }
+
+    #[test]
+    fn xe_throttle_reasons_are_read_from_the_space_separated_list() {
+        // The kernel writes a space after every name, trailing one included.
+        assert_eq!(
+            parse_throttle_reasons("pl1 thermal \n"),
+            vec!["pl1".to_string(), "thermal".to_string()]
+        );
+        assert!(parse_throttle_reasons("none\n").is_empty());
+        assert!(parse_throttle_reasons("").is_empty());
+        assert_eq!(
+            parse_throttle_reasons("PL2 pl2 pl2\n"),
+            vec!["pl2".to_string()],
+            "lowercased, and each name once"
+        );
+    }
+
+    #[test]
+    fn throttle_reasons_that_are_not_plain_names_are_dropped_not_shown() {
+        let long = "a".repeat(MAX_REASON_NAME_LEN + 1);
+        let text = format!("pl1 \u{1b}[31mred {long} a-b é thermal");
+        assert_eq!(
+            parse_throttle_reasons(&text),
+            vec!["pl1".to_string(), "thermal".to_string()]
+        );
+        let many: String = (0..30).map(|i| format!("r{i} ")).collect();
+        assert_eq!(parse_throttle_reasons(&many).len(), MAX_REASONS);
+    }
+
+    #[test]
+    fn only_temperature_reasons_count_as_thermal() {
+        for thermal in [
+            "thermal",
+            "ratl",
+            "vr_thermalert",
+            "vr_thermal",
+            "soc_thermal",
+            "mem_thermal",
+            "soc_avg_thermal",
+        ] {
+            assert!(is_thermal_throttle_reason(thermal), "{thermal}");
+        }
+        for other in [
+            "pl1", "pl2", "pl4", "prochot", "vr_tdc", "iccmax", "pwrbrk", "",
+        ] {
+            assert!(!is_thermal_throttle_reason(other), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_reason_seen_proves_throttling_even_if_the_status_said_no() {
+        let one = vec!["pl1".to_string()];
+        assert_eq!(
+            settle_throttle(Some(true), one.clone()),
+            (Some(true), one.clone())
+        );
+        assert_eq!(
+            settle_throttle(Some(false), one.clone()),
+            (Some(true), one.clone())
+        );
+        assert_eq!(settle_throttle(None, one.clone()), (Some(true), one));
+        assert_eq!(settle_throttle(Some(true), vec![]), (Some(true), vec![]));
+        assert_eq!(settle_throttle(Some(false), vec![]), (Some(false), vec![]));
+        assert_eq!(settle_throttle(None, vec![]), (None, vec![]));
+    }
+
+    #[test]
+    fn i915_frequencies_and_throttling_come_from_the_per_gt_directory() {
+        let card = i915_card("i915-pergt", &["pl1", "pl2"]);
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.clock_core_mhz, Some(650));
+        assert_eq!(gpu.idle, Some(false));
+        assert_eq!(gpu.clock_hw_max_mhz, Some(1100));
+        assert_eq!(gpu.clock_limit_mhz, Some(900));
+        assert_eq!(gpu.throttled, Some(true));
+        assert_eq!(gpu.throttle_reasons, ["pl1", "pl2"]);
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn i915_with_nothing_raised_is_not_throttled() {
+        let card = i915_card("i915-calm", &[]);
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.throttled, Some(false));
+        assert!(gpu.throttle_reasons.is_empty());
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn a_zero_actual_frequency_means_asleep_not_a_clock_of_zero() {
+        let card = i915_card("i915-asleep", &[]);
+        put(&card, "gt/gt0/rps_act_freq_mhz", "0\n");
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.idle, Some(true));
+        assert_eq!(gpu.clock_core_mhz, None);
+        assert_eq!(gpu.clock_hw_max_mhz, Some(1100), "the range is still known");
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn i915_falls_back_to_the_flat_files_of_older_kernels() {
+        let card = fake_card("i915-legacy");
+        put(&card, "gt_act_freq_mhz", "300\n");
+        put(&card, "gt_RP0_freq_mhz", "1050\n");
+        put(&card, "gt_max_freq_mhz", "1050\n");
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.clock_core_mhz, Some(300));
+        assert_eq!(gpu.clock_hw_max_mhz, Some(1050));
+        assert_eq!(gpu.clock_limit_mhz, Some(1050));
+        assert_eq!(gpu.throttled, None, "those kernels have no throttle files");
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn xe_reads_the_freq0_directory_and_never_the_current_frequency_file() {
+        let card = fake_card("xe-freq");
+        let freq = "device/tile0/gt0/freq0";
+        put(&card, &format!("{freq}/act_freq"), "1200\n");
+        put(&card, &format!("{freq}/rp0_freq"), "2400\n");
+        put(&card, &format!("{freq}/max_freq"), "2000\n");
+        // Reading this one wakes the GPU up; its value must not be used.
+        put(&card, &format!("{freq}/cur_freq"), "9999\n");
+        put(&card, &format!("{freq}/throttle/status"), "1\n");
+        put(&card, &format!("{freq}/throttle/reasons"), "pl1 thermal \n");
+        let mut gpu = blank_gpu("xe");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.clock_core_mhz, Some(1200));
+        assert_eq!(gpu.clock_hw_max_mhz, Some(2400));
+        assert_eq!(gpu.clock_limit_mhz, Some(2000));
+        assert_eq!(gpu.throttled, Some(true));
+        assert_eq!(gpu.throttle_reasons, ["pl1", "thermal"]);
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn xe_asleep_and_not_throttled() {
+        let card = fake_card("xe-asleep");
+        let freq = "device/tile0/gt0/freq0";
+        put(&card, &format!("{freq}/act_freq"), "0\n");
+        put(&card, &format!("{freq}/throttle/status"), "0\n");
+        put(&card, &format!("{freq}/throttle/reasons"), "none\n");
+        let mut gpu = blank_gpu("xe");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.idle, Some(true));
+        assert_eq!(gpu.clock_core_mhz, None);
+        assert_eq!(gpu.throttled, Some(false));
+        assert!(gpu.throttle_reasons.is_empty());
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn i915_discrete_card_gets_temperature_fan_and_power_limit_from_its_own_hwmon() {
+        let card = i915_card("i915-hwmon", &[]);
+        // Another chip on the same device, hotter, that must be ignored.
+        put(&card, "device/hwmon/hwmon2/name", "nvme\n");
+        put(&card, "device/hwmon/hwmon2/temp1_input", "99000\n");
+        put(&card, "device/hwmon/hwmon3/name", "i915\n");
+        put(&card, "device/hwmon/hwmon3/temp1_input", "52500\n");
+        put(&card, "device/hwmon/hwmon3/fan1_input", "1800\n");
+        put(&card, "device/hwmon/hwmon3/power1_max", "190000000\n");
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.temperature_c, Some(52.5));
+        assert_eq!(gpu.temperature_crit_c, None, "i915 has no critical value");
+        assert_eq!(gpu.fan_rpm, Some(1800));
+        assert_eq!(gpu.power_limit_w, Some(190.0));
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn xe_uses_the_second_temperature_sensor_and_its_critical_value() {
+        let card = fake_card("xe-hwmon");
+        put(&card, "device/hwmon/hwmon4/name", "xe\n");
+        put(&card, "device/hwmon/hwmon4/temp1_input", "10000\n");
+        put(&card, "device/hwmon/hwmon4/temp2_input", "61000\n");
+        put(&card, "device/hwmon/hwmon4/temp2_crit", "100000\n");
+        put(&card, "device/hwmon/hwmon4/fan1_input", "2100\n");
+        put(&card, "device/hwmon/hwmon4/power1_max", "225000000\n");
+        let mut gpu = blank_gpu("xe");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.temperature_c, Some(61.0));
+        assert_eq!(gpu.temperature_crit_c, Some(100.0));
+        assert_eq!(gpu.fan_rpm, Some(2100));
+        assert_eq!(gpu.power_limit_w, Some(225.0));
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn a_power_limit_of_zero_means_disabled_and_is_not_reported_as_a_limit() {
+        let card = i915_card("i915-nolimit", &[]);
+        put(&card, "device/hwmon/hwmon3/name", "i915\n");
+        put(&card, "device/hwmon/hwmon3/power1_max", "0\n");
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.power_limit_w, None);
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn an_integrated_gpu_without_hwmon_simply_has_no_temperature() {
+        let card = i915_card("i915-igpu", &[]);
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.temperature_c, None);
+        assert_eq!(gpu.fan_rpm, None);
+        assert_eq!(gpu.power_limit_w, None);
+        assert_eq!(gpu.clock_core_mhz, Some(650), "the rest is still read");
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn a_hwmon_chip_that_is_not_intels_is_not_read() {
+        let card = fake_card("other-hwmon");
+        put(&card, "device/hwmon/hwmon0/name", "coretemp\n");
+        put(&card, "device/hwmon/hwmon0/temp1_input", "70000\n");
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.temperature_c, None);
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn nothing_is_read_for_an_intel_device_bound_to_another_driver() {
+        // Passed through to a VM, say: the files below may exist, but they
+        // are not the driver's to vouch for.
+        let card = i915_card("vfio", &["thermal"]);
+        put(&card, "device/hwmon/hwmon3/name", "i915\n");
+        put(&card, "device/hwmon/hwmon3/temp1_input", "52500\n");
+        let mut passthrough = blank_gpu("vfio-pci");
+        enrich_intel(&mut passthrough, &card);
+        assert_eq!(passthrough, blank_gpu("vfio-pci"));
+        let mut gpu = blank_gpu("i915");
+        gpu.driver = None;
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.clock_core_mhz, None);
+        let _ = fs::remove_dir_all(card);
+    }
+
+    #[test]
+    fn an_empty_card_directory_leaves_every_intel_field_empty() {
+        for driver in ["i915", "xe"] {
+            let card = fake_card(&format!("empty-{driver}"));
+            let mut gpu = blank_gpu(driver);
+            enrich_intel(&mut gpu, &card);
+            assert_eq!(gpu, blank_gpu(driver));
+            let _ = fs::remove_dir_all(card);
+        }
+    }
+
+    #[test]
+    fn garbage_in_a_sysfs_file_is_ignored_not_guessed_at() {
+        let card = i915_card("i915-garbage", &[]);
+        put(&card, "gt/gt0/rps_act_freq_mhz", "fast\n");
+        put(&card, "gt/gt0/rps_RP0_freq_mhz", "0\n");
+        put(&card, "gt/gt0/rps_max_freq_mhz", "-5\n");
+        let mut gpu = blank_gpu("i915");
+        enrich_intel(&mut gpu, &card);
+        assert_eq!(gpu.clock_core_mhz, None);
+        assert_eq!(gpu.idle, None, "unreadable is not the same as asleep");
+        assert_eq!(gpu.clock_hw_max_mhz, None, "a zero maximum is no maximum");
+        assert_eq!(gpu.clock_limit_mhz, None);
+        let _ = fs::remove_dir_all(card);
     }
 }

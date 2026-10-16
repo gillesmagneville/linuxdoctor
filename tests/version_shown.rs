@@ -151,7 +151,7 @@ impl Drop for Reports {
     }
 }
 
-/// A report as 1.7.0 wrote it: no `linuxdoctor_version`.
+/// A report from a version that did not record its own: no `linuxdoctor_version`.
 const OLD_REPORT: &str = r#"{
     "schema_version": 1,
     "context": {"hostname": "web01", "kernel_version": "6.8.0", "distro": null,
@@ -233,4 +233,142 @@ fn a_version_written_in_a_report_file_cannot_act_on_the_terminal() {
             assert!(text.contains("1.?[2J?]0;pwned??0"), "{text}");
         }
     }
+}
+
+// ----- the warning when two versions are compared ---------------------------------------------------
+
+/// A report with one module holding one finding of the given severity, as a
+/// version that did (or did not) record itself wrote it.
+fn report_with_finding(severity: &str, version: Option<&str>) -> String {
+    let mut report = serde_json::json!({
+        "schema_version": 1,
+        "context": {"hostname": "web01", "kernel_version": "6.8.0", "distro": null,
+                    "architecture": "x86_64", "cpu_count": 4, "mem_total_kb": 8388608,
+                    "boot_time_unix": 1000000},
+        "results": [{
+            "module_id": "security", "error": null, "skipped": false, "notes": [],
+            "findings": [{"id": "SEC005", "title": "Root login", "severity": severity,
+                          "evidence": [], "instance": null}],
+        }],
+    });
+    if let Some(version) = version {
+        report["linuxdoctor_version"] = serde_json::json!(version);
+    }
+    report.to_string()
+}
+
+#[test]
+fn reports_from_two_versions_get_a_warning_in_every_format() {
+    let reports = Reports::new("two-versions");
+    let old = reports.write("old.json", &report_with_finding("warning", Some("1.8.1")));
+    let new = reports.write("new.json", &report_with_finding("warning", Some("1.9.0")));
+    let sentence = "different versions of LinuxDoctor (1.8.1 and 1.9.0)";
+
+    let o = run(&["diff", &old, &new, "--fail-on", "never"]);
+    let terminal = plain(&stdout(&o));
+    let at = terminal
+        .find(sentence)
+        .unwrap_or_else(|| panic!("{terminal}"));
+    assert!(
+        at < terminal.find("Summary").unwrap(),
+        "stated before the changes"
+    );
+    assert!(terminal.contains("not from the machine"), "{terminal}");
+
+    let o = run(&[
+        "diff",
+        &old,
+        &new,
+        "--fail-on",
+        "never",
+        "--output",
+        "markdown",
+    ]);
+    assert!(stdout(&o).contains(&format!("> ⚠ These reports were written by {sentence}")));
+
+    let o = run(&["diff", &old, &new, "--fail-on", "never", "--output", "json"]);
+    let json: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(
+        json["caveats"],
+        serde_json::json!([{"kind": "different_versions", "before": "1.8.1", "after": "1.9.0"}])
+    );
+    assert_eq!(
+        json["schema_version"], 1,
+        "a new caveat is not a new layout"
+    );
+}
+
+#[test]
+fn a_report_that_does_not_say_its_version_is_a_different_version_from_one_that_does() {
+    let reports = Reports::new("unrecorded");
+    let old = reports.write("old.json", OLD_REPORT);
+    let new = reports.write("new.json", &audit("json"));
+    let o = run(&["diff", &old, &new, "--fail-on", "never"]);
+    let text = plain(&stdout(&o));
+    assert!(
+        text.contains(&format!(
+            "different versions of LinuxDoctor (not recorded and {VERSION})"
+        )),
+        "{text}"
+    );
+}
+
+#[test]
+fn nothing_is_said_when_both_reports_come_from_the_same_version_or_neither_records_one() {
+    let reports = Reports::new("same-version");
+    let same_a = reports.write("a.json", &report_with_finding("warning", Some("1.9.0")));
+    let same_b = reports.write("b.json", &report_with_finding("error", Some("1.9.0")));
+    let none_a = reports.write("c.json", &report_with_finding("warning", None));
+    let none_b = reports.write("d.json", &report_with_finding("error", None));
+    for (a, b) in [(&same_a, &same_b), (&none_a, &none_b)] {
+        for format in ["terminal", "markdown", "json"] {
+            let o = run(&["diff", a, b, "--fail-on", "never", "--output", format]);
+            let text = stdout(&o);
+            assert!(!text.contains("different versions"), "{format}: {text}");
+            assert!(!text.contains("different_versions"), "{format}: {text}");
+        }
+    }
+}
+
+#[test]
+fn the_version_warning_does_not_change_the_exit_status() {
+    // The finding got worse from warning to error: that fails `--fail-on error`
+    // whether or not the versions match.
+    let reports = Reports::new("exit-status");
+    let same_a = reports.write("a.json", &report_with_finding("warning", Some("1.9.0")));
+    let same_b = reports.write("b.json", &report_with_finding("error", Some("1.9.0")));
+    let other_b = reports.write("c.json", &report_with_finding("error", Some("2.0.0")));
+    let same = run(&["diff", &same_a, &same_b, "--fail-on", "error"]);
+    let different = run(&["diff", &same_a, &other_b, "--fail-on", "error"]);
+    assert_eq!(same.status.code(), Some(1), "{}", stderr(&same));
+    assert_eq!(different.status.code(), same.status.code());
+    // And a comparison with nothing worse still passes, warning or not.
+    let still_fine = run(&[
+        "diff",
+        &same_a,
+        &reports.write("e.json", &report_with_finding("warning", Some("2.0.0"))),
+        "--fail-on",
+        "error",
+    ]);
+    assert_eq!(still_fine.status.code(), Some(0), "{}", stderr(&still_fine));
+    assert!(plain(&stdout(&still_fine)).contains("different versions"));
+}
+
+#[test]
+fn a_hostile_version_in_a_report_cannot_act_on_the_terminal_through_the_warning() {
+    let reports = Reports::new("hostile-warning");
+    let evil = "1.\u{1b}[2J\u{1b}]0;pwned\u{7}\u{202e}0";
+    let hostile = reports.write("h.json", &report_with_finding("warning", Some(evil)));
+    let clean = reports.write("c.json", &report_with_finding("warning", Some("1.9.0")));
+    let o = run(&["diff", &hostile, &clean, "--fail-on", "never"]);
+    let raw = stdout(&o);
+    let text = plain(&raw);
+    assert!(
+        !text.contains('\u{1b}') && !text.contains('\u{7}') && !text.contains('\u{202e}'),
+        "{text:?}"
+    );
+    assert!(
+        text.contains("different versions of LinuxDoctor (1.?[2J?]0;pwned??0 and 1.9.0)"),
+        "{text}"
+    );
 }

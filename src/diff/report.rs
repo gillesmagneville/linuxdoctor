@@ -48,8 +48,8 @@ pub struct ReportFile {
     /// as format 1.
     #[serde(default)]
     pub schema_version: u32,
-    /// The version of LinuxDoctor that wrote the report. Absent from
-    /// reports written before 1.8.0.
+    /// The version of LinuxDoctor that wrote the report. Absent from the
+    /// reports of versions that did not record it (1.8.0 and earlier).
     #[serde(default)]
     pub linuxdoctor_version: Option<String>,
     pub context: ContextFile,
@@ -212,7 +212,7 @@ mod tests {
                 .as_deref(),
             Some("1.8.0")
         );
-        // Reports from before 1.8.0 do not say.
+        // Reports from versions that did not record it do not say.
         assert_eq!(parse(MINIMAL, "r.json").unwrap().linuxdoctor_version, None);
         // A value of another type is a report this version cannot read.
         let wrong = with.replace("\"1.8.0\"", "180");

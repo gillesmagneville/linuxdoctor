@@ -17,11 +17,15 @@ use linuxdoctor::diff;
 use linuxdoctor::models::Severity;
 use linuxdoctor::output;
 use linuxdoctor::output::common::{FilterInfo, RenderMeta};
-use linuxdoctor::profile::Profile;
+use linuxdoctor::profile::{self, Profile};
 
 /// Exit status when the configuration file cannot be used. The same as a
 /// mistake on the command line, which is what a bad setting is.
 const CONFIG_UNUSABLE: u8 = 2;
+
+/// Exit status when `--modules` names a module that a profile adds and that
+/// profile was not chosen. Also a mistake on the command line.
+const MODULE_NEEDS_PROFILE: u8 = 2;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -102,8 +106,33 @@ fn chosen_profile(typed: Option<cli::ProfileArg>, config: &Config) -> Option<Pro
     typed.or(config.profile).map(Profile::from)
 }
 
+/// What to tell the person who asked for module `id` without the profile
+/// that adds it.
+fn needs_profile_message(id: &str, profile: Profile) -> String {
+    format!(
+        "the module '{id}' is added by the {name} profile: run with --profile {name} \
+         (or set profile = \"{name}\" in the configuration file)",
+        name = profile.name()
+    )
+}
+
+/// `true` when every module asked for can run with this profile; otherwise
+/// says which one cannot and why, and the caller stops.
+fn modules_fit_profile(modules: Option<&[String]>, profile: Option<Profile>) -> bool {
+    match modules.and_then(|ids| profile::module_needing_profile(ids, profile)) {
+        None => true,
+        Some((id, needed)) => {
+            eprintln!("linuxdoctor: {}", needs_profile_message(id, needed));
+            false
+        }
+    }
+}
+
 fn run_audit_command(args: AuditArgs, config: &Config) -> ExitCode {
     let profile = chosen_profile(args.profile, config);
+    if !modules_fit_profile(args.modules.as_deref(), profile) {
+        return ExitCode::from(MODULE_NEEDS_PROFILE);
+    }
     let settings = config.audit.resolve(
         args.output,
         args.min_severity,
@@ -259,6 +288,9 @@ fn run_diff_command(args: DiffArgs, config: &Config) -> ExitCode {
 }
 
 fn run_tui_command(modules: Option<Vec<String>>, profile: Option<Profile>) -> ExitCode {
+    if !modules_fit_profile(modules.as_deref(), profile) {
+        return ExitCode::from(MODULE_NEEDS_PROFILE);
+    }
     let report = match output::tui::run(modules.as_deref(), profile) {
         Ok(report) => report,
         Err(e) => {
@@ -319,5 +351,33 @@ mod tests {
             ),
             Some(Profile::Hpc)
         );
+    }
+
+    #[test]
+    fn the_message_for_a_module_without_its_profile_says_what_to_type_and_what_to_set() {
+        let message = needs_profile_message("hpc", Profile::Hpc);
+        assert_eq!(
+            message,
+            "the module 'hpc' is added by the hpc profile: run with --profile hpc \
+             (or set profile = \"hpc\" in the configuration file)"
+        );
+    }
+
+    #[test]
+    fn modules_fit_the_profile_unless_one_needs_a_profile_that_was_not_chosen() {
+        let asked = |ids: &[&str]| -> Option<Vec<String>> {
+            Some(ids.iter().map(|s| s.to_string()).collect())
+        };
+        assert!(modules_fit_profile(None, None));
+        assert!(modules_fit_profile(None, Some(Profile::Hpc)));
+        assert!(modules_fit_profile(asked(&["cpu"]).as_deref(), None));
+        assert!(modules_fit_profile(
+            asked(&["hpc"]).as_deref(),
+            Some(Profile::Hpc)
+        ));
+        assert!(!modules_fit_profile(
+            asked(&["cpu", "hpc"]).as_deref(),
+            None
+        ));
     }
 }

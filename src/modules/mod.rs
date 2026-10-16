@@ -3,6 +3,7 @@
 pub mod cpu;
 pub mod firmware;
 pub mod gpu;
+pub mod hpc;
 pub mod kernel;
 pub mod logs;
 pub mod memory;

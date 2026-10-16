@@ -54,6 +54,10 @@ fn module_summary(id: &str) -> Option<&'static str> {
             "Whether this machine is a virtual machine, and the virtual machines and containers \
              it hosts."
         }
+        "hpc" => {
+            "Added by the hpc profile: whether the CPUs are free to run at full speed (frequency \
+             governor)."
+        }
         _ => return None,
     })
 }
@@ -296,7 +300,9 @@ fn write_profiles(page: &mut Page) -> io::Result<()> {
              a finding, and it says what it did in the finding itself (the severity it had \
              before is kept in the evidence as severity_before_profile). The report records the \
              profile it was written with, and diff warns when two reports were written with \
-             different ones.",
+             different ones. A profile may also add modules of its own, for checks that are \
+             right on one kind of machine and noise on another; they run only with that \
+             profile, and --modules accepts their ids only together with it.",
         );
         for profile in Profile::ALL {
             r.control("TP", ["16"]);
@@ -308,6 +314,14 @@ fn write_profiles(page: &mut Page) -> io::Result<()> {
                     "{} is reported as {} at most.",
                     rule.id,
                     rule.cap.to_string().to_lowercase()
+                ))]);
+            }
+            for module in profile.modules() {
+                r.control("br", []);
+                r.text([roman(format!(
+                    "Adds the module {}: {}",
+                    module.id(),
+                    module_summary(module.id()).unwrap_or("(no description)")
                 ))]);
             }
         }
@@ -521,6 +535,36 @@ mod tests {
     }
 
     #[test]
+    fn every_module_a_profile_adds_has_a_summary_and_is_listed_with_its_profile() {
+        let page = page();
+        let profiles = section(&page, ".SH PROFILES", ".SH \"EXIT STATUS\"");
+        for profile in Profile::ALL {
+            for module in profile.modules() {
+                let summary = module_summary(module.id()).unwrap_or_else(|| {
+                    panic!(
+                        "module `{}` (profile {}) has no line in module_summary",
+                        module.id(),
+                        profile.name()
+                    )
+                });
+                assert!(
+                    profiles.contains(&format!("Adds the module {}: ", module.id())),
+                    "{} missing from the PROFILES section",
+                    module.id()
+                );
+                assert!(
+                    profiles.contains(&summary[..30]),
+                    "{summary} missing from the PROFILES section"
+                );
+            }
+        }
+        // They are not part of every audit, so not in the list of the ones
+        // that are.
+        let modules = section(&page, ".SH MODULES", ".SH PROFILES");
+        assert!(!modules.contains("\\fBhpc\\fR"), "{modules}");
+    }
+
+    #[test]
     fn every_module_is_listed_in_the_page() {
         let page = page();
         for module in linuxdoctor::modules::all_modules() {
@@ -542,7 +586,11 @@ mod tests {
                 "{} missing from the PROFILES section",
                 profile.name()
             );
-            assert!(!profile::rules(profile).is_empty(), "{}", profile.name());
+            assert!(
+                !profile::rules(profile).is_empty() || !profile.modules().is_empty(),
+                "profile {} does nothing",
+                profile.name()
+            );
             for rule in profile::rules(profile) {
                 assert!(
                     profiles.contains(&format!("{} is reported as", rule.id)),

@@ -476,10 +476,29 @@ What a profile does is deliberately narrow:
 
 | Profile | For | What it changes |
 |---|---|---|
-| `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence |
+| `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence. Adds the `hpc` module: `HPC001` checks that the CPU frequency governor does not hold the CPUs back |
 
 One thing to keep in mind: under `hpc`, a node that is oversubscribed *by mistake* looks
 the same as one that is working. The profile removes the alarm, not the number.
+
+A profile can also **add a module** of its own: a check that is right on one kind of
+machine and noise on another (a desktop is not wrong for leaving its CPUs on `powersave`),
+which lowering a severity cannot express. Such a module is part of the audit only when
+the profile is chosen, appears in the report like any other module, and `--modules` names
+it only together with the profile: `--modules hpc` on its own is refused with a message
+that says to add `--profile hpc`. Choosing other modules stays exact: `--modules memory
+--profile hpc` runs memory and nothing else.
+
+**What `HPC001` says.** It reads the governor of every CPU and judges it for a compute node,
+telling apart the drivers that choose the frequency themselves (`intel_pstate`,
+`amd-pstate-epp`, where `powersave` is only a bias, read together with the
+energy/performance preference) from the generic ones (`acpi-cpufreq`, `intel_cpufreq`,
+where `powersave` holds the lowest frequency). `performance` is fine; `powersave` on a
+generic driver, a governor that follows the load (`ondemand`, `conservative`,
+`schedutil`), an efficiency-leaning preference, or CPUs that do not all use the same
+governor are a Warning, with the commands to set `performance` now and at every boot. A
+machine that exposes no frequency scaling (a virtual machine, say) gets an Info that
+says there was nothing to check.
 
 `linuxdoctor diff` has no `--profile`; it reads the profile each report recorded, and warns
 when the two differ.
@@ -678,7 +697,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1111 lib unit tests + 88 CLI unit tests + 177 integration tests
+cargo test               # 1143 lib unit tests + 92 CLI unit tests + 186 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -769,6 +788,7 @@ linuxdoctor/
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
     │   ├── numa/                  # per-node topology, cross-node imbalance
     │   ├── gpu/                     # AMD and Intel sysfs, NVIDIA via nvidia-smi
+    │   ├── hpc/                       # added by --profile hpc, not in all_modules(): CPU governor
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode
@@ -804,7 +824,8 @@ tests/       # fixture-driven integration tests, one file per module,
              # wins, exit status 2 for a bad file) and checks that every test that
              # starts the binary keeps it away from the reader's own file;
              # hostile_names.rs runs it against escape sequences in names, every format;
-             # profile_option.rs runs the real CPU module and the real binary with profiles
+             # profile_option.rs runs the real CPU module and the real binary with profiles;
+             # hpc_module.rs runs the binary for the module the hpc profile adds
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

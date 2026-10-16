@@ -373,6 +373,7 @@ fn hostile_data() -> SecurityRawData {
 
 fn report_of(findings: Vec<Finding>) -> Report {
     Report {
+        profile: None,
         context: context("Debian GNU/Linux 12"),
         results: vec![ModuleRunResult {
             module_id: "security",

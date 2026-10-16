@@ -37,6 +37,11 @@ struct Envelope<'a> {
     /// layout (`schema_version` is), but a record of where the findings came
     /// from: checks are added and thresholds change between versions.
     linuxdoctor_version: &'a str,
+    /// The profile the report was judged with (the report knows: it is the
+    /// one `profile::apply` was given). Absent when none was chosen, so a
+    /// report written without a profile is exactly what it always was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     filter: Option<FilterJson>,
     #[serde(flatten)]
@@ -55,6 +60,7 @@ pub fn render_with(report: &Report, meta: &RenderMeta) -> serde_json::Result<Str
     serde_json::to_string_pretty(&Envelope {
         schema_version: SCHEMA_VERSION,
         linuxdoctor_version: meta.tool_version,
+        profile: report.profile.map(|p| p.name()),
         filter: meta.filter.map(|f| FilterJson {
             min_severity: f.min_severity,
             hidden_findings: f.hidden,
@@ -72,6 +78,7 @@ mod tests {
 
     fn report() -> Report {
         Report {
+            profile: None,
             context: Context {
                 hostname: "web01".into(),
                 kernel_version: "6.8.0".into(),
@@ -172,6 +179,50 @@ mod tests {
         // And by default it is the version of this build.
         let json = parsed(&report());
         assert_eq!(json["linuxdoctor_version"], crate::VERSION);
+    }
+
+    #[test]
+    fn a_report_written_without_a_profile_has_no_profile_key() {
+        assert!(parsed(&report()).get("profile").is_none());
+    }
+
+    #[test]
+    fn the_profile_is_recorded_right_after_the_version() {
+        use crate::profile::Profile;
+        let mut profiled = report();
+        profiled.profile = Some(Profile::Hpc);
+        let text = render(&profiled).unwrap();
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        assert!(lines[1].starts_with("\"schema_version\":"), "{}", lines[1]);
+        assert!(
+            lines[2].starts_with("\"linuxdoctor_version\":"),
+            "{}",
+            lines[2]
+        );
+        assert_eq!(lines[3], "\"profile\": \"hpc\",");
+        // Every recorded word is one `Profile::from_name` gives back.
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let word = json["profile"].as_str().unwrap();
+        assert_eq!(Profile::from_name(word), Some(Profile::Hpc));
+    }
+
+    #[test]
+    fn profile_and_filter_can_both_be_recorded_in_that_order() {
+        use crate::output::common::FilterInfo;
+        use crate::profile::Profile;
+        let meta = RenderMeta {
+            filter: Some(FilterInfo {
+                min_severity: Severity::Warning,
+                hidden: 3,
+            }),
+            ..RenderMeta::default()
+        };
+        let mut profiled = report();
+        profiled.profile = Some(Profile::Hpc);
+        let text = render_with(&profiled, &meta).unwrap();
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        assert!(lines[3].starts_with("\"profile\":"), "{}", lines[3]);
+        assert!(lines[4].starts_with("\"filter\":"), "{}", lines[4]);
     }
 
     #[test]

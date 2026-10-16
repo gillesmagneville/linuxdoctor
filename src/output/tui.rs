@@ -59,6 +59,7 @@ use crate::models::{Finding, Severity};
 use crate::output::common::make_display_safe;
 use crate::output::live_stats::{self, CpuStatSample, LiveStats};
 use crate::output::tui_filter::ViewFilter;
+use crate::profile::Profile;
 
 /// Minimum number of distinct sub-items before a module gets a real,
 /// navigable submenu. Below this, everything is shown flat instead.
@@ -545,8 +546,13 @@ fn draw_header(f: &mut Frame, app: &TuiApp, area: Rect) {
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
-            " \u{2014} {}  |  kernel {} \u{00b7} {} \u{00b7} {} CPUs \u{00b7} {} MB RAM",
+            " \u{2014} {}{}  |  kernel {} \u{00b7} {} \u{00b7} {} CPUs \u{00b7} {} MB RAM",
             ctx.hostname,
+            // The report knows which profile it was judged with.
+            app.report
+                .profile
+                .map(|p| format!(" \u{00b7} profile {}", p.name()))
+                .unwrap_or_default(),
             ctx.kernel_version,
             ctx.distro.as_deref().unwrap_or("unknown distro"),
             ctx.cpu_count,
@@ -972,8 +978,11 @@ pub fn draw_progress_screen(f: &mut Frame, done: usize, total: usize, pending: &
 fn run_scan_with_progress<B: Backend>(
     terminal: &mut Terminal<B>,
     selected_ids: Option<&[String]>,
+    profile: Option<Profile>,
 ) -> io::Result<Report> {
-    run_audit_with_progress(selected_ids, |done, total, pending| {
+    // The engine applies the profile to the finished report, as for `audit`,
+    // so the screen and the exit status work from the same severities.
+    run_audit_with_progress(selected_ids, profile, |done, total, pending| {
         let _ = terminal.draw(|f| draw_progress_screen(f, done, total, pending));
     })
     .map_err(|e| io::Error::other(e.to_string()))
@@ -986,17 +995,17 @@ fn run_scan_with_progress<B: Backend>(
 /// compute an exit code from it the same way `audit` does. Kept separate
 /// from `draw()` on purpose so the rendering logic stays testable without
 /// a real TTY.
-pub fn run(selected_ids: Option<&[String]>) -> io::Result<Report> {
+pub fn run(selected_ids: Option<&[String]>, profile: Option<Profile>) -> io::Result<Report> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let outcome = run_scan_with_progress(&mut terminal, selected_ids).and_then(|report| {
+    let outcome = run_scan_with_progress(&mut terminal, selected_ids, profile).and_then(|report| {
         let mut app = TuiApp::new(report);
         app.refresh_live_stats(); // populate immediately, not a full tick later
-        event_loop(&mut terminal, &mut app, selected_ids).map(|()| app.report)
+        event_loop(&mut terminal, &mut app, selected_ids, profile).map(|()| app.report)
     });
 
     disable_raw_mode()?;
@@ -1069,6 +1078,7 @@ fn event_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut TuiApp,
     selected_ids: Option<&[String]>,
+    profile: Option<Profile>,
 ) -> io::Result<()> {
     let mut last_tick = Instant::now();
 
@@ -1082,7 +1092,8 @@ fn event_loop<B: Backend>(
                     match handle_key(app, key) {
                         KeyAction::Quit => break,
                         KeyAction::Rescan => {
-                            let new_report = run_scan_with_progress(terminal, selected_ids)?;
+                            let new_report =
+                                run_scan_with_progress(terminal, selected_ids, profile)?;
                             app.replace_report(new_report);
                             app.refresh_live_stats();
                             last_tick = Instant::now();
@@ -1133,6 +1144,7 @@ mod tests {
         .build();
 
         Report {
+            profile: None,
             context: ctx(),
             results: vec![ModuleRunResult {
                 module_id: "memory",
@@ -1180,6 +1192,7 @@ mod tests {
         .build();
 
         Report {
+            profile: None,
             context: ctx(),
             results: vec![ModuleRunResult {
                 module_id: "cpu",
@@ -1204,6 +1217,7 @@ mod tests {
         .build();
 
         Report {
+            profile: None,
             context: ctx(),
             results: vec![
                 ModuleRunResult {
@@ -1264,6 +1278,35 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(loading.contains(&expected), "loading screen: {loading}");
+    }
+
+    #[test]
+    fn the_header_names_the_profile_only_when_one_was_chosen() {
+        use crate::profile::Profile;
+        let mut plain = TuiApp::new(flat_report());
+        let content = screen_text(&mut plain, 120, 20);
+        assert!(!content.contains("profile"), "header: {content}");
+
+        let mut profiled = flat_report();
+        profiled.profile = Some(Profile::Hpc);
+        let mut app = TuiApp::new(profiled);
+        let content = screen_text(&mut app, 120, 20);
+        assert!(content.contains("profile hpc"), "header: {content}");
+        assert!(content.contains("test-host"), "header: {content}");
+    }
+
+    #[test]
+    fn the_scan_behind_the_progress_screen_judges_the_report_with_the_profile() {
+        // The first scan and every `r` refresh go through this function: if
+        // it dropped the profile the header would stop naming it, and the
+        // exit status would come from severities nobody chose.
+        use crate::profile::Profile;
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let ids = vec!["memory".to_string()];
+        let report = run_scan_with_progress(&mut terminal, Some(&ids), Some(Profile::Hpc)).unwrap();
+        assert_eq!(report.profile, Some(Profile::Hpc));
+        let report = run_scan_with_progress(&mut terminal, Some(&ids), None).unwrap();
+        assert_eq!(report.profile, None);
     }
 
     #[test]
@@ -1705,6 +1748,7 @@ mod tests {
         let mut gpu = module("gpu", Vec::new());
         gpu.skipped = true;
         Report {
+            profile: None,
             context: ctx(),
             results: vec![memory, security, network, storage, gpu],
         }

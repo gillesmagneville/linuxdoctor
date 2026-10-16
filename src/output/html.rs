@@ -149,6 +149,16 @@ pub fn render(report: &Report, meta: &RenderMeta) -> String {
     let fact =
         |label: &str, value: String| format!("<div><dt>{label}</dt><dd>{value}</dd></div>\n");
     out.push_str(&fact("LinuxDoctor", esc(meta.tool_version)));
+    if let Some(profile) = report.profile {
+        out.push_str(&fact(
+            "Profile",
+            esc(&format!(
+                "{} \u{2014} {}",
+                profile.name(),
+                profile.description()
+            )),
+        ));
+    }
     out.push_str(&fact(
         "Kernel",
         format!("<code>{}</code>", esc(&ctx.kernel_version)),
@@ -438,6 +448,7 @@ mod tests {
 
     fn report(results: Vec<ModuleRunResult>) -> Report {
         Report {
+            profile: None,
             context: Context {
                 hostname: "web01".into(),
                 kernel_version: "6.8.0-31-generic".into(),
@@ -521,6 +532,24 @@ mod tests {
         // Still in the document's metadata and in the footer.
         assert!(html.contains("<meta name=\"generator\" content=\"LinuxDoctor 9.9.9\">"));
         assert!(html.contains("LinuxDoctor 9.9.9 only reads system state"));
+    }
+
+    #[test]
+    fn the_profile_is_a_fact_of_the_header_when_one_was_chosen() {
+        use crate::profile::Profile;
+        let mut profiled = report(vec![]);
+        profiled.profile = Some(Profile::Hpc);
+        let html = render(&profiled, &meta());
+        let header = &html[html.find("<header>").unwrap()..html.find("</header>").unwrap()];
+        assert!(
+            header.contains(&format!(
+                "<div><dt>Profile</dt><dd>hpc \u{2014} {}</dd></div>\n",
+                Profile::Hpc.description()
+            )),
+            "{header}"
+        );
+        let html = render(&report(vec![]), &meta());
+        assert!(!html.contains("<dt>Profile</dt>"), "no profile, no fact");
     }
 
     // ----- summary ----------------------------------------------------------

@@ -17,6 +17,7 @@ use linuxdoctor::diff;
 use linuxdoctor::models::Severity;
 use linuxdoctor::output;
 use linuxdoctor::output::common::{FilterInfo, RenderMeta};
+use linuxdoctor::profile::Profile;
 
 /// Exit status when the configuration file cannot be used. The same as a
 /// mistake on the command line, which is what a bad setting is.
@@ -52,7 +53,7 @@ fn main() -> ExitCode {
     }
     match command {
         Command::Audit(args) => run_audit_command(args, &config),
-        Command::Tui(args) => run_tui_command(args.modules),
+        Command::Tui(args) => run_tui_command(args.modules, chosen_profile(args.profile, &config)),
         Command::Diff(args) => run_diff_command(args, &config),
         Command::Completions(args) => print_bytes(&cli::completion_script(args.shell)),
         Command::Man => run_man_command(),
@@ -95,20 +96,31 @@ fn write_stdout(bytes: &[u8]) -> bool {
     }
 }
 
+/// The profile the audit runs with: the one typed, else the one in the
+/// configuration file, else none -- never one guessed from the machine.
+fn chosen_profile(typed: Option<cli::ProfileArg>, config: &Config) -> Option<Profile> {
+    typed.or(config.profile).map(Profile::from)
+}
+
 fn run_audit_command(args: AuditArgs, config: &Config) -> ExitCode {
+    let profile = chosen_profile(args.profile, config);
     let settings = config.audit.resolve(
         args.output,
         args.min_severity,
         args.fail_on,
         OutputFormat::Terminal,
     );
-    let mut report = match core::engine::run_audit(args.modules.as_deref()) {
+    let mut report = match core::engine::run_audit(args.modules.as_deref(), profile) {
         Ok(report) => report,
         Err(e) => {
             eprintln!("linuxdoctor: {e}");
             return ExitCode::FAILURE;
         }
     };
+
+    // The report already has the profile applied (the engine does it, so it
+    // cannot be forgotten): the pass/fail decision below follows the
+    // severities the report shows.
 
     // The pass/fail decision looks at the whole report, before any display
     // filter: hiding findings from the output must never turn a failing
@@ -246,8 +258,8 @@ fn run_diff_command(args: DiffArgs, config: &Config) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_tui_command(modules: Option<Vec<String>>) -> ExitCode {
-    let report = match output::tui::run(modules.as_deref()) {
+fn run_tui_command(modules: Option<Vec<String>>, profile: Option<Profile>) -> ExitCode {
+    let report = match output::tui::run(modules.as_deref(), profile) {
         Ok(report) => report,
         Err(e) => {
             eprintln!(
@@ -267,5 +279,45 @@ fn exit_code_for(report: &core::engine::Report) -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with(profile: Option<cli::ProfileArg>) -> Config {
+        Config {
+            profile,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn no_profile_is_chosen_unless_somebody_chose_one() {
+        assert_eq!(chosen_profile(None, &Config::default()), None);
+    }
+
+    #[test]
+    fn the_option_chooses_the_profile() {
+        assert_eq!(
+            chosen_profile(Some(cli::ProfileArg::Hpc), &Config::default()),
+            Some(Profile::Hpc)
+        );
+    }
+
+    #[test]
+    fn the_configuration_file_chooses_it_when_the_option_is_not_typed() {
+        assert_eq!(
+            chosen_profile(None, &config_with(Some(cli::ProfileArg::Hpc))),
+            Some(Profile::Hpc)
+        );
+        assert_eq!(
+            chosen_profile(
+                Some(cli::ProfileArg::Hpc),
+                &config_with(Some(cli::ProfileArg::Hpc))
+            ),
+            Some(Profile::Hpc)
+        );
     }
 }

@@ -581,6 +581,7 @@ fn numbered_steps_reach_the_terminal_report_readably() {
     data.swap_devices.clear();
     let findings = analyze(&data, &test_context());
     let report = Report {
+        profile: None,
         context: test_context(),
         results: vec![ModuleRunResult {
             module_id: "memory",

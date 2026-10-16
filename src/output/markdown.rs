@@ -30,6 +30,13 @@ pub fn render(report: &Report, meta: &RenderMeta) -> String {
         escape_text(&ctx.hostname)
     ));
     out.push_str(&format!("- **LinuxDoctor:** {}\n", meta.tool_version));
+    if let Some(profile) = report.profile {
+        out.push_str(&format!(
+            "- **Profile:** {} \u{2014} {}\n",
+            profile.name(),
+            profile.description()
+        ));
+    }
     out.push_str(&format!(
         "- **Kernel:** {}\n",
         code_span(&ctx.kernel_version)
@@ -395,6 +402,7 @@ mod tests {
 
     fn report(results: Vec<ModuleRunResult>) -> Report {
         Report {
+            profile: None,
             context: Context {
                 hostname: "web01".into(),
                 kernel_version: "6.8.0-31-generic".into(),
@@ -433,6 +441,23 @@ mod tests {
         assert_eq!(lines.next(), Some("- **LinuxDoctor:** 9.9.9"));
         // Still in the footer.
         assert!(md.contains("LinuxDoctor 9.9.9 only reads system state"));
+    }
+
+    #[test]
+    fn the_profile_is_stated_under_the_version_when_one_was_chosen() {
+        use crate::profile::Profile;
+        let mut profiled = report(vec![]);
+        profiled.profile = Some(Profile::Hpc);
+        let md = render(&profiled, &meta());
+        let lines: Vec<&str> = md.lines().collect();
+        assert_eq!(lines[2], "- **LinuxDoctor:** 9.9.9");
+        assert_eq!(
+            lines[3],
+            format!("- **Profile:** hpc \u{2014} {}", Profile::Hpc.description())
+        );
+        // No profile, no line: the report is what it always was.
+        let md = render(&report(vec![]), &meta());
+        assert!(!md.contains("Profile"), "{md}");
     }
 
     #[test]

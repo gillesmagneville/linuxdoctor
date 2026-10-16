@@ -52,6 +52,11 @@ pub struct ReportFile {
     /// reports of versions that did not record it (1.8.0 and earlier).
     #[serde(default)]
     pub linuxdoctor_version: Option<String>,
+    /// The profile the audit was run with (`--profile`). Absent when none
+    /// was chosen, which is also how every report of a version without
+    /// profiles looks: both mean "no profile".
+    #[serde(default)]
+    pub profile: Option<String>,
     pub context: ContextFile,
     pub results: Vec<ModuleFile>,
     /// Present when the report was written with `--min-severity`, which
@@ -216,6 +221,25 @@ mod tests {
         assert_eq!(parse(MINIMAL, "r.json").unwrap().linuxdoctor_version, None);
         // A value of another type is a report this version cannot read.
         let wrong = with.replace("\"1.9.0\"", "180");
+        assert!(parse(&wrong, "r.json").is_err());
+    }
+
+    #[test]
+    fn the_profile_the_report_was_written_with_is_read_when_it_is_there() {
+        let with = r#"{
+            "schema_version": 1,
+            "profile": "hpc",
+            "context": {"hostname": "web01"},
+            "results": []
+        }"#;
+        assert_eq!(
+            parse(with, "r.json").unwrap().profile.as_deref(),
+            Some("hpc")
+        );
+        // No key, no profile: a report written without one.
+        assert_eq!(parse(MINIMAL, "r.json").unwrap().profile, None);
+        // A value of another type is a report this version cannot read.
+        let wrong = with.replace("\"hpc\"", "7");
         assert!(parse(&wrong, "r.json").is_err());
     }
 

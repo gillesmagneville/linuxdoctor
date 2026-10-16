@@ -24,9 +24,13 @@ pub fn render_with(report: &Report, meta: &RenderMeta) -> String {
     let mut out = String::new();
 
     out.push_str(&format!(
-        "{BOLD}LinuxDoctor {}{RESET} — {}\n",
+        "{BOLD}LinuxDoctor {}{RESET} — {}",
         meta.tool_version, report.context.hostname
     ));
+    if let Some(profile) = report.profile {
+        out.push_str(&format!("{DIM} · profile {}{RESET}", profile.name()));
+    }
+    out.push('\n');
     out.push_str(&format!(
         "{DIM}kernel {} · {} · {} CPUs · {} MB RAM{RESET}\n\n",
         report.context.kernel_version,
@@ -142,6 +146,7 @@ mod tests {
 
     fn report_with(results: Vec<ModuleRunResult>) -> Report {
         Report {
+            profile: None,
             context: Context {
                 hostname: "host".into(),
                 kernel_version: "6.0".into(),
@@ -183,6 +188,26 @@ mod tests {
             )),
             "{out}"
         );
+    }
+
+    #[test]
+    fn the_first_line_names_the_profile_only_when_one_was_chosen() {
+        use crate::profile::Profile;
+        let meta = RenderMeta {
+            tool_version: "9.9.9",
+            ..RenderMeta::default()
+        };
+        let mut report = report_with(vec![]);
+        report.profile = Some(Profile::Hpc);
+        let out = render_with(&report, &meta);
+        let first = out.lines().next().unwrap();
+        assert_eq!(
+            first,
+            format!("{BOLD}LinuxDoctor 9.9.9{RESET} — host{DIM} · profile hpc{RESET}")
+        );
+        // Without one the line is what it always was.
+        let out = render(&report_with(vec![]));
+        assert!(!out.contains("profile"), "{out}");
     }
 
     #[test]

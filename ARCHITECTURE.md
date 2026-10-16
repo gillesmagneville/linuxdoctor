@@ -60,6 +60,8 @@ linuxdoctor/
 │   ├── config.rs              # the optional config.toml — see "Configuration"
 │   ├── manpage.rs             # `linuxdoctor man`: the page, generated — see
 │   │                          # "Manual Page and Shell Completions"
+│   ├── profile.rs             # machine profiles (--profile): what kind of machine is
+│   │                          # being audited — see "Profiles"
 │   │
 │   ├── core/
 │   │   ├── mod.rs
@@ -141,6 +143,7 @@ linuxdoctor/
     # (one per module, same fixture-driven pattern)
     ├── docs_commands.rs      # the real binary: man, completions, --modules check
     ├── diff_command.rs       # the real binary: diff, its exit status and its formats
+    ├── profile_option.rs     # profiles: the real CPU module and the real binary
     └── hostile_names.rs      # the real binary against escape sequences in names, every format
 ```
 
@@ -172,7 +175,8 @@ For each module:
    run(ctx)            → internally: collect() then analyze()
    on error            → isolate, record, continue
  ↓
-Aggregate Findings into a Report
+Aggregate Findings into a Report, applying the profile (--profile) if one was chosen
+                                                    (only ever lowers severities)
  ↓
 Exit-status gate (--fail-on) evaluated on the whole report
  ↓
@@ -548,7 +552,7 @@ does not count as a finding; check for it separately in CI if it matters.
 The report is written to standard output with `write_stdout` (not `print!`, which panics
 when the reader has gone away): a closed pipe (`audit | head`) is not an error and the
 status stays the audit's verdict; any other write failure is reported and exits 1.
-`tui` keeps the default gate and has neither option.
+`tui` keeps the default gate and has neither option (it has `--profile`, below).
 
 ## Terminal Renderer
 
@@ -567,7 +571,8 @@ detail for anything above INFO:
 ## JSON Renderer
 
 Serializes the full `Report` — a `schema_version` first, then the `linuxdoctor_version`
-that wrote it, then `context` once, then
+that wrote it, then the `profile` it was written with (only when one was chosen), then
+`context` once, then
 `results` grouped by module (`module_id`, that module's `findings`, `error`/`skipped`
 for modules that didn't run cleanly, and `notes` for modules whose data may be
 incomplete):
@@ -626,7 +631,8 @@ in-memory code and the other renderers never see it.
 
 Tests: unit tests in `output/json.rs` and the end-to-end `tests/json_schema.rs` (real
 binary) pin the envelope — `schema_version` is the first key and, on an unfiltered
-report, the two version keys are the only additions to the report's top level.
+report written without a profile, the two version keys are the only additions to the
+report's top level.
 
 `linuxdoctor_version` (a string, `linuxdoctor::VERSION`) is **not** part of the layout —
 `schema_version` is — but a record of where the findings came from: checks are added and
@@ -635,8 +641,12 @@ version that wrote it. It was added without a bump, as the rule allows; reports 
 before it (1.8.0 and earlier) simply lack the key, and `diff` says "version not recorded"
 for them.
 
-When `--min-severity` was used, the document also carries (right after the two version
-keys) a `filter` object, absent otherwise:
+`profile` (a string, `"hpc"`) is present only when the audit was run with a profile, and
+absent otherwise, so a report written without one is exactly what it always was. It was
+added without a bump, as the rule allows. See "Profiles".
+
+When `--min-severity` was used, the document also carries (right after the version keys
+and the profile) a `filter` object, absent otherwise:
 
 ```json
 "filter": { "min_severity": "warning", "hidden_findings": 12 }
@@ -733,9 +743,13 @@ from the machine. Two recorded versions that differ raise it; so does one record
 next to a report that records none (every version that records the field is newer than every
 one that does not, so the two certainly differ); two reports that both record none say
 nothing, since there is nothing to conclude — a warning there would only be noise on every
-comparison of old reports. A caveat never adds or hides a change and never moves the exit
-status (`Caveat::DifferentVersions`; the versions come from files and are cleaned like the
-host names). Changed machine facts (kernel, distribution, memory, CPUs, a reboot) are listed
+comparison of old reports. The same goes for the profile (`Caveat::DifferentProfiles`): a
+profile lowers some severities, so a finding that "got better" between a report written
+without a profile and one written with `hpc` got better on paper only. Unlike a version,
+"no profile" is a value (it is also what every report from before profiles looks like), so
+`none` against `hpc` raises the caveat and two reports without one say nothing. A caveat
+never adds or hides a change and never moves the exit status (the versions and profiles
+come from files and are cleaned like the host names). Changed machine facts (kernel, distribution, memory, CPUs, a reboot) are listed
 under "Machine changes".
 
 ### Exit status and options
@@ -812,9 +826,10 @@ it):
 }
 ```
 
-`caveats[].kind` is `different_machines`, `reports_look_reversed`, `filtered` or
+`caveats[].kind` is `different_machines`, `reports_look_reversed`, `filtered`,
 `different_versions` (`before` / `after` are the two versions, `null` for a report that does
-not record one); a reader should ignore a caveat kind it does not know, as it ignores a key.
+not record one) or `different_profiles` (`before` / `after` are the two profiles, `null` for
+a report written without one); a reader should ignore a caveat kind it does not know, as it ignores a key.
 `kind` of a change is `new`, `resolved`, `worse` or `better`; `section` is where the change is listed
 (`worse`, `better`, `other`); `before` / `after` are the severities (`null` on the side
 where the finding does not exist); `doubt` (`"before"` or `"after"`) appears on a change that
@@ -950,6 +965,79 @@ thread — so a note is always attributed to the module whose command was stoppe
 
 ---
 
+# Profiles
+
+```
+linuxdoctor audit --profile hpc          profile = "hpc"      (top level of config.toml)
+```
+
+The checks are written for a machine in general, and some readings mean something else on a
+particular kind of machine: a load average at the number of CPUs is contention on a
+desktop and a compute node doing its job. A **profile** says what kind of machine is being
+audited, once, in one place (`src/profile.rs`), instead of every module guessing. Today
+there is one, `hpc`; a `server` profile is planned.
+
+Five rules, each with the test that holds it:
+
+1. **Chosen, never detected.** `--profile`, or `profile` in the configuration file; the
+   command line wins. Nothing looks at the machine to pick one: two similar machines must
+   not be judged differently for a reason nobody can see. With no profile, `profile::apply`
+   is not called and every severity is the one the module gave
+   (`without_a_profile_no_report_mentions_one`).
+2. **A profile only lowers.** A `Rule { id, cap, reason }` is a *cap*: a finding with that
+   id and a severity above `cap` is reported at `cap`; one at or below it is left alone, and
+   no rule can raise anything (`no_rule_ever_raises_a_severity`). This is not a style
+   choice. The exit status follows the severities, so a profile that made findings worse
+   would make audits that pass today fail, on the strength of a setting.
+3. **A profile never looks away.** It removes no finding, changes no evidence it was given
+   and no confidence, and has nothing to say about a full disk or an exposed service:
+   `a_real_problem_is_still_reported_and_still_fails_under_a_profile` runs the real binary
+   on a nearly full file system with and without `--profile hpc` and requires the same
+   findings and the same exit status.
+4. **It says what it did, in the finding.** An adjusted finding gets two evidence lines,
+   `severity_before_profile` and `profile`, and a closing paragraph in its explanation
+   ("Profile hpc: reported as info instead of critical. …" followed by the reason). Anybody
+   reading a report can tell an adjusted finding from an untouched one, and see what it
+   would have been. The report itself records the profile (JSON `profile` right after
+   `linuxdoctor_version`; a dim `· profile hpc` on the first line of the terminal report;
+   a "Profile" line in Markdown and HTML; the TUI header).
+5. **It is applied to the finished report, before the gate and before the display filter.**
+   The profile is a parameter of the functions that build a report
+   (`core::engine::run_audit`, `run_audit_with_progress`, and `audit_of` underneath), which
+   call `profile::apply` on the result: there is no step for a caller to forget, and a
+   report cannot record a profile it did not apply. The exit status, every renderer and
+   `diff` all work from the same severities (`the_profile_is_applied_before_the_gate_can_look_at_the_report`
+   with a fake module, `a_busy_node_fails_the_audit_without_a_profile_and_passes_with_hpc`
+   with the real CPU module). `--fail-on` therefore judges the severities the report shows.
+
+`diff` compares what the reports say, so it has no `--profile`; it reads the profile each
+report recorded and, when the two differ (including *none* against one), says so as a
+caveat (see "Report Diff").
+
+### The `hpc` profile
+
+| Finding | Cap | Why |
+|---|---|---|
+| `CPU002` Load Average Pressure | info | The CPUs of a compute node are meant to be busy: a load at or above the CPU count is a node running jobs. |
+| `CPU003` Sustained CPU Overload | info | The same, over every window. |
+
+The load figures stay in the evidence. `CPU003` is a Critical finding on any other machine:
+under `hpc` a node with a load of nine on four CPUs passes the default gate. That is the
+point of the profile, and also what to remember when choosing it: **a node that is
+oversubscribed by mistake looks the same as one that is working.** The profile removes the
+alarm, not the number.
+
+### Adding a profile or a rule
+
+A rule must name a finding some module really produces (`the_rules_name_findings_the_cpu_module_really_produces`
+guards the `hpc` ones), give a reason a reader can disagree with, and only lower. A profile
+that needs a check the general audit does not make (what a server should have, for
+instance) adds a module the profile selects; it does not change `Context`. The word that
+chooses a profile lives in two places, `Profile::name` and `cli::ProfileArg`, and a test
+walks both lists to keep them the same.
+
+---
+
 # Configuration
 
 ```
@@ -963,6 +1051,7 @@ keeps identical in the README and the manual page.
 | Key | Where | Same as |
 |---|---|---|
 | `timeout` | top level | `--timeout` (every command) |
+| `profile` | top level only | `--profile` (`audit` and `tui`) |
 | `fail_on`, `min_severity` | top level, or inside `[audit]` / `[diff]` | `--fail-on`, `--min-severity` |
 | `output` | `[audit]` or `[diff]` only | `--output` (each command has its own formats) |
 
@@ -996,7 +1085,7 @@ would block `open`), must be a regular file of at most 64 KiB and valid UTF-8, a
 error message is built by `describe_error` — message, line number, and the offending line
 cut to 100 characters and passed through `core::text::clean` — rather than taken from the
 parser's own rendering, which quotes the whole line. `man` and `completions` do not read
-the file at all; `tui` reads only `timeout`.
+the file at all; `tui` reads only `timeout` and `profile`.
 
 `toml` is used with its `std`, `serde` and `parse` features only (reading, no writing),
 pinned for Rust 1.75 (see the README "Toolchain note").

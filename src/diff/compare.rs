@@ -184,6 +184,16 @@ pub enum Caveat {
         before: Option<String>,
         after: Option<String>,
     },
+    /// The two reports were not written with the same profile. A profile
+    /// lowers the severity of readings that are normal for a kind of
+    /// machine, so a finding that "got better" or "got worse" may come from
+    /// the profile, not from the machine. `None` is no profile -- also what
+    /// a report from a version without profiles is -- so, unlike a missing
+    /// version, it is a real value and is compared like the others.
+    DifferentProfiles {
+        before: Option<String>,
+        after: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -357,6 +367,12 @@ pub fn compare(before: &ReportFile, after: &ReportFile) -> Comparison {
         caveats.push(Caveat::DifferentVersions {
             before: before.linuxdoctor_version.clone(),
             after: after.linuxdoctor_version.clone(),
+        });
+    }
+    if before.profile != after.profile {
+        caveats.push(Caveat::DifferentProfiles {
+            before: before.profile.clone(),
+            after: after.profile.clone(),
         });
     }
 
@@ -767,6 +783,12 @@ pub(crate) mod testkit {
     /// The report as a given version of LinuxDoctor wrote it.
     pub fn by_version(mut report: ReportFile, version: &str) -> ReportFile {
         report.linuxdoctor_version = Some(version.to_string());
+        report
+    }
+
+    /// The report as written with a given profile.
+    pub fn with_profile(mut report: ReportFile, profile: &str) -> ReportFile {
+        report.profile = Some(profile.to_string());
         report
     }
 
@@ -1257,9 +1279,102 @@ mod tests {
                 Caveat::ReportsLookReversed => "reversed",
                 Caveat::Filtered { .. } => "filtered",
                 Caveat::DifferentVersions { .. } => "versions",
+                Caveat::DifferentProfiles { .. } => "profiles",
             })
             .collect();
         assert_eq!(kinds, ["machines", "filtered", "versions"]);
+    }
+
+    // ----- the profiles --------------------------------------------------------------
+
+    fn profile_caveat(c: &Comparison) -> Option<&Caveat> {
+        c.caveats
+            .iter()
+            .find(|c| matches!(c, Caveat::DifferentProfiles { .. }))
+    }
+
+    #[test]
+    fn a_report_with_a_profile_next_to_one_without_is_flagged() {
+        // "No profile" is a value: it is what the audit did when none was
+        // chosen, and what every report of an older version looks like.
+        let plain = report(vec![]);
+        let hpc = with_profile(report(vec![]), "hpc");
+        assert_eq!(
+            profile_caveat(&compare(&plain, &hpc)),
+            Some(&Caveat::DifferentProfiles {
+                before: None,
+                after: Some("hpc".into())
+            })
+        );
+        assert_eq!(
+            profile_caveat(&compare(&hpc, &plain)),
+            Some(&Caveat::DifferentProfiles {
+                before: Some("hpc".into()),
+                after: None
+            })
+        );
+    }
+
+    #[test]
+    fn two_different_profiles_are_flagged_and_two_equal_ones_are_not() {
+        let c = compare(
+            &with_profile(report(vec![]), "hpc"),
+            &with_profile(report(vec![]), "server"),
+        );
+        assert_eq!(
+            profile_caveat(&c),
+            Some(&Caveat::DifferentProfiles {
+                before: Some("hpc".into()),
+                after: Some("server".into())
+            })
+        );
+        let same = compare(
+            &with_profile(report(vec![]), "hpc"),
+            &with_profile(report(vec![]), "hpc"),
+        );
+        assert!(same.caveats.is_empty(), "{:?}", same.caveats);
+    }
+
+    #[test]
+    fn two_reports_without_a_profile_say_nothing_about_it() {
+        let c = compare(&report(vec![]), &report(vec![]));
+        assert!(profile_caveat(&c).is_none());
+        assert!(c.caveats.is_empty());
+    }
+
+    #[test]
+    fn the_profile_caveat_does_not_change_what_was_compared() {
+        let b = || {
+            report(vec![module(
+                "m",
+                &[("A", None, "warning"), ("B", None, "info")],
+            )])
+        };
+        let a = || {
+            report(vec![module(
+                "m",
+                &[("A", None, "error"), ("C", None, "warning")],
+            )])
+        };
+        let plain = compare(&b(), &a());
+        let profiled = compare(&b(), &with_profile(a(), "hpc"));
+        assert!(profile_caveat(&profiled).is_some());
+        assert_eq!(changes_of(&plain), changes_of(&profiled));
+        assert_eq!(plain.totals(), profiled.totals());
+        assert_eq!(
+            plain.regressions(crate::models::Severity::Warning).len(),
+            profiled.regressions(crate::models::Severity::Warning).len()
+        );
+    }
+
+    #[test]
+    fn the_profile_caveat_comes_after_the_version_one() {
+        let c = compare(
+            &by_version(report(vec![]), "1.9.0"),
+            &with_profile(by_version(report(vec![]), "1.10.0"), "hpc"),
+        );
+        assert!(matches!(c.caveats[0], Caveat::DifferentVersions { .. }));
+        assert!(matches!(c.caveats[1], Caveat::DifferentProfiles { .. }));
     }
 
     // ----- several findings under one key ---------------------------------------------

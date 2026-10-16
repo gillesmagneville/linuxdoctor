@@ -114,10 +114,51 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 - **Une limite de puissance connue s'affiche même quand la consommation ne l'est
   pas** (« Power limit: 190.0 W. »), pour tous les fabricants. Jusque-là, elle
   n'apparaissait que dans les preuves.
+- **Le module GPU nomme les puces vidéo courantes au lieu d'écrire « unknown
+  vendor ».** Le fabricant se lit dans l'identifiant PCI : ASPEED (la puce vidéo
+  du contrôleur de gestion d'un serveur), Matrox, VMware, Red Hat (virtio, QXL) et
+  Cirrus Logic. Le résumé `GPU001` compte « 1 ASPEED » et la preuve `vendor` dit
+  `ASPEED`. Ce n'est qu'un nom : la façon de juger l'adaptateur ne change pas (pas
+  d'alerte pour une puce de gestion sans pilote, ce qui est normal), et un
+  fabricant non reconnu reste « unknown vendor ».
+- **Un lien PCIe plus étroit que la carte sait faire n'est plus présenté comme une
+  anomalie à aller vérifier sur le câble.** Le cas le plus courant est ordinaire :
+  deux cartes se partagent les lignes de la carte mère et tournent chacune en x8.
+  La constatation lit maintenant la largeur maximale du port auquel la carte est
+  branchée (nouvelle preuve `pcie_port_width_max`) et le dit :
+  - **le port ne porte pas plus** : « The port it is plugged into allows at most
+    x8 » : c'est la disposition de la machine, pas un défaut de la carte ;
+  - **le port pourrait porter plus** : le texte ne l'attribue pas au port et
+    renvoie d'abord au manuel de la carte mère (lignes partagées, réglage du
+    BIOS), puis à la fixation de la carte ;
+  - **le port ne dit rien** : les causes ordinaires sont listées, sans en
+    accuser une.
+  Quand une autre carte de la machine tourne à la même largeur réduite, le texte
+  le signale (les cartes qui se partagent des lignes les répartissent souvent à
+  parts égales). Une vitesse inférieure est expliquée à part : un lien au repos
+  ralentit pour économiser l'énergie, ce qui est normal ; et pour une carte
+  réservée à `vfio-pci`, le texte dit que la vitesse de repos ne dit rien de la
+  carte, puisqu'aucun pilote de cette machine ne la gère. Aucune sévérité ne
+  change.
+  - **Limite connue** : la largeur du port n'a pas pu être vérifiée sur du
+    matériel avec un port bifurqué. Si un port annonce sa largeur d'origine (x16)
+    alors que la carte mère la partage, le texte tombe dans le cas « le port
+    pourrait porter plus », dont la formulation reste prudente et cite les lignes
+    partagées en premier.
+  - Tests : 25 nouveaux (faux arbre sysfs avec de vrais liens symboliques pour
+    le port amont, chaque cas de largeur, les cartes qui se partagent des lignes,
+    la vitesse seule, la carte réservée à une machine virtuelle, les puces
+    nommées, et le cas complet de la machine qui a motivé tout cela). Ils
+    échouent quand on casse le code (41 casseurs essayés, 40 détectés ; le
+    dernier était une condition redondante, supprimée).
 
 ### Modifié
 
 - Le message sur l'absence de pilote cite maintenant `amdgpu`, `i915` ou `xe`.
+- Le texte sur le lien PCIe d'une carte ne dit plus « worth checking the physical
+  slot/cable » : il décrit ce qui est mesuré (`PCIe: 8.0 GT/s PCIe x8 (this card
+  supports up to 8.0 GT/s PCIe x16).`), puis explique la largeur et la vitesse
+  séparément. Les preuves `pcie_link_*` n'ont pas changé.
 
 ## [1.9.0] - 2026-10-16
 

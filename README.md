@@ -678,7 +678,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1084 lib unit tests + 88 CLI unit tests + 177 integration tests
+cargo test               # 1109 lib unit tests + 88 CLI unit tests + 177 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

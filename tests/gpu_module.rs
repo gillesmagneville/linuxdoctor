@@ -36,6 +36,7 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         name: "card0".to_string(),
         pci_address: "0000:01:00.0".to_string(),
         vendor: GpuVendor::Amd,
+        vendor_name: None,
         drm_card: true,
         description: Some("Radeon RX 6800".to_string()),
         driver: Some("amdgpu".to_string()),
@@ -61,6 +62,7 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         pcie_link_speed_max: None,
         pcie_link_width_current: None,
         pcie_link_width_max: None,
+        pcie_port_width_max: None,
         processes: vec![],
     };
 
@@ -68,6 +70,7 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         name: "card1".to_string(),
         pci_address: "0000:02:00.0".to_string(),
         vendor: GpuVendor::Nvidia,
+        vendor_name: None,
         drm_card: true,
         description: Some("NVIDIA GeForce RTX 4090".to_string()),
         driver: Some("nvidia".to_string()),
@@ -93,6 +96,7 @@ fn mixed_amd_and_nvidia_system_with_one_overheating() {
         pcie_link_speed_max: Some("16.0 GT/s PCIe".to_string()),
         pcie_link_width_current: Some(16),
         pcie_link_width_max: Some(16),
+        pcie_port_width_max: None,
         processes: vec![GpuProcess {
             pid: 12345,
             name: "python3".to_string(),
@@ -142,6 +146,7 @@ fn intel_integrated_gpu_throttled_by_heat_is_a_warning() {
         name: "card0".to_string(),
         pci_address: "0000:00:02.0".to_string(),
         vendor: GpuVendor::Intel,
+        vendor_name: None,
         drm_card: true,
         description: Some("Alder Lake-P GT2 [Iris Xe Graphics]".to_string()),
         driver: Some("i915".to_string()),
@@ -167,6 +172,7 @@ fn intel_integrated_gpu_throttled_by_heat_is_a_warning() {
         pcie_link_speed_max: None,
         pcie_link_width_current: None,
         pcie_link_width_max: None,
+        pcie_port_width_max: None,
         processes: vec![],
     };
     let data = GpuRawData {

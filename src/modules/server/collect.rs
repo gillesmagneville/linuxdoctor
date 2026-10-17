@@ -2,6 +2,10 @@
 
 //! What the checks of the `server` module read.
 //!
+//! For the logs that survive a reboot (SRV002) and the reboot that has been
+//! waiting for days (SRV003), files only: see [`super::journal`] and
+//! [`super::reboot`].
+//!
 //! For the automatic security updates (SRV001), which depend on the package
 //! manager of the system:
 //!
@@ -18,14 +22,18 @@
 //! file. That is the persistent intent -- it holds after a reboot -- and it
 //! can be read without a running systemd, in a container or a chroot.
 
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io::Read;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::core::command::ToolSession;
 use crate::core::error::ModuleError;
 use crate::core::text::clean;
 use crate::modules::recommend::Family;
+
+use super::journal::{self, JournalSetup};
+use super::reboot::{self, PendingReboot};
 
 /// Longest value kept from a configuration file. The real ones are a word or a
 /// number; the limit only keeps a hostile or broken file from filling a report.
@@ -156,11 +164,21 @@ pub enum Updates {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerRawData {
     pub updates: Updates,
+    pub journal: JournalSetup,
+    /// `None` when no reboot is waiting (or the system has no marker for it).
+    pub reboot: Option<PendingReboot>,
+    /// When it was read, in seconds since 1970: the ages are taken from it.
+    pub now_unix: u64,
 }
 
 /// Where each reading comes from, so that the readings together are tested
 /// on fake files.
 pub struct Sources<'a> {
+    /// What the files of the journal and of the reboot marker are under: `/`
+    /// on a real machine.
+    pub root: &'a Path,
+    /// The time to take the ages of files from.
+    pub now_unix: u64,
     pub unattended_upgrade: &'a Path,
     pub dnf_automatic: &'a Path,
     pub dnf5: &'a Path,
@@ -171,6 +189,10 @@ pub struct Sources<'a> {
 impl Sources<'static> {
     pub fn system() -> Self {
         Sources {
+            root: Path::new("/"),
+            now_unix: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
             unattended_upgrade: Path::new(UNATTENDED_UPGRADE),
             dnf_automatic: Path::new(DNF_AUTOMATIC),
             dnf5: Path::new(DNF5),
@@ -234,7 +256,19 @@ pub fn collect_from(family: Family, sources: &Sources, tools: &mut impl Tools) -
         Family::RedHatLike => Updates::Dnf(read_dnf(sources, tools)),
         Family::Unknown => Updates::Unsupported,
     };
-    ServerRawData { updates }
+    ServerRawData {
+        updates,
+        journal: journal::read(sources.root, sources.now_unix),
+        reboot: reboot::read(sources.root),
+        now_unix: sources.now_unix,
+    }
+}
+
+/// When a file was last written, in seconds since 1970; `None` if the file
+/// system would not say, or says a time before 1970.
+pub(super) fn modified_unix(metadata: &Metadata) -> Option<u64> {
+    let modified = metadata.modified().ok()?;
+    Some(modified.duration_since(UNIX_EPOCH).ok()?.as_secs())
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +398,7 @@ impl DnfConfig {
 }
 
 /// A text file, if it exists, is readable text and is not absurdly big.
-fn read_config(path: &Path) -> Option<String> {
+pub(super) fn read_config(path: &Path) -> Option<String> {
     let mut text = String::new();
     File::open(path)
         .ok()?
@@ -411,6 +445,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     // ----- apt-config dump ----------------------------------------------
 
@@ -695,6 +730,9 @@ Unattended-Upgrade::Automatic-Reboot "false";
         }
     }
 
+    /// The time the fake trees are read at.
+    const NOW: u64 = 1_000_000_000;
+
     fn tree(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "linuxdoctor-server-collect-{name}-{}",
@@ -713,12 +751,66 @@ Unattended-Upgrade::Automatic-Reboot "false";
         let leak =
             |relative: &str| -> &'static Path { Box::leak(root.join(relative).into_boxed_path()) };
         Sources {
+            root: leak("fs"),
+            now_unix: NOW,
             unattended_upgrade: leak("unattended-upgrade"),
             dnf_automatic: leak("dnf-automatic"),
             dnf5: leak("dnf5"),
             dnf5_defaults: leak("dnf5-defaults.conf"),
             dnf_config: leak("automatic.conf"),
         }
+    }
+
+    #[test]
+    fn the_logs_and_the_reboot_marker_are_read_under_the_root() {
+        let root = tree("files");
+        let files = root.join("fs");
+        for dir in ["var/log/journal", "var/run", "etc/systemd/journald.conf.d"] {
+            fs::create_dir_all(files.join(dir)).unwrap();
+        }
+        fs::write(
+            files.join("etc/systemd/journald.conf.d/10-v.conf"),
+            "[Journal]\nStorage=volatile\n",
+        )
+        .unwrap();
+        fs::write(files.join("var/log/syslog"), "line\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(files.join("var/log/syslog"))
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(NOW - 3 * 3600))
+            .unwrap();
+        fs::write(files.join("var/run/reboot-required"), "").unwrap();
+        fs::write(files.join("var/run/reboot-required.pkgs"), "libc6\n").unwrap();
+
+        let mut tools = FakeTools::new(None, &[]);
+        let data = collect_from(Family::Unknown, &sources(&root), &mut tools);
+        assert_eq!(data.now_unix, NOW);
+        assert!(data.journal.journald && data.journal.directory);
+        let setting = data.journal.setting.unwrap();
+        assert_eq!(
+            setting.value,
+            crate::modules::server::journal::Storage::Volatile
+        );
+        assert_eq!(setting.file, "/etc/systemd/journald.conf.d/10-v.conf");
+        // Written 3 hours before the time it is read at.
+        assert_eq!(data.journal.syslog.len(), 1);
+        assert_eq!(data.journal.syslog[0].age_secs, 3 * 3600);
+        let reboot = data.reboot.unwrap();
+        assert_eq!(reboot.packages, ["libc6"]);
+        assert!(reboot.modified_unix.is_some());
+        // The logs and the marker are read whatever the family.
+        let data = collect_from(Family::DebianLike, &sources(&root), &mut tools);
+        assert!(data.reboot.is_some() && data.journal.journald);
+    }
+
+    #[test]
+    fn a_root_without_logs_or_marker_has_none() {
+        let root = tree("no-files");
+        let mut tools = FakeTools::new(None, &[]);
+        let data = collect_from(Family::Unknown, &sources(&root), &mut tools);
+        assert_eq!(data.journal, JournalSetup::default());
+        assert_eq!(data.reboot, None);
     }
 
     #[test]

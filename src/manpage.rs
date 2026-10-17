@@ -61,7 +61,8 @@ fn module_summary(id: &str) -> Option<&'static str> {
         }
         "server" => {
             "Added by the server profile: whether security updates are installed automatically \
-             (unattended-upgrades with apt, dnf-automatic with dnf)."
+             (unattended-upgrades with apt, dnf-automatic with dnf), whether the logs survive a \
+             reboot, and whether a reboot has been waiting for days."
         }
         _ => return None,
     })

@@ -3,16 +3,23 @@
 //! The checks that only make sense on a server (`--profile server`).
 //!
 //! Like the `hpc` module, this one is not part of every audit: it is added by
-//! the profile (see [`crate::profile::Profile::modules`]). What it looks at --
-//! whether security updates are installed without anyone asking -- is a
-//! question for a machine nobody sits at, and a finding "this desktop does
+//! the profile (see [`crate::profile::Profile::modules`]). What it looks at is
+//! a question for a machine nobody sits at, and a finding "this desktop does
 //! not update itself unattended" would be noise: a desktop shows its updates
 //! to the person using it. A profile can only lower the severity of an
 //! existing finding, so a check that is wrong on one kind of machine and right
 //! on another has to live in a module of its own.
+//!
+//! * `SRV001`: whether security updates are installed without anyone asking
+//!   ([`analyze`], [`collect`]).
+//! * `SRV002`: whether the logs survive a reboot ([`journal`]).
+//! * `SRV003`: whether a reboot has been waiting for days ([`reboot`]).
 
+pub mod age;
 pub mod analyze;
 pub mod collect;
+pub mod journal;
+pub mod reboot;
 
 use crate::core::context::Context;
 use crate::core::error::ModuleError;

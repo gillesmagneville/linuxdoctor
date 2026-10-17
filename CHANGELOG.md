@@ -52,8 +52,8 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
   - La page de manuel a une section `PROFILES` (générée depuis le code, donc toujours
     à jour) et décrit la clé `profile` du fichier de configuration ; l'exemple du
     fichier de configuration, dans le README comme dans la page de manuel, la montre.
-  - Prévu ensuite, sans rien promettre : un profil `server` avec ses propres
-    vérifications, et des vérifications propres à `hpc`.
+  - Prévu ensuite, sans rien promettre : d'autres vérifications pour le profil `server`
+    (voir plus bas).
 - **Le module GPU donne maintenant des détails sur les GPU Intel** (pilotes `i915`
   et `xe`). Ils étaient reconnus mais sans aucune mesure, contrairement à AMD et
   NVIDIA. Lecture directe de sysfs, sans outil externe, dans le même `GPU002`.
@@ -282,6 +282,58 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     topologie ; et le test de bout en bout, qui compare avec les fichiers de la machine
     quand elle les a). Ils échouent quand on casse le code : 68 casseurs essayés, 68
     détectés.
+
+- **Le profil `server` (`--profile server`) et sa première vérification, `SRV001` : les
+  mises à jour de sécurité sont-elles installées automatiquement ?** Un serveur que
+  personne ne regarde chaque jour est tenu à jour par un mécanisme, pas par une personne ;
+  la vérification dit si le mécanisme du système est en place.
+  - **Le profil ne baisse aucune sévérité** (la description le dit, et un test l'exige) :
+    il n'y a rien à excuser sur un serveur. Il ajoute le module `server`, qui n'existe que
+    quand le profil est choisi, comme `hpc` pour le sien. `--modules server` sans le profil
+    est refusé (code 2) avec la phrase qui dit quoi lancer. Le choix reste explicite, par
+    `--profile server` ou `profile = "server"` dans le fichier de configuration.
+  - **Avec apt** (Debian, Ubuntu et dérivées) : `apt-config dump` (qui fusionne tout
+    `apt.conf.d`, dans l'ordre où apt le fait), la présence de `unattended-upgrade`, la
+    liste des origines autorisées, et les deux timers `apt-daily.timer` et
+    `apt-daily-upgrade.timer`. Les intervalles sont lus comme le script d'apt les lit :
+    `0` coupe, `always` ou un nombre (avec `s`, `m`, `h` ou `d`) allume, et `00` ou `0d`
+    *allument* (le script compare le texte avec `0`, pas le nombre) ; `APT::Periodic::Enable`
+    à `0` coupe toutes les tâches quoi que disent les autres réglages. **Avec dnf** (Fedora,
+    RHEL et dérivées) : dnf 4 ou dnf 5, `dnf-automatic` installé ou non, `apply_updates` et
+    `upgrade_type` du fichier `/etc/dnf/automatic.conf` (sur les valeurs par défaut du
+    paquet avec dnf 5), et les timers. Les timers qui ne font que télécharger ou prévenir ne
+    comptent pas comme une installation, et la constatation dit lequel est actif à la place.
+  - **Honnête sur ce qu'elle ne sait pas.** Au pire un **Avertissement à 80 %**, jamais
+    certain : une machine tenue à jour autrement (outil de configuration, Landscape,
+    Satellite, fenêtre de maintenance) est correcte sans ce mécanisme, et la constatation
+    le dit dans son texte. En place : Info à 90 %. Un outil qui ne répond pas (`apt-config`,
+    `systemctl`) donne une Info « n'a pas pu être dit », jamais un avertissement. Une
+    distribution qui n'est ni Debian ni Red Hat donne une Info qui dit qu'elle n'a **pas**
+    été vérifiée. Elle ne dit pas non plus si la dernière exécution a réussi (elle indique
+    le `journalctl` qui le dit).
+  - Chaque problème a sa phrase et ses commandes (installer le paquet, activer les
+    réglages dans `20auto-upgrades`, autoriser l'archive de sécurité, activer les timers —
+    après `unmask` s'ils sont masqués), et seulement celles qu'il faut.
+  - Un nouvel outil dans `src/core/command.rs` : `ToolSession::run_ignoring_status`.
+    `systemctl is-enabled` répond sur sa sortie (`enabled`, `masked`, `not-found`…) et son
+    code de retour ne veut rien dire ; la session existante jetait toute réponse d'un outil
+    qui sortait en échec.
+  - **Vérifié** avec le vrai binaire dans le conteneur de développement (Ubuntu) : sans le
+    paquet, puis avec un faux paquet `unattended-upgrade` posé temporairement, et avec de
+    faux `apt-config` et `systemctl` pour chaque cas. **Le côté dnf n'a été vu que sur de
+    faux fichiers et d'après la documentation** (pas de machine Fedora ou RHEL sous la main) :
+    à regarder dans le premier rapport sur une telle machine. La tienne est une Ubuntu, donc
+    le côté apt.
+  - Tests : 88 nouveaux (la lecture de `apt-config dump` et du fichier dnf sur de faux
+    arbres, y compris un fichier énorme et des valeurs hostiles ; chaque problème, ses
+    phrases et ses étapes ; le profil, les options et le refus du module sans profil ; et
+    17 tests de bout en bout avec le vrai binaire et de faux outils). Ils échouent quand
+    on casse le code : 220 casseurs essayés, 217 détectés. Les trois autres ont montré du
+    code inutile, retiré (le cas particulier des commentaires `#` et `;` du fichier dnf,
+    déjà exclus parce que le nom commence par la marque, et une branche dnf 5 qui ne
+    pouvait jamais servir). Plusieurs tests trop lâches ont été resserrés en route.
+  - Prévu ensuite, sans rien promettre : `SRV002` (journal persistant) et `SRV003`
+    (redémarrage en attente depuis longtemps).
 
 ### Modifié
 

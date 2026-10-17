@@ -371,6 +371,7 @@ cargo build --release
 ./target/release/linuxdoctor audit --min-severity warning          # show Warning and above only
 ./target/release/linuxdoctor audit --fail-on warning               # exit 1 on any Warning or worse
 ./target/release/linuxdoctor audit --profile hpc                   # a compute node: busy CPUs are normal
+./target/release/linuxdoctor audit --profile server                # a server: are security updates automatic?
 ./target/release/linuxdoctor audit --modules memory
 ./target/release/linuxdoctor audit --modules security   # exposure, firewall, SSH, hardening
 ./target/release/linuxdoctor audit --modules logs       # logins, errors, kernel messages, journal
@@ -453,7 +454,7 @@ desktop; on a compute node it is the node doing its job. A **profile** tells Lin
 what kind of machine this is:
 
 ```bash
-linuxdoctor audit --profile hpc
+linuxdoctor audit --profile hpc       # or --profile server
 ```
 
 or `profile = "hpc"` at the top of the [configuration file](#the-configuration-file).
@@ -477,6 +478,7 @@ What a profile does is deliberately narrow:
 | Profile | For | What it changes |
 |---|---|---|
 | `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence. Adds the `hpc` module: `HPC001` checks that the CPU frequency governor does not hold the CPUs back, `HPC002` that the locked-memory limit does not starve RDMA; `HPC003` and `HPC004` report how automatic NUMA balancing and SMT are set (information, never a warning) |
+| `server` | A server nobody sits at, which has to look after itself | Nothing is lowered: under `server` every other finding keeps the severity it has without a profile. Adds the `server` module: `SRV001` checks that security updates are installed automatically (`unattended-upgrades` with apt, `dnf-automatic` with dnf) |
 
 One thing to keep in mind: under `hpc`, a node that is oversubscribed *by mistake* looks
 the same as one that is working. The profile removes the alarm, not the number.
@@ -534,6 +536,31 @@ is set and what that means for each kind of job.
   trade-off (it helps jobs that wait on memory and can slow compute-bound jobs that fill
   every logical CPU) and gives the commands for one thread per core, now and with the
   `nosmt` kernel parameter, with the boot-configuration command of the distribution.
+
+**What `SRV001` says.** A server nobody logs in to every day is patched by a mechanism, not
+by a person, and `SRV001` reports whether the system's own mechanism is set up.
+
+* On a **Debian-like** system (Debian, Ubuntu and their derivatives) that is
+  `unattended-upgrades`. The check reads `APT::Periodic::Enable`,
+  `APT::Periodic::Update-Package-Lists` and `APT::Periodic::Unattended-Upgrade` from
+  `apt-config dump` (which has already merged every file of `/etc/apt/apt.conf.d/`) the way
+  apt's own daily script reads them, `always` and the `s`, `m`, `h` and `d` suffixes
+  included. It checks that `unattended-upgrade` is installed and is allowed at least one
+  origin, and that `apt-daily.timer` and `apt-daily-upgrade.timer` are enabled.
+* On a **Red Hat-like** system it is `dnf-automatic`. The check reads
+  `/etc/dnf/automatic.conf` (with dnf 5, over the defaults the package ships) and the
+  timers. It tells apart the timer that installs (`dnf-automatic-install.timer`), the one
+  that follows `apply_updates`, and the ones that only download or only notify, which are
+  the usual reason a machine "has dnf-automatic" and is not patched.
+
+When everything is in place it is an Info that says what gets installed (`upgrade_type`
+with dnf); otherwise it is a Warning, at 80% confidence, that lists what is missing and the
+commands to fix it. The confidence stops there because the machine may be patched another
+way (a configuration-management tool, Landscape, Satellite, a maintenance window), which
+the check cannot see; the finding says so. It tells whether the mechanism is set up, not
+whether its last run worked. Another system (SUSE, Arch, Alpine...) gets an Info that says
+the check does not know its mechanism, and so does a timer that systemd does not answer
+about: neither is ever a Warning.
 
 `linuxdoctor diff` has no `--profile`; it reads the profile each report recorded, and warns
 when the two differ.
@@ -616,8 +643,8 @@ fail_on = "warning"
 # Only show findings from this severity up (--min-severity).
 min_severity = "warning"
 
-# The kind of machine, for audit and tui (--profile): hpc. A profile only
-# lowers findings that are normal for that kind of machine; without one,
+# The kind of machine, for audit and tui (--profile): hpc or server. A profile
+# only lowers findings that are normal for that kind of machine; without one,
 # every finding keeps the severity its check gave it.
 profile = "hpc"
 
@@ -732,7 +759,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1203 lib unit tests + 92 CLI unit tests + 191 integration tests
+cargo test               # 1271 lib unit tests + 95 CLI unit tests + 208 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -824,6 +851,7 @@ linuxdoctor/
     │   ├── numa/                  # per-node topology, cross-node imbalance
     │   ├── gpu/                     # AMD and Intel sysfs, NVIDIA via nvidia-smi
     │   ├── hpc/                       # added by --profile hpc, not in all_modules(): CPU governor, locked memory
+    │   ├── server/                    # added by --profile server, not in all_modules(): automatic security updates
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode
@@ -861,6 +889,7 @@ tests/       # fixture-driven integration tests, one file per module,
              # hostile_names.rs runs it against escape sequences in names, every format;
              # profile_option.rs runs the real CPU module and the real binary with profiles;
              # hpc_module.rs runs the binary for the module the hpc profile adds;
+             # server_module.rs does the same for the server profile, against fake apt-config and systemctl;
              # cpu_count.rs runs it confined to one CPU and checks the CPU count stays the machine's
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```

@@ -354,12 +354,43 @@ mod tests {
     }
 
     #[test]
+    fn the_option_beats_the_configuration_file_and_either_can_choose_server() {
+        assert_eq!(
+            chosen_profile(Some(cli::ProfileArg::Server), &Config::default()),
+            Some(Profile::Server)
+        );
+        assert_eq!(
+            chosen_profile(None, &config_with(Some(cli::ProfileArg::Server))),
+            Some(Profile::Server)
+        );
+        assert_eq!(
+            chosen_profile(
+                Some(cli::ProfileArg::Server),
+                &config_with(Some(cli::ProfileArg::Hpc))
+            ),
+            Some(Profile::Server)
+        );
+        assert_eq!(
+            chosen_profile(
+                Some(cli::ProfileArg::Hpc),
+                &config_with(Some(cli::ProfileArg::Server))
+            ),
+            Some(Profile::Hpc)
+        );
+    }
+
+    #[test]
     fn the_message_for_a_module_without_its_profile_says_what_to_type_and_what_to_set() {
         let message = needs_profile_message("hpc", Profile::Hpc);
         assert_eq!(
             message,
             "the module 'hpc' is added by the hpc profile: run with --profile hpc \
              (or set profile = \"hpc\" in the configuration file)"
+        );
+        assert_eq!(
+            needs_profile_message("server", Profile::Server),
+            "the module 'server' is added by the server profile: run with --profile server \
+             (or set profile = \"server\" in the configuration file)"
         );
     }
 
@@ -378,6 +409,19 @@ mod tests {
         assert!(!modules_fit_profile(
             asked(&["cpu", "hpc"]).as_deref(),
             None
+        ));
+        // A profile's module needs that profile, not another one.
+        assert!(modules_fit_profile(
+            asked(&["cpu", "server"]).as_deref(),
+            Some(Profile::Server)
+        ));
+        assert!(!modules_fit_profile(
+            asked(&["server"]).as_deref(),
+            Some(Profile::Hpc)
+        ));
+        assert!(!modules_fit_profile(
+            asked(&["hpc"]).as_deref(),
+            Some(Profile::Server)
         ));
     }
 }

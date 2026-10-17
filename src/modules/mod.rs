@@ -12,6 +12,7 @@ pub mod ntp;
 pub mod numa;
 pub mod recommend;
 pub mod security;
+pub mod server;
 pub mod storage;
 pub mod systemd;
 pub mod virtualization;

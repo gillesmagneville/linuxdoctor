@@ -225,6 +225,24 @@ impl ToolSession {
     /// non-zero exit, timeout, or an earlier timeout in this session —
     /// returns `None`.
     pub fn run(&mut self, args: &[&str]) -> Option<String> {
+        let output = self.start(args)?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Like [`run`](Self::run), but the exit status does not matter: for a
+    /// tool that answers with it, such as `systemctl is-enabled`, which exits
+    /// with 1 to say `disabled`. `None` only when the tool did not start or
+    /// finish in time, or an earlier call timed out.
+    pub fn run_ignoring_status(&mut self, args: &[&str]) -> Option<String> {
+        let output = self.start(args)?;
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Starts the tool and waits for it, remembering a timeout.
+    fn start(&mut self, args: &[&str]) -> Option<Output> {
         if self.hung {
             return None;
         }
@@ -237,10 +255,7 @@ impl ToolSession {
             cmd.timeout(timeout);
         }
         match cmd.output() {
-            Ok(output) if output.status.success() => {
-                Some(String::from_utf8_lossy(&output.stdout).into_owned())
-            }
-            Ok(_) => None,
+            Ok(output) => Some(output),
             Err(e) => {
                 if e.kind() == io::ErrorKind::TimedOut {
                     self.hung = true;
@@ -499,6 +514,45 @@ mod tests {
             ToolSession::new("linuxdoctor-no-such-program-xyz").run(&[]),
             None
         );
+    }
+
+    #[test]
+    fn session_can_ignore_the_exit_status_when_the_tool_answers_with_it() {
+        let mut sh = ToolSession::new("sh");
+        assert_eq!(
+            sh.run_ignoring_status(&["-c", "echo disabled; exit 1"])
+                .as_deref(),
+            Some("disabled\n")
+        );
+        assert_eq!(
+            sh.run_ignoring_status(&["-c", "echo enabled"]).as_deref(),
+            Some("enabled\n")
+        );
+        assert_eq!(
+            sh.run_ignoring_status(&["-c", "exit 3"]).as_deref(),
+            Some("")
+        );
+        assert!(!sh.is_hung());
+        assert_eq!(
+            ToolSession::new("linuxdoctor-no-such-program-xyz").run_ignoring_status(&[]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_timeout_stops_the_calls_that_ignore_the_status_too() {
+        let mut session = ToolSession::new("sleep").with_timeout(Duration::from_millis(200));
+        let started = Instant::now();
+        assert_eq!(session.run_ignoring_status(&["30"]), None);
+        assert!(session.is_hung());
+        assert_eq!(session.run_ignoring_status(&["30"]), None);
+        assert_eq!(session.run(&["30"]), None);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(take_timeouts().len(), 1);
     }
 
     #[test]

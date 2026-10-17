@@ -72,7 +72,8 @@ impl Profile {
                 "a compute node, where fully used CPUs are the normal state: \
                  load-average findings are reported as informational, and the \
                  `hpc` module checks that the CPUs are free to run at full speed and \
-                 that RDMA can lock the memory it needs"
+                 that RDMA can lock the memory it needs, and reports how NUMA balancing \
+                 and SMT are set"
             }
         }
     }

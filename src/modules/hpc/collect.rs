@@ -6,8 +6,13 @@
 //!   it and, where the driver has one, the energy/performance preference --
 //!   from `/sys/devices/system/cpu/cpu<N>/cpufreq/`;
 //! * the locked-memory limit of this process, from `/proc/self/limits`;
-//! * the RDMA devices (InfiniBand, RoCE), from `/sys/class/infiniband/`.
+//! * the RDMA devices (InfiniBand, RoCE), from `/sys/class/infiniband/`;
+//! * the automatic NUMA balancing switch, from `/proc/sys/kernel/numa_balancing`,
+//!   and the number of NUMA nodes, from `/sys/devices/system/node/`;
+//! * the SMT (hyper-threading) state, from `/sys/devices/system/cpu/smt/`, and
+//!   how many logical CPUs share each core, from `cpu<N>/topology/`.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -22,6 +27,13 @@ const LIMITS_FILE: &str = "/proc/self/limits";
 
 /// One entry per RDMA device (`mlx5_0`, `rxe0`...).
 const RDMA_ROOT: &str = "/sys/class/infiniband";
+
+/// One `node<N>` directory per NUMA node.
+const NODE_ROOT: &str = "/sys/devices/system/node";
+
+/// Automatic NUMA balancing: `0` off, bit 0 (`1`) balancing between nodes,
+/// bit 1 (`2`) memory tiering.
+const NUMA_BALANCING_FILE: &str = "/proc/sys/kernel/numa_balancing";
 
 /// Longest value kept from a sysfs file. The real ones are a word; the limit
 /// only keeps a hostile or broken file from filling a report.
@@ -66,6 +78,31 @@ pub struct RdmaDevice {
     pub link_layers: Vec<String>,
 }
 
+/// What the kernel says about SMT (simultaneous multithreading, called
+/// hyper-threading by Intel), from `/sys/devices/system/cpu/smt/`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Smt {
+    /// `control`: `on`, `off`, `forceoff` (cannot be changed), `notsupported`
+    /// (the processor has none) or `notimplemented` (the architecture cannot
+    /// switch it at run time). Nothing if the file is missing.
+    pub control: Option<String>,
+    /// `active`: whether any core currently runs more than one thread.
+    pub active: Option<bool>,
+}
+
+/// How the online logical CPUs are spread over cores, from the
+/// `thread_siblings_list` of each CPU (the CPUs sharing its core).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuTopology {
+    /// CPUs that reported their siblings.
+    pub logical: usize,
+    /// Distinct cores among them.
+    pub cores: usize,
+    /// The number of logical CPUs on each core, when it is the same for all
+    /// (it is not on a processor mixing performance and efficiency cores).
+    pub threads_per_core: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HpcRawData {
     /// Every CPU with a frequency policy, by CPU number. Empty on a machine
@@ -77,26 +114,122 @@ pub struct HpcRawData {
     pub memlock: Option<MemLock>,
     /// The RDMA devices, by name. Empty when there are none.
     pub rdma: Vec<RdmaDevice>,
+    /// The value of `numa_balancing`; nothing if the kernel has no such file
+    /// (it is built without automatic NUMA balancing) or it holds no number.
+    pub numa_balancing: Option<u32>,
+    /// The NUMA nodes found; 0 when the directory cannot be read.
+    pub numa_nodes: usize,
+    pub smt: Smt,
+    /// Nothing if no CPU reported its siblings.
+    pub topology: Option<CpuTopology>,
+}
+
+/// Where each reading comes from, so that the three together are tested on
+/// fake files.
+pub struct Sources<'a> {
+    pub cpu: &'a Path,
+    pub limits: &'a Path,
+    pub rdma: &'a Path,
+    pub nodes: &'a Path,
+    pub numa_balancing: &'a Path,
+}
+
+impl Sources<'static> {
+    pub fn system() -> Self {
+        Sources {
+            cpu: Path::new(CPU_ROOT),
+            limits: Path::new(LIMITS_FILE),
+            rdma: Path::new(RDMA_ROOT),
+            nodes: Path::new(NODE_ROOT),
+            numa_balancing: Path::new(NUMA_BALANCING_FILE),
+        }
+    }
 }
 
 pub fn collect() -> Result<HpcRawData, ModuleError> {
-    Ok(collect_from(
-        Path::new(CPU_ROOT),
-        Path::new(LIMITS_FILE),
-        Path::new(RDMA_ROOT),
-    ))
+    Ok(collect_from(&Sources::system()))
 }
 
-/// [`collect`] on the given places, so that putting the three readings
-/// together is tested on fake files.
-pub fn collect_from(cpu_root: &Path, limits_file: &Path, rdma_root: &Path) -> HpcRawData {
+/// [`collect`] on the given places.
+pub fn collect_from(sources: &Sources) -> HpcRawData {
     HpcRawData {
-        cpufreq: read_cpufreq(cpu_root),
-        memlock: fs::read_to_string(limits_file)
+        cpufreq: read_cpufreq(sources.cpu),
+        memlock: fs::read_to_string(sources.limits)
             .ok()
             .and_then(|text| parse_memlock(&text)),
-        rdma: read_rdma(rdma_root),
+        rdma: read_rdma(sources.rdma),
+        numa_balancing: read_number(sources.numa_balancing),
+        numa_nodes: count_numa_nodes(sources.nodes),
+        smt: read_smt(sources.cpu),
+        topology: read_topology(sources.cpu),
     }
+}
+
+/// A file holding one non-negative number (`0`, `1`...). Nothing if it is
+/// missing, empty, or anything else: `str::parse` alone would take `+1`.
+fn read_number(path: &Path) -> Option<u32> {
+    let text = read_value(path)?;
+    if !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+/// The `node<N>` directories of a directory laid out like
+/// `/sys/devices/system/node` (which also holds `online`, `possible`...).
+pub fn count_numa_nodes(root: &Path) -> usize {
+    fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix("node"))
+                .is_some_and(|digits| {
+                    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+                })
+        })
+        .count()
+}
+
+/// `smt/control` and `smt/active` of a directory laid out like
+/// `/sys/devices/system/cpu`.
+pub fn read_smt(cpu_root: &Path) -> Smt {
+    let smt = cpu_root.join("smt");
+    Smt {
+        control: read_value(&smt.join("control")),
+        active: match read_value(&smt.join("active")).as_deref() {
+            Some("1") => Some(true),
+            Some("0") => Some(false),
+            _ => None,
+        },
+    }
+}
+
+/// How the online CPUs of a directory laid out like `/sys/devices/system/cpu`
+/// are spread over cores: every CPU names the CPUs sharing its core
+/// (`0,28`), so the same list read from `n` CPUs is one core of `n` threads.
+pub fn read_topology(cpu_root: &Path) -> Option<CpuTopology> {
+    let mut cores: BTreeMap<String, usize> = BTreeMap::new();
+    for entry in fs::read_dir(cpu_root).into_iter().flatten().flatten() {
+        if entry.file_name().to_str().and_then(cpu_number).is_none() {
+            continue;
+        }
+        if let Some(siblings) = read_value(&entry.path().join("topology/thread_siblings_list")) {
+            *cores.entry(siblings).or_default() += 1;
+        }
+    }
+    let logical = cores.values().sum();
+    let mut sizes = cores.values().copied();
+    let first = sizes.next()?;
+    let threads_per_core = sizes.all(|n| n == first).then_some(first);
+    Some(CpuTopology {
+        logical,
+        cores: cores.len(),
+        threads_per_core,
+    })
 }
 
 /// The `Max locked memory` line of `/proc/self/limits`:
@@ -525,8 +658,22 @@ Max address space         unlimited            unlimited            bytes
         let _ = fs::remove_dir_all(root);
     }
 
+    /// The places of a fake machine laid out under `root`.
+    fn sources(root: &Path, limits: &str) -> Sources<'static> {
+        // The `Path`s must outlive the call: leak the few bytes in a test.
+        let leak =
+            |relative: &str| -> &'static Path { Box::leak(root.join(relative).into_boxed_path()) };
+        Sources {
+            cpu: leak("cpu"),
+            limits: leak(limits),
+            rdma: leak("rdma"),
+            nodes: leak("node"),
+            numa_balancing: leak("numa_balancing"),
+        }
+    }
+
     #[test]
-    fn the_three_readings_are_put_together_from_their_own_places() {
+    fn the_readings_are_put_together_from_their_own_places() {
         let root = tree("together");
         policy(
             &root.join("cpu"),
@@ -537,7 +684,14 @@ Max address space         unlimited            unlimited            bytes
         );
         put(&root, "limits", LIMITS_SAMPLE);
         port(&root.join("rdma"), "mlx5_0", 1, "InfiniBand");
-        let data = collect_from(&root.join("cpu"), &root.join("limits"), &root.join("rdma"));
+        put(&root, "numa_balancing", "1\n");
+        put(&root, "node/node0/cpulist", "0\n");
+        put(&root, "node/node1/cpulist", "1\n");
+        put(&root, "cpu/smt/control", "on\n");
+        put(&root, "cpu/smt/active", "1\n");
+        put(&root, "cpu/cpu0/topology/thread_siblings_list", "0,1\n");
+        put(&root, "cpu/cpu1/topology/thread_siblings_list", "0,1\n");
+        let data = collect_from(&sources(&root, "limits"));
         assert_eq!(data.cpufreq.len(), 1, "{data:?}");
         assert_eq!(data.cpufreq[0].governor, "schedutil");
         assert_eq!(
@@ -549,17 +703,207 @@ Max address space         unlimited            unlimited            bytes
         );
         assert_eq!(data.rdma.len(), 1, "{data:?}");
         assert_eq!(data.rdma[0].name, "mlx5_0");
+        assert_eq!(data.numa_balancing, Some(1));
+        assert_eq!(data.numa_nodes, 2);
+        assert_eq!(data.smt.control.as_deref(), Some("on"));
+        assert_eq!(data.smt.active, Some(true));
+        assert_eq!(
+            data.topology,
+            Some(CpuTopology {
+                logical: 2,
+                cores: 1,
+                threads_per_core: Some(2)
+            })
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_machine_that_exposes_nothing_gives_empty_readings() {
+        let root = tree("nothing");
+        let data = collect_from(&sources(&root, "limits"));
+        assert_eq!(data, HpcRawData::default());
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn a_file_of_limits_that_is_missing_or_unreadable_is_no_reading() {
         let root = tree("nolimits");
-        let places =
-            |limits: &str| collect_from(&root.join("cpu"), &root.join(limits), &root.join("rdma"));
-        assert_eq!(places("absent").memlock, None);
+        assert_eq!(collect_from(&sources(&root, "absent")).memlock, None);
         put(&root, "garbled", "Max locked memory lots\n");
-        assert_eq!(places("garbled").memlock, None);
+        assert_eq!(collect_from(&sources(&root, "garbled")).memlock, None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_numa_balancing_switch_is_a_number_or_nothing() {
+        let root = tree("balancing");
+        let value = |text: &str| {
+            put(&root, "numa_balancing", text);
+            read_number(&root.join("numa_balancing"))
+        };
+        assert_eq!(value("0\n"), Some(0));
+        assert_eq!(value("1"), Some(1));
+        assert_eq!(value("2\n"), Some(2));
+        assert_eq!(value("3\n"), Some(3));
+        assert_eq!(value("12"), Some(12));
+        for bad in ["", "\n", "-1", "+1", "on", "1 2", "0x1", "99999999999"] {
+            assert_eq!(value(bad), None, "{bad:?}");
+        }
+        assert_eq!(read_number(&root.join("absent")), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn only_node_directories_are_counted_as_numa_nodes() {
+        let root = tree("nodes");
+        for name in ["node0", "node1", "node12"] {
+            fs::create_dir_all(root.join(name)).unwrap();
+        }
+        // Not nodes: the other entries of /sys/devices/system/node.
+        for name in ["nodeX", "node", "node-1", "node1x", "mynode3", "online"] {
+            fs::create_dir_all(root.join(name)).unwrap();
+        }
+        put(&root, "possible", "0-1\n");
+        put(&root, "has_cpu", "0-1\n");
+        assert_eq!(count_numa_nodes(&root), 3);
+        assert_eq!(count_numa_nodes(&root.join("does-not-exist")), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn smt_control_and_active_are_read_as_they_are_written() {
+        let root = tree("smt");
+        assert_eq!(read_smt(&root), Smt::default());
+        put(&root, "smt/control", "forceoff\n");
+        put(&root, "smt/active", "0\n");
+        assert_eq!(
+            read_smt(&root),
+            Smt {
+                control: Some("forceoff".to_string()),
+                active: Some(false)
+            }
+        );
+        put(&root, "smt/active", "1\n");
+        assert_eq!(read_smt(&root).active, Some(true));
+        // Anything else than 0 and 1 is not a reading.
+        for bad in ["2", "yes", "", "01"] {
+            put(&root, "smt/active", bad);
+            assert_eq!(read_smt(&root).active, None, "{bad:?}");
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_smt_value_is_flattened_and_cut() {
+        let root = tree("smt-hostile");
+        put(
+            &root,
+            "smt/control",
+            &format!("on\u{1b}[31m{}\n", "x".repeat(300)),
+        );
+        let control = read_smt(&root).control.unwrap();
+        assert!(control.starts_with("on?[31m"));
+        assert_eq!(control.chars().count(), MAX_VALUE + 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn siblings(root: &Path, cpu: u32, list: &str) {
+        put(
+            root,
+            &format!("cpu{cpu}/topology/thread_siblings_list"),
+            &format!("{list}\n"),
+        );
+    }
+
+    #[test]
+    fn cores_are_the_distinct_lists_of_siblings() {
+        let root = tree("topology");
+        // Four CPUs, two cores of two threads; CPU numbers deliberately
+        // not consecutive within a core.
+        siblings(&root, 0, "0,2");
+        siblings(&root, 1, "1,3");
+        siblings(&root, 2, "0,2");
+        siblings(&root, 3, "1,3");
+        assert_eq!(
+            read_topology(&root),
+            Some(CpuTopology {
+                logical: 4,
+                cores: 2,
+                threads_per_core: Some(2)
+            })
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn one_thread_per_core_is_reported_as_such() {
+        let root = tree("topology-one");
+        for cpu in 0..3 {
+            siblings(&root, cpu, &cpu.to_string());
+        }
+        assert_eq!(
+            read_topology(&root),
+            Some(CpuTopology {
+                logical: 3,
+                cores: 3,
+                threads_per_core: Some(1)
+            })
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cores_of_different_sizes_have_no_single_thread_count() {
+        let root = tree("topology-hybrid");
+        // One core of 2 threads and two of 1: four CPUs on three cores.
+        siblings(&root, 0, "0-1");
+        siblings(&root, 1, "0-1");
+        siblings(&root, 2, "2");
+        siblings(&root, 3, "3");
+        let topology = read_topology(&root).unwrap();
+        assert_eq!((topology.logical, topology.cores), (4, 3));
+        assert_eq!(topology.threads_per_core, None);
+        // A multiple by chance: cores of 1, 2 and 3 threads, 6 CPUs on 3
+        // cores, which is not "2 per core".
+        let root2 = tree("topology-chance");
+        siblings(&root2, 0, "0");
+        siblings(&root2, 1, "1-2");
+        siblings(&root2, 2, "1-2");
+        siblings(&root2, 3, "3-5");
+        siblings(&root2, 4, "3-5");
+        siblings(&root2, 5, "3-5");
+        let chance = read_topology(&root2).unwrap();
+        assert_eq!((chance.logical, chance.cores), (6, 3));
+        assert_eq!(chance.threads_per_core, None);
+        // Sizes 2, 1, 2: the first size comes back, but the middle one
+        // differs.
+        let root3 = tree("topology-middle");
+        siblings(&root3, 0, "0-1");
+        siblings(&root3, 1, "0-1");
+        siblings(&root3, 2, "2");
+        siblings(&root3, 3, "3-4");
+        siblings(&root3, 4, "3-4");
+        let middle = read_topology(&root3).unwrap();
+        assert_eq!((middle.logical, middle.cores), (5, 3));
+        assert_eq!(middle.threads_per_core, None);
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(root2);
+        let _ = fs::remove_dir_all(root3);
+    }
+
+    #[test]
+    fn cpus_that_do_not_report_their_siblings_are_left_out() {
+        let root = tree("topology-partial");
+        siblings(&root, 0, "0");
+        // Offline: no topology directory. Not a CPU: a stray entry.
+        put(&root, "cpu1/online", "0\n");
+        put(&root, "cpu2/topology/core_id", "2\n");
+        siblings(&root, 99, "99");
+        put(&root, "cpufreq/topology/thread_siblings_list", "7\n");
+        let topology = read_topology(&root).unwrap();
+        assert_eq!((topology.logical, topology.cores), (2, 2));
+        assert_eq!(read_topology(&root.join("does-not-exist")), None);
         let _ = fs::remove_dir_all(root);
     }
 }

@@ -569,7 +569,7 @@ status stays the audit's verdict; any other write failure is reported and exits 
 ## Terminal Renderer
 
 The first line names the program, its version and the machine
-(`LinuxDoctor 1.9.0 — web01`); then a compact per-module status line, followed by full
+(`LinuxDoctor 1.10.0 — web01`); then a compact per-module status line, followed by full
 detail for anything above INFO:
 
 ```
@@ -592,7 +592,7 @@ incomplete):
 ```json
 {
   "schema_version": 1,
-  "linuxdoctor_version": "1.9.0",
+  "linuxdoctor_version": "1.10.0",
   "context": { "hostname": "web01", "kernel_version": "6.8.0-31-generic", "...": "..." },
   "results": [
     {
@@ -814,10 +814,10 @@ it):
 {
   "schema_version": 1,
   "kind": "comparison",
-  "linuxdoctor_version": "1.9.0",
+  "linuxdoctor_version": "1.10.0",
   "before": { "report": "before.json", "linuxdoctor_version": null,
               "machine": { "hostname": "web01", "...": "..." } },
-  "after":  { "report": "after.json", "linuxdoctor_version": "1.9.0",
+  "after":  { "report": "after.json", "linuxdoctor_version": "1.10.0",
               "machine": { "...": "..." } },
   "machine_changes": [ { "fact": "kernel", "before": "6.8.0-31", "after": "6.8.0-40" } ],
   "rebooted": true,

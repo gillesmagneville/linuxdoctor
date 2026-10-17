@@ -9,6 +9,17 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.10.0] - 2026-10-17
+
+Les profils de machine arrivent : `--profile hpc` (quatre vérifications propres aux
+nœuds de calcul) et `--profile server` (les mises à jour de sécurité automatiques).
+Le module GPU détaille les GPU Intel, et l'en-tête des rapports donne le vrai nombre de
+CPU d'une machine dont certains sont isolés. Un profil se choisit, il ne se devine pas :
+sans lui, les profils ne changent ni une sévérité ni un code de sortie. La disposition du rapport JSON ne change pas : `profile`
+est un champ ajouté, absent quand aucun profil n'a été choisi, et `schema_version` reste 1.
+Le côté dnf de `SRV001` n'a été vu que sur de faux fichiers, pas sur une vraie machine
+Fedora ou RHEL.
+
 ### Ajouté
 
 - **Profils de machine : `--profile hpc`** (ou `profile = "hpc"` en tête du fichier

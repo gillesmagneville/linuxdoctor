@@ -476,7 +476,7 @@ What a profile does is deliberately narrow:
 
 | Profile | For | What it changes |
 |---|---|---|
-| `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence. Adds the `hpc` module: `HPC001` checks that the CPU frequency governor does not hold the CPUs back |
+| `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence. Adds the `hpc` module: `HPC001` checks that the CPU frequency governor does not hold the CPUs back, `HPC002` that the locked-memory limit does not starve RDMA |
 
 One thing to keep in mind: under `hpc`, a node that is oversubscribed *by mistake* looks
 the same as one that is working. The profile removes the alarm, not the number.
@@ -499,6 +499,20 @@ generic driver, a governor that follows the load (`ondemand`, `conservative`,
 governor are a Warning, with the commands to set `performance` now and at every boot. A
 machine that exposes no frequency scaling (a virtual machine, say) gets an Info that
 says there was nothing to check.
+
+**What `HPC002` says.** RDMA (InfiniBand, RoCE) transfers memory without the CPU, so the
+kernel keeps that memory locked in RAM, and counts it against the process's
+`RLIMIT_MEMLOCK`, a few MiB by default. An MPI job that registers more fails to register
+memory and either stops or falls back to a slower transport. The finding lists the RDMA
+devices (`/sys/class/infiniband`) and reads the soft and hard limits of its own process
+(`/proc/self/limits`). With no RDMA device it is an Info that says the limit does not
+matter here (a card whose driver is not loaded is not listed). With devices, an unlimited
+soft limit, or one at least the size of the RAM, is an Info; anything lower is a Warning
+(75%), which says whether users can raise the limit themselves (hard limit) and comes
+with the commands for logins (`limits.d`) and for systemd services
+(`DefaultLimitMEMLOCK`). The confidence stops at 75% because the limit read is the one of
+the session that ran the audit: jobs started by a scheduler or a systemd service have
+limits of their own, and the finding says so.
 
 `linuxdoctor diff` has no `--profile`; it reads the profile each report recorded, and warns
 when the two differ.
@@ -697,7 +711,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1143 lib unit tests + 92 CLI unit tests + 186 integration tests
+cargo test               # 1166 lib unit tests + 92 CLI unit tests + 188 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -788,7 +802,7 @@ linuxdoctor/
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
     │   ├── numa/                  # per-node topology, cross-node imbalance
     │   ├── gpu/                     # AMD and Intel sysfs, NVIDIA via nvidia-smi
-    │   ├── hpc/                       # added by --profile hpc, not in all_modules(): CPU governor
+    │   ├── hpc/                       # added by --profile hpc, not in all_modules(): CPU governor, locked memory
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode

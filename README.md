@@ -8,7 +8,28 @@ LinuxDoctor is an open-source Linux diagnostic and auditing tool written in Rust
 
 Instead of making you piece together information from many commands, LinuxDoctor brings findings from different parts of the system into one coherent report.
 
-- **Read-only diagnostics:** it does not change system configuration or execute suggested fixes.
+## Target environments
+
+LinuxDoctor is designed for a wide range of Linux environments:
+
+- **Desktop:** workstations and personal Linux computers.
+- **Servers:** physical and virtual servers.
+- **HPC and distributed systems:** compute nodes and infrastructure components.
+
+LinuxDoctor runs its diagnostics locally on each machine; it is not a cluster orchestration tool.
+
+## Linux distributions and packages
+
+Prebuilt packages are provided in two formats:
+
+- **`.deb`** — for Debian, Ubuntu and compatible derivatives.
+- **`.rpm`** — for RPM-based distributions, including Fedora, Red Hat Enterprise Linux (RHEL), CentOS Stream, Rocky Linux, AlmaLinux and openSUSE.
+
+Compatibility depends on the distribution version, architecture and available system dependencies. Not every distribution or version has necessarily been tested.
+
+## Key principles
+
+- **Read-only diagnostics:** LinuxDoctor does not change system configuration or execute suggested fixes.
 - **Evidence-based findings:** diagnoses are based on observable system information, and limitations are made explicit.
 - **Useful explanations:** findings describe their potential impact and suggest practical next steps.
 - **Multiple output formats:** interactive terminal UI, terminal reports, JSON, Markdown and standalone HTML.

@@ -199,6 +199,49 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     module `kernel` d'un lancement à l'autre : les compteurs de `KERN007` et `KERN008` bougent,
     donc il compare maintenant leur sévérité seulement.
 
+- **Deux pannes de réseau que rien d'autre ne signale : `NET006` (agrégat de liens dégradé) et
+  `NET007` (lien qui saute).** Dans les deux cas la machine « marche » : un agrégat dont une carte
+  est tombée continue de passer par l'autre, un lien qui retombe se rétablit en une seconde. Ce
+  qui casse, c'est ce qui passait par là à ce moment-là. Aucun outil lancé : `/proc/net/bonding`
+  et `/sys/class/net`, sous une racine que les tests remplacent par un arbre factice.
+  - **`NET006` — interface agrégée** (module `network`, une constatation par agrégat, que son
+    état soit bon ou non, pour que `linuxdoctor diff` ne signale pas une constatation qui
+    n'apparaît que lors d'une panne) :
+    **Erreur** quand aucune carte n'a de lien (rien ne passe) ; **Avertissement** quand l'agrégat
+    marche mais a perdu sa redondance (« il ne reste qu'un lien entre la machine et la coupure »,
+    avec le nombre de pannes de lien de chaque carte depuis la création) ; **Avertissement** à
+    80 % en 802.3ad quand toutes les cartes ont un lien mais pas dans le même agrégat LACP
+    (c'est ce que donne un commutateur non configuré pour LACP sur ces ports : une seule carte
+    porte le trafic, et le texte dit si aucun commutateur n'a répondu) ; **Info** sinon. Les étapes
+    regardent avant de toucher (`cat /proc/net/bonding/…`, puis `ethtool` et `dmesg` pour chaque
+    carte sans lien) et ne changent rien.
+  - **`NET007` — lien qui saute** (module `network`) : `carrier_changes` d'une carte physique
+    filtrée (ni virtuelle, ni Wi-Fi, qui perd son lien par nature). Un seul chiffre ne dit rien
+    (le lien monte au démarrage, un commutateur redémarré fait tomber chaque carte une fois) :
+    il faut au moins **10 changements et un en moyenne toutes les 12 heures** depuis le démarrage.
+    **Avertissement** à 80 % (c'est un taux moyen depuis le démarrage : une rafale ancienne
+    compte aussi, et le texte le dit). Les étapes : `dmesg`, `ethtool` et ses compteurs d'erreurs,
+    l'Energy-Efficient Ethernet (`--show-eee` avant `--set-eee … off`), changer le câble ou le
+    port pour voir si le problème suit l'un ou l'autre, puis surveiller le compteur.
+  - **Limites connues** : le format de `/proc/net/bonding` a été repris du code du noyau
+    (`bond_procfs.c`) et d'exemples publiés, **pas vu sur un vrai noyau** : le conteneur de
+    développement n'a pas le pilote `bonding`. Le test avec le vrai binaire vérifie donc surtout
+    qu'il ne dit rien là où il n'y a rien. Seuls les agrégats du noyau sont vus (pas `teamd`, ni
+    un pont, ni Open vSwitch). `carrier_changes` est un compteur depuis l'apparition de
+    l'interface : on ne sait pas quand les changements ont eu lieu, `dmesg` le dit.
+  - **Vérifié** avec le vrai binaire dans le conteneur de développement : aucun agrégat, `eth0` à
+    2 changements, donc ni `NET006` ni `NET007`, et la sortie du module réseau est celle d'avant.
+    Le reste est vu sur de faux arbres.
+  - Tests : 51 nouveaux (le format du noyau, ligne par ligne, y compris les morceaux
+    manquants, les noms hostiles et les fichiers énormes ; chaque état d'un agrégat et chaque
+    phrase ; les bornes exactes de la règle du lien qui saute ; les étapes et les noms qui ne
+    sont pas de simples mots ; l'ordre des constatations ; trois tests de bout en bout dont un
+    avec le vrai binaire). Ils échouent quand on casse le code : 105 casseurs essayés, tous détectés
+    (13 avaient survécu : les bornes exactes — 64 Kio et 2000 lignes lus, 256 cartes, neuf cartes
+    contre huit nommées —, la valeur d'une carte qui ne dit rien (sans lien) et un temps de
+    marche nul n'étaient testés nulle part, des tests ont été ajoutés ; deux casseurs
+    équivalents ont disparu en simplifiant le code).
+
 ## [1.10.0] - 2026-10-17
 
 Les profils de machine arrivent : `--profile hpc` (quatre vérifications propres aux

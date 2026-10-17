@@ -152,6 +152,11 @@ v1 scaffold, thirteen modules shipping end-to-end:
   Also how full the firewall's connection-tracking table is (`NET005`,
   `/proc/sys/net/netfilter`; no finding where `nf_conntrack` is not loaded):
   a full table drops new connections, which looks like a flaky network.
+  Also bonded interfaces (`NET006`, `/proc/net/bonding`: one that lost a
+  card still works, so nothing else says so; and an LACP bond whose cards
+  are not in the same aggregator) and cards whose link keeps going down and
+  up (`NET007`, `carrier_changes` of `/sys/class/net`: at least 10 changes,
+  one every 12 hours or faster since boot).
   Detects active SR-IOV VFs (`sriov_numvfs`) and downgrades the
   error/drop-rate severity and confidence accordingly — on some NIC/
   driver combinations, VF-steered traffic inflates the physical
@@ -828,7 +833,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1471 lib unit tests + 95 CLI unit tests + 220 integration tests
+cargo test               # 1519 lib unit tests + 95 CLI unit tests + 223 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -925,7 +930,7 @@ linuxdoctor/
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode
-    │   ├── network/                    # interfaces, gateway, DNS, connection-tracking table (zero subprocess calls)
+    │   ├── network/                    # interfaces, gateway, DNS, connection-tracking table, bonds, link flapping (zero subprocess calls)
     │   ├── security/                   # collect.rs (I/O) + one pure file per topic (listeners,
     │   │                               #   firewall, ssh, access, accounts) + analyze.rs
     │   ├── logs/                       # collect.rs (I/O) + journal.rs (parsers) + one pure file

@@ -5,6 +5,7 @@ use crate::models::{Category, Confidence, Finding, Severity};
 
 use super::collect::{NetworkInterface, NetworkRawData};
 use super::conntrack::conntrack_finding;
+use super::{bonding, carrier};
 
 /// Minimum total packets (rx+tx) before error/drop *rates* are evaluated.
 /// Below this, a handful of startup-time drops can produce a misleading
@@ -25,6 +26,8 @@ pub fn analyze(data: &NetworkRawData, _ctx: &Context) -> Vec<Finding> {
     findings.push(default_gateway_finding(data));
     findings.push(dns_configuration_finding(data));
     findings.extend(data.conntrack.as_ref().and_then(conntrack_finding));
+    findings.extend(bonding::findings(&data.bonds));
+    findings.extend(carrier::findings(&data.links));
 
     findings
 }
@@ -392,6 +395,73 @@ mod tests {
         // A maximum of zero is not a table to judge.
         data.conntrack = Some(Fill { used: 5, limit: 0 });
         assert_eq!(ids(&data), ["NET001", "NET002", "NET003", "NET004"]);
+    }
+
+    #[test]
+    fn bonds_and_flapping_links_come_after_the_connection_table() {
+        use crate::modules::network::bonding::{Aggregator, Bond, Slave};
+        use crate::modules::network::carrier::{Link, Links};
+        use crate::modules::saturation::Fill;
+
+        let slave = |name: &str, status: &str| Slave {
+            name: name.to_string(),
+            status: status.to_string(),
+            link_failures: 0,
+            aggregator: Aggregator::NotUsed,
+        };
+        let bond = |name: &str, second: &str| Bond {
+            name: name.to_string(),
+            mode: "fault-tolerance (active-backup)".to_string(),
+            up: true,
+            active_slave: Some("eth0".to_string()),
+            slaves: vec![slave("eth0", "up"), slave("eth1", second)],
+            active_aggregator: None,
+            partner_mac: None,
+        };
+        let link = |name: &str, changes: u64| Link {
+            name: name.to_string(),
+            changes,
+            up: None,
+            down: None,
+        };
+        let mut data = NetworkRawData {
+            interfaces: vec![iface("eth0", 5000, 0)],
+            route: route(true),
+            dns_servers: vec!["8.8.8.8".to_string()],
+            conntrack: Some(Fill {
+                used: 10,
+                limit: 1000,
+            }),
+            // One bond that is whole, one that lost a card.
+            bonds: vec![bond("bond0", "up"), bond("bond1", "down")],
+            links: Links {
+                uptime_secs: Some(86_400),
+                links: vec![link("eth0", 2), link("eth1", 40), link("eth2", 50)],
+            },
+        };
+        let ids = |data: &NetworkRawData| -> Vec<(String, Option<String>)> {
+            analyze(data, &ctx())
+                .into_iter()
+                .map(|f| (f.id, f.instance))
+                .collect()
+        };
+        let named = |id: &str, instance: &str| (id.to_string(), Some(instance.to_string()));
+        let found = ids(&data);
+        let tail: Vec<_> = found.iter().skip(5).cloned().collect();
+        assert_eq!(
+            tail,
+            [
+                named("NET006", "bond0"),
+                named("NET006", "bond1"),
+                named("NET007", "eth1"),
+                named("NET007", "eth2"),
+            ]
+        );
+        assert_eq!(found[4].0, "NET005");
+        // Nothing to say without them.
+        data.bonds.clear();
+        data.links = Links::default();
+        assert_eq!(ids(&data).len(), 5);
     }
 
     #[test]

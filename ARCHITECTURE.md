@@ -109,7 +109,7 @@ linuxdoctor/
 │   │   ├── storage/          # see "Storage module layout" below
 │   │   ├── systemd/
 │   │   ├── ntp/
-│   │   ├── network/          # + conntrack.rs (NET005, see "Tables of the kernel that fill up")
+│   │   ├── network/          # + conntrack.rs (NET005, see "Tables of the kernel that fill up"), bonding.rs (NET006), carrier.rs (NET007), see "Bonds and links that flap"
 │   │   ├── security/         # see "Security module layout" below
 │   │   ├── logs/             # see "Logs module layout" below
 │   │   ├── kernel/           # + limits.rs (KERN007, KERN008, see "Tables of the kernel that fill up")
@@ -1369,6 +1369,45 @@ All three read under a root (`/` on a real machine, a temporary tree in the unit
 raw data of each module holds only the readings (`KernelRawData::limits`,
 `NetworkRawData::conntrack`), so `analyze` stays pure. The end-to-end tests run the real binary
 and compare what it reports with `/proc` (the host's own limits), not with a severity.
+
+## Bonds and links that flap
+
+Two network failures leave the machine looking healthy: a bond that lost one of its cards keeps
+carrying traffic through the other, and a link that drops for a second comes back. What breaks is
+what was going through at that moment, and nothing else points to the cause. Both are read without
+a tool, under a root, and the raw data holds only the readings (`NetworkRawData::bonds`,
+`NetworkRawData::links`), so `analyze` stays pure.
+
+**`NET006` Bonded Interface (`network/bonding.rs`)** reads `proc/net/bonding/<bond>` (at most 16
+bonds of at most 64 slaves, 64 KiB and 2000 lines each; names go through `clean`). One finding per
+bond, whatever its state, so that `linuxdoctor diff` does not report a finding that appears only
+during a failure. The state is the worst thing the kernel says:
+
+| State | When | Severity |
+|---|---|---|
+| Down | the bond's own `MII Status` is not `up` (no slave has a link) | Error, 100% |
+| Degraded | the bond is up but a slave has no link | Warning, 100% |
+| Split | 802.3ad, every slave has a link but they are not in one aggregator (`Aggregator ID` differs, is `N/A`, or is not the active one) | Warning, 80% (`strong_indication`) |
+| Healthy | none of the above | Info, 100% |
+
+The steps look (`cat /proc/net/bonding/<bond>`, then `ethtool` and `dmesg` for each card without a
+link, at most 4) before anything else, and change nothing. The names of a bond or a card go into a
+command only if `is_safe_word` accepts them, else `<bond>` or `<interface>`. The format comes from
+the kernel source (`bond_procfs.c`) and published examples; **it has not been seen on a real
+kernel** (the development container has no `bonding` driver). Teaming (`teamd`), bridges and Open
+vSwitch are not read.
+
+**`NET007` Link Flapping (`network/carrier.rs`)** reads `carrier_changes` (and, when present,
+`carrier_up_count` and `carrier_down_count`) of the cards under `sys/class/net`. A card counts only
+if it has a `device` and no `wireless` or `phy80211`: a virtual interface (a container's `veth`, a
+bridge, a bond) changes its link when something starts or stops, and a Wi-Fi link comes and goes by
+design. One count means nothing, since the link goes up at boot and a restarted switch drops every
+card once, so a card flaps when it has at least **10 changes and one every 12 hours or faster on
+average since boot** (`changes × 43200 ≥ uptime`, exact in `u128`; the uptime is the first number of
+`proc/uptime`, and without it there is no rate and no finding). It is a Warning at 80%: the counter
+is exact, but a rate since boot also counts a burst long ago, and the explanation says so. The
+steps are `dmesg`, `ethtool` and its error counters, `ethtool --show-eee` before `--set-eee … off`
+(Energy-Efficient Ethernet is a usual cause), a change of cable or port, and the counter watched.
 
 ---
 

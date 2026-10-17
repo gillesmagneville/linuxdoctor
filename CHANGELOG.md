@@ -217,6 +217,28 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
   supports up to 8.0 GT/s PCIe x16).`), puis explique la largeur et la vitesse
   séparément. Les preuves `pcie_link_*` n'ont pas changé.
 
+### Corrigé
+
+- **Le nombre de CPU d'un rapport est celui de la machine, pas celui du processus.**
+  Il venait de `available_parallelism()`, qui respecte l'affinité du processus et les
+  limites de cgroup : sur une machine de 56 CPU dont 24 sont isolés pour une machine
+  virtuelle, l'en-tête annonçait « 32 CPUs » alors que le module `hpc` en voyait 56. Le
+  nombre vient maintenant de la liste des CPU en ligne du noyau
+  (`/sys/devices/system/cpu/online`, par exemple `0-55` ou `0-27,56-83`), et
+  `available_parallelism()` ne sert plus que de repli quand la liste est illisible.
+  Cela touche l'en-tête des rapports (terminal, Markdown, HTML, interface), le champ
+  `context.cpu_count` du JSON et la comparaison de machines de `diff` ; les modules, eux,
+  ne s'en servent pas (le module CPU compte ses propres processeurs dans `/proc/cpuinfo`).
+  - Vu avec le vrai binaire : confiné à un seul CPU par `taskset -c 0`, l'ancien annonçait
+    « 1 CPUs », le nouveau le nombre réel.
+  - Tests : 8 nouveaux (l'analyse de la liste : intervalles, trous, entrées refusées dont
+    les signes et les listes inversées ; le repli ; et `tests/cpu_count.rs`, qui lance le vrai
+    binaire confiné à un CPU et exige le même nombre qu'en liberté). Ils échouent quand on
+    casse le code : 12 casseurs essayés, 10 détectés (dont deux seulement grâce au test de
+    bout en bout). Restent un équivalent sur 64 bits (l'arithmétique contrôlée contre le
+    débordement, qui ne sert qu'aux systèmes 32 bits) et un indiscernable ici (`possible`
+    à la place de `online`, identiques sur cette machine).
+
 ## [1.9.0] - 2026-10-16
 
 Chaque sortie dit quelle version de LinuxDoctor l'a produite, la TUI se filtre et

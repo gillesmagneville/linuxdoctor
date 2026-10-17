@@ -237,3 +237,152 @@ fn the_real_binary_reports_the_connection_table_exactly_when_the_host_has_one() 
         assert_eq!(reported, max.to_string(), "{finding}");
     }
 }
+
+/// What the kernel prints for a bond that lost a card, read from a fake tree
+/// and put through the whole analysis.
+#[test]
+fn a_bond_that_lost_a_card_is_found_from_the_files_of_the_kernel() {
+    use linuxdoctor::modules::network::bonding;
+
+    let root = std::env::temp_dir().join(format!(
+        "linuxdoctor-network-bond-it-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("proc/net/bonding")).unwrap();
+    std::fs::write(
+        root.join("proc/net/bonding/bond0"),
+        "Ethernet Channel Bonding Driver: v6.8.0-45-generic\n\n\
+         Bonding Mode: fault-tolerance (active-backup)\n\
+         Currently Active Slave: eth0\n\
+         MII Status: up\n\n\
+         Slave Interface: eth0\n\
+         MII Status: up\n\
+         Link Failure Count: 0\n\n\
+         Slave Interface: eth1\n\
+         MII Status: down\n\
+         Link Failure Count: 3\n",
+    )
+    .unwrap();
+
+    let data = NetworkRawData {
+        interfaces: vec![healthy_iface("bond0")],
+        bonds: bonding::read(&root),
+        ..Default::default()
+    };
+    let findings = analyze(&data, &test_context());
+    let net006 = findings.iter().find(|f| f.id == "NET006").unwrap();
+    assert_eq!(net006.severity, Severity::Warning);
+    assert_eq!(net006.instance.as_deref(), Some("bond0"));
+    assert!(net006
+        .evidence
+        .iter()
+        .any(|(k, v)| k == "slaves_with_link" && v == "1/2"));
+    assert!(net006.recommendation.is_some());
+
+    // The same bond with the second card back is information.
+    let healed = std::fs::read_to_string(root.join("proc/net/bonding/bond0"))
+        .unwrap()
+        .replace("MII Status: down", "MII Status: up");
+    std::fs::write(root.join("proc/net/bonding/bond0"), healed).unwrap();
+    let data = NetworkRawData {
+        bonds: bonding::read(&root),
+        ..data
+    };
+    let findings = analyze(&data, &test_context());
+    let net006 = findings.iter().find(|f| f.id == "NET006").unwrap();
+    assert_eq!(net006.severity, Severity::Info);
+    assert!(net006.recommendation.is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A card whose link keeps dropping, from the counters of `/sys`, through the
+/// whole analysis; a machine that has just booted does not flap.
+#[test]
+fn a_card_that_keeps_losing_its_link_is_found_from_the_files_of_the_kernel() {
+    use linuxdoctor::modules::network::carrier;
+
+    let root = std::env::temp_dir().join(format!(
+        "linuxdoctor-network-carrier-it-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("proc")).unwrap();
+    for (name, changes) in [("eno1", "2"), ("eno2", "86")] {
+        let dir = root.join("sys/class/net").join(name);
+        std::fs::create_dir_all(dir.join("device")).unwrap();
+        std::fs::write(dir.join("carrier_changes"), format!("{changes}\n")).unwrap();
+    }
+    // Two days up.
+    std::fs::write(root.join("proc/uptime"), "172800.12 340000.00\n").unwrap();
+
+    let data = NetworkRawData {
+        interfaces: vec![healthy_iface("eno1"), healthy_iface("eno2")],
+        links: carrier::read(&root),
+        ..Default::default()
+    };
+    let findings = analyze(&data, &test_context());
+    let flapping: Vec<_> = findings.iter().filter(|f| f.id == "NET007").collect();
+    assert_eq!(flapping.len(), 1);
+    assert_eq!(flapping[0].instance.as_deref(), Some("eno2"));
+    assert_eq!(flapping[0].severity, Severity::Warning);
+    assert!(flapping[0]
+        .evidence
+        .iter()
+        .any(|(k, v)| k == "changes_per_day" && v == "43.0"));
+
+    // The same count in ten minutes is a much faster rate, and is said too.
+    std::fs::write(root.join("proc/uptime"), "600.00 1000.00\n").unwrap();
+    let data = NetworkRawData {
+        links: carrier::read(&root),
+        ..data
+    };
+    assert_eq!(
+        analyze(&data, &test_context())
+            .iter()
+            .filter(|f| f.id == "NET007")
+            .count(),
+        1
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The real binary: bonds appear exactly when `/proc/net/bonding` has them,
+/// and a card is said to flap only if its own counter agrees.
+#[test]
+fn the_real_binary_reports_bonds_and_flapping_cards_only_where_the_host_has_them() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        .args([
+            "--no-config",
+            "audit",
+            "--modules",
+            "network",
+            "--fail-on",
+            "never",
+            "--output",
+            "json",
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("linuxdoctor binary should start");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let findings = report["results"][0]["findings"].as_array().unwrap();
+
+    let bonds = std::fs::read_dir("/proc/net/bonding")
+        .map(|entries| entries.flatten().count())
+        .unwrap_or(0)
+        .min(16);
+    let reported = findings.iter().filter(|f| f["id"] == "NET006").count();
+    assert_eq!(reported, bonds);
+
+    for finding in findings.iter().filter(|f| f["id"] == "NET007") {
+        let name = finding["instance"].as_str().unwrap();
+        let now: u64 = std::fs::read_to_string(format!("/sys/class/net/{name}/carrier_changes"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // The counter only grows, so it cannot be below what was reported.
+        assert!(now >= 10, "{name}: {now}");
+    }
+}

@@ -41,8 +41,9 @@ fn module_summary(id: &str) -> Option<&'static str> {
         "systemd" => "Overall systemd state and failed units.",
         "ntp" => "Clock synchronization and real-time clock mode.",
         "network" => {
-            "Interfaces, error and drop rates, default gateway, DNS configuration and how full \
-             the connection-tracking table is."
+            "Interfaces, error and drop rates, default gateway, DNS configuration, how full \
+             the connection-tracking table is, bonded interfaces that lost a link and cards \
+             whose link keeps dropping."
         }
         "security" => {
             "Listening services, firewall, SSH configuration, SELinux and AppArmor, kernel \

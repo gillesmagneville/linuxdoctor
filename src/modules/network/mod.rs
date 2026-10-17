@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod analyze;
+pub mod bonding;
+pub mod carrier;
 pub mod collect;
 pub mod conntrack;
 

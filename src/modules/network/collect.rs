@@ -50,6 +50,11 @@ pub struct NetworkRawData {
     /// The firewall's table of tracked connections; `None` when the kernel
     /// has none (`nf_conntrack` is not loaded).
     pub conntrack: Option<Fill>,
+    /// The bonded interfaces (`/proc/net/bonding`), none when the bonding
+    /// driver is not loaded.
+    pub bonds: Vec<super::bonding::Bond>,
+    /// The physical cards and the number of times their link changed.
+    pub links: super::carrier::Links,
 }
 
 /// Interface name prefixes that are never a real network path worth
@@ -142,6 +147,8 @@ pub fn collect() -> Result<NetworkRawData, ModuleError> {
         route,
         dns_servers,
         conntrack: super::conntrack::read(std::path::Path::new("/")),
+        bonds: super::bonding::read(std::path::Path::new("/")),
+        links: super::carrier::read(std::path::Path::new("/")),
     })
 }
 

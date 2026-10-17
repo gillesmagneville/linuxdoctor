@@ -245,12 +245,16 @@ pub enum ProfileArg {
     /// A compute node, where fully used CPUs are the normal state:
     /// load-average findings are reported as informational.
     Hpc,
+    /// A server nobody sits at, which has to look after itself: no severity
+    /// is lowered, and security updates are checked.
+    Server,
 }
 
 impl From<ProfileArg> for Profile {
     fn from(arg: ProfileArg) -> Self {
         match arg {
             ProfileArg::Hpc => Profile::Hpc,
+            ProfileArg::Server => Profile::Server,
         }
     }
 }
@@ -617,6 +621,20 @@ mod tests {
     }
 
     #[test]
+    fn the_server_profile_is_chosen_by_its_word_by_audit_and_tui() {
+        assert_eq!(
+            audit_args(&["--profile", "server"]).profile,
+            Some(ProfileArg::Server)
+        );
+        let cli = Cli::try_parse_from(["linuxdoctor", "tui", "--profile", "server"]).unwrap();
+        let Some(Command::Tui(args)) = cli.command else {
+            panic!("expected tui");
+        };
+        assert_eq!(args.profile, Some(ProfileArg::Server));
+        assert_eq!(Profile::from(ProfileArg::Server), Profile::Server);
+    }
+
+    #[test]
     fn profile_is_not_an_option_of_diff() {
         // A comparison works from the profiles the two reports record.
         assert!(Cli::try_parse_from([
@@ -632,7 +650,7 @@ mod tests {
 
     #[test]
     fn profile_rejects_unknown_words_and_is_case_sensitive() {
-        for word in ["desktop", "HPC", "Hpc", ""] {
+        for word in ["desktop", "HPC", "Hpc", "Server", "SERVER", "servers", ""] {
             assert!(
                 Cli::try_parse_from(["linuxdoctor", "audit", "--profile", word]).is_err(),
                 "{word:?}"

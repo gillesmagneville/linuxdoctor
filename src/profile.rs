@@ -46,17 +46,20 @@ use crate::modules::Module;
 pub enum Profile {
     /// A compute node: the CPUs are meant to be busy.
     Hpc,
+    /// A server nobody sits at: it has to look after itself.
+    Server,
 }
 
 impl Profile {
     /// Every profile, in the order they are listed to the person.
-    pub const ALL: [Profile; 1] = [Profile::Hpc];
+    pub const ALL: [Profile; 2] = [Profile::Hpc, Profile::Server];
 
     /// The word that chooses this profile, on the command line and in the
     /// configuration file, and that reports record.
     pub fn name(self) -> &'static str {
         match self {
             Profile::Hpc => "hpc",
+            Profile::Server => "server",
         }
     }
 
@@ -75,6 +78,11 @@ impl Profile {
                  that RDMA can lock the memory it needs, and reports how NUMA balancing \
                  and SMT are set"
             }
+            Profile::Server => {
+                "a server nobody sits at, which has to look after itself: no severity is \
+                 lowered, and the `server` module checks that security updates are installed \
+                 automatically"
+            }
         }
     }
 
@@ -84,6 +92,7 @@ impl Profile {
     pub fn modules(self) -> Vec<Box<dyn Module>> {
         match self {
             Profile::Hpc => vec![Box::new(crate::modules::hpc::HpcModule)],
+            Profile::Server => vec![Box::new(crate::modules::server::ServerModule)],
         }
     }
 }
@@ -141,10 +150,12 @@ const HPC_RULES: &[Rule] = &[
     },
 ];
 
-/// The adjustments a profile makes.
+/// The adjustments a profile makes. `server` makes none: it lowers no severity,
+/// and is there for its module.
 pub fn rules(profile: Profile) -> &'static [Rule] {
     match profile {
         Profile::Hpc => HPC_RULES,
+        Profile::Server => &[],
     }
 }
 
@@ -255,7 +266,8 @@ mod tests {
             assert_eq!(Profile::from_name(profile.name()), Some(profile));
         }
         for wrong in [
-            "", "HPC", "Hpc", " hpc", "hpc ", "hpc\n", "hpcx", "hp", "server", "desktop",
+            "", "HPC", "Hpc", " hpc", "hpc ", "hpc\n", "hpcx", "hp", "Server", " server",
+            "server ", "servers", "serve", "desktop",
         ] {
             assert_eq!(Profile::from_name(wrong), None, "{wrong:?}");
         }
@@ -310,7 +322,10 @@ mod tests {
     fn every_profile_describes_itself() {
         for profile in Profile::ALL {
             assert!(!profile.description().is_empty());
-            assert!(!rules(profile).is_empty(), "a profile that changes nothing");
+            assert!(
+                !rules(profile).is_empty() || !profile.modules().is_empty(),
+                "a profile that changes nothing"
+            );
         }
     }
 
@@ -461,7 +476,42 @@ mod tests {
     fn the_hpc_profile_adds_the_hpc_module_and_only_it() {
         let ids: Vec<&str> = Profile::Hpc.modules().iter().map(|m| m.id()).collect();
         assert_eq!(ids, ["hpc"]);
-        assert_eq!(module_ids(), ["hpc"]);
+    }
+
+    #[test]
+    fn the_server_profile_adds_the_server_module_and_lowers_nothing() {
+        let ids: Vec<&str> = Profile::Server.modules().iter().map(|m| m.id()).collect();
+        assert_eq!(ids, ["server"]);
+        assert_eq!(module_ids(), ["hpc", "server"]);
+        assert!(rules(Profile::Server).is_empty());
+        // So it says so: a reader of the description must not expect it to
+        // quiet anything.
+        assert!(Profile::Server
+            .description()
+            .contains("no severity is lowered"));
+    }
+
+    #[test]
+    fn a_profile_adds_only_its_own_modules() {
+        assert!(Profile::Hpc.modules().iter().all(|m| m.id() != "server"));
+        assert!(Profile::Server.modules().iter().all(|m| m.id() != "hpc"));
+    }
+
+    #[test]
+    fn applying_the_server_profile_changes_no_finding() {
+        let mut r = report(vec![
+            finding("CPU002", Severity::Error),
+            finding("CPU003", Severity::Critical),
+            finding("SRV001", Severity::Warning),
+        ]);
+        let before = r.results[0].findings.clone();
+        assert_eq!(apply(&mut r, Profile::Server), 0);
+        assert_eq!(r.profile, Some(Profile::Server));
+        for (a, b) in r.results[0].findings.iter().zip(&before) {
+            assert_eq!(a.severity, b.severity);
+            assert_eq!(a.explanation, b.explanation);
+            assert_eq!(a.evidence, b.evidence);
+        }
     }
 
     #[test]
@@ -490,6 +540,21 @@ mod tests {
         );
         // Chosen: nothing to say.
         assert_eq!(module_needing_profile(&asked, Some(Profile::Hpc)), None);
+        // Another profile's module is not the chosen one's.
+        assert_eq!(
+            module_needing_profile(&asked, Some(Profile::Server)),
+            Some(("hpc", Profile::Hpc))
+        );
+        let server = ids(&["server"]);
+        assert_eq!(
+            module_needing_profile(&server, None),
+            Some(("server", Profile::Server))
+        );
+        assert_eq!(
+            module_needing_profile(&server, Some(Profile::Hpc)),
+            Some(("server", Profile::Server))
+        );
+        assert_eq!(module_needing_profile(&server, Some(Profile::Server)), None);
         // Only modules every audit has: nothing to say, with or without one.
         let plain = ids(&["memory", "cpu"]);
         assert_eq!(module_needing_profile(&plain, None), None);

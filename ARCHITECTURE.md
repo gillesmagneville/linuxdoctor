@@ -97,6 +97,7 @@ linuxdoctor/
 │   │   ├── numa/
 │   │   ├── gpu/
 │   │   ├── hpc/              # added by --profile hpc, not in all_modules() — see "Profiles"
+│   │   ├── server/           # added by --profile server, not in all_modules() — see "Profiles"
 │   │   ├── storage/
 │   │   ├── systemd/
 │   │   ├── ntp/
@@ -147,6 +148,7 @@ linuxdoctor/
     ├── diff_command.rs       # the real binary: diff, its exit status and its formats
     ├── profile_option.rs     # profiles: the real CPU module and the real binary
     ├── hpc_module.rs         # the module the hpc profile adds, with the real binary
+    ├── server_module.rs      # the module the server profile adds, with fake apt-config and systemctl
     └── hostile_names.rs      # the real binary against escape sequences in names, every format
 ```
 
@@ -985,9 +987,9 @@ The checks are written for a machine in general, and some readings mean somethin
 particular kind of machine: a load average at the number of CPUs is contention on a
 desktop and a compute node doing its job. A **profile** says what kind of machine is being
 audited, once, in one place (`src/profile.rs`), instead of every module guessing. Today
-there is one, `hpc`; a `server` profile is planned. A profile does two things, and only
-these: it **lowers severities** (rules 2 to 5 below), and it may **add modules** (the end of
-this section).
+there are two, `hpc` and `server`. A profile does two things, and only these: it **lowers
+severities** (rules 2 to 5 below; `server` lowers none), and it may **add modules** (the end
+of this section).
 
 Five rules, each with the test that holds it:
 
@@ -1047,6 +1049,25 @@ alarm, not the number.
 | `HPC002` Locked Memory Limit | The RDMA devices (`/sys/class/infiniband/<device>/ports/<n>/link_layer`) and the `Max locked memory` line of `/proc/self/limits`, compared with the RAM of the node (`Context::mem_total_kb`). RDMA pins the memory it transfers, and the kernel charges that to `RLIMIT_MEMLOCK`; the default is a few MiB. No device: Info that says the limit does not matter here. Devices and no readable limit: Info that says so. Soft limit unlimited, or at least the RAM: Info. Lower: Warning, 75% (strong indication: the limit read is the audit session's own, not that of the jobs), with the hard limit deciding whether the text says users can raise it or that it takes root. A finite limit with the RAM unknown is not judged. Recommendation: `ulimit -l`, `limits.d` for logins, `DefaultLimitMEMLOCK` for systemd services, then the commands that check. |
 | `HPC003` Automatic NUMA Balancing | `/proc/sys/kernel/numa_balancing` (a bit field: bit 0 balances between nodes, bit 1 is memory tiering) and the number of `node<N>` directories of `/sys/devices/system/node`. Always Info: whether balancing helps depends on whether the jobs are bound to NUMA nodes, which the node cannot tell. No switch (kernel built without it): Info that says so. Fewer than two nodes: Info that says the setting changes nothing. Two or more: off, on (with a conditional recommendation for bound jobs: the kernel documentation says to disable it for them), memory tiering (2) and both (3) are described apart; a value with other bits is reported, not interpreted. |
 | `HPC004` SMT (Hyper-Threading) | `smt/control` and `smt/active` under `/sys/devices/system/cpu`, and the `topology/thread_siblings_list` of each CPU (the same list read from `n` CPUs is one core of `n` threads, so the cores and the threads per core come out even when a processor mixes performance and efficiency cores). Always Info. `control` decides (`on`, `off`, `forceoff`, `notsupported`); when it is missing or `notimplemented`, `active` then the topology do. On with a `control` file that is `on`: the trade-off and the commands for one thread per core (now, then the `nosmt` kernel parameter and the boot-configuration command of the distribution family). |
+
+### The `server` profile
+
+`server` lowers nothing (`rules(Profile::Server)` is empty, and its description says so): a
+load that is too high, a full disk or an exposed service is as wrong on a server as
+anywhere, and the general audit already judges it. The profile exists for its module,
+`server` (`src/modules/server/`, category `Security`), whose checks would be noise on a
+desktop — a desktop shows its updates to the person using it:
+
+| Finding | What it judges |
+|---|---|
+| `SRV001` Automatic Security Updates | Whether the system's own mechanism for installing security updates unattended is set up. It is chosen by the family of the distribution (`family_of(Context.distro)`): Debian-like reads **apt**, Red Hat-like reads **dnf**, anything else gets an Info that says the check was not made. **apt**: the settings come from `apt-config dump`, which merges `/etc/apt/apt.conf.d/` as apt does (keys compared without regard to case, because apt's are not), and are read as `/usr/lib/apt/apt.systemd.daily` reads them: `APT::Periodic::Enable` is a number and only 0 turns the jobs off; an interval is off when absent or exactly `0`, on when `always` or a number with an optional `s`, `m`, `h` or `d` suffix (the script compares the *text* with `0`, so `0d` runs every time and is "on" here too), invalid otherwise. Required: `/usr/bin/unattended-upgrade` exists; `Unattended-Upgrade` and `Update-Package-Lists` are on; at least one entry in `Unattended-Upgrade::Allowed-Origins::` or `Origins-Pattern::` (not reported while the package is missing: the file with the list is the package's own); `apt-daily.timer` (refreshes the lists) and `apt-daily-upgrade.timer` (runs `unattended-upgrade`) are enabled. **dnf**: dnf 5 if `/usr/bin/dnf5` exists, else dnf 4. Installed means `/usr/bin/dnf-automatic` (4) or the packaged defaults `/usr/share/dnf5/dnf5-plugins/automatic.conf` (5). `apply_updates` and `upgrade_type` are read from the `[commands]` section of `/etc/dnf/automatic.conf`, over the defaults with dnf 5; booleans as dnf reads them (`1`, `yes`, `true`, `enabled` and their opposites, in any case). It installs when `dnf-automatic-install.timer` is enabled (dnf 4 only; it ignores `apply_updates`), or when the timer that follows the file (`dnf-automatic.timer`, `dnf5-automatic.timer`) is enabled and `apply_updates` is true. The download-only and notify-only timers are named when they are the ones that are on. A timer is **enabled** when `systemctl is-enabled` says `enabled` or `enabled-runtime`: the persistent intent, readable without a running systemd. **Verdict**: everything in place is an Info (90%, `correlated`) with no recommendation; anything missing is a Warning (80%, `strong_indication`) that lists every fault and gives the numbered steps for them; a reading that failed (no `apt-config`, a timer systemd did not answer about) with no fault in what could be read is an Info (100%) that says what could not be told — a failed reading is never a Warning. It stops at 80% because the machine may be patched another way (a configuration-management tool, Landscape, Satellite, a maintenance window), which nothing here can see; the explanation says so. It does not say whether the last run worked. |
+
+The tools are behind a trait (`collect::Tools`) so that `collect_from` is tested with fake
+answers, and the real ones are two `ToolSession`s (`apt-config`, `systemctl`): one hung
+`systemctl` costs one time limit, not one per unit. `systemctl is-enabled` answers
+`disabled` with exit status 1, so the module uses `ToolSession::run_ignoring_status`, which
+returns the output whatever the status. The end-to-end test (`tests/server_module.rs`) puts
+fake `apt-config` and `systemctl` first on `PATH`.
 
 ### Modules a profile adds
 

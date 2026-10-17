@@ -55,8 +55,8 @@ fail_on = "warning"
 # Only show findings from this severity up (--min-severity).
 min_severity = "warning"
 
-# The kind of machine, for audit and tui (--profile): hpc. A profile only
-# lowers findings that are normal for that kind of machine; without one,
+# The kind of machine, for audit and tui (--profile): hpc or server. A profile
+# only lowers findings that are normal for that kind of machine; without one,
 # every finding keeps the severity its check gave it.
 profile = "hpc"
 
@@ -590,6 +590,14 @@ fail_on = "never"
     }
 
     #[test]
+    fn the_server_profile_can_be_chosen_in_the_file() {
+        assert_eq!(
+            parsed("profile = \"server\"\n").profile,
+            Some(ProfileArg::Server)
+        );
+    }
+
+    #[test]
     fn the_profile_is_a_top_level_line_only() {
         // It is the kind of machine, not a setting of one command: the same
         // for every audit, in the terminal or the interactive UI.
@@ -605,6 +613,7 @@ fail_on = "never"
         assert!(message.contains("line 1"), "{message}");
         assert!(message.contains("`desktop` is not one of"), "{message}");
         assert!(message.contains("hpc"), "{message}");
+        assert!(message.contains("server"), "{message}");
         // Exact, like every other word.
         assert!(parse("profile = \"HPC\"").is_err());
         assert!(parse("profile = 3").is_err());

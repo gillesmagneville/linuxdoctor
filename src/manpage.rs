@@ -59,6 +59,10 @@ fn module_summary(id: &str) -> Option<&'static str> {
              governor), whether RDMA can lock the memory it needs (locked-memory limit), and how \
              automatic NUMA balancing and SMT are set (information only)."
         }
+        "server" => {
+            "Added by the server profile: whether security updates are installed automatically \
+             (unattended-upgrades with apt, dnf-automatic with dnf)."
+        }
         _ => return None,
     })
 }
@@ -562,7 +566,14 @@ mod tests {
         // They are not part of every audit, so not in the list of the ones
         // that are.
         let modules = section(&page, ".SH MODULES", ".SH PROFILES");
-        assert!(!modules.contains("\\fBhpc\\fR"), "{modules}");
+        for profile in Profile::ALL {
+            for module in profile.modules() {
+                assert!(
+                    !modules.contains(&format!("\\fB{}\\fR", module.id())),
+                    "{modules}"
+                );
+            }
+        }
     }
 
     #[test]

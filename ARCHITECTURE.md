@@ -130,6 +130,7 @@ linuxdoctor/
     # one fixture-driven integration test file per module, e.g.
     ├── memory_module.rs
     ├── cpu_module.rs
+    ├── cpu_count.rs          # the CPU count is the machine's, even when the audit is confined to one CPU
     ├── numa_module.rs
     ├── gpu_module.rs
     ├── storage_module.rs
@@ -235,6 +236,13 @@ pub struct Context {
     pub boot_time_unix: u64,
 }
 ```
+
+`cpu_count` is the number of CPUs the kernel has **online** (`/sys/devices/system/cpu/online`),
+not the number the audit may run on: `available_parallelism()` honours the process's
+CPU affinity and cgroup limits, so on a machine that sets some CPUs aside (a virtual machine
+pinned to its own cores) it would report fewer CPUs than the machine has. It remains the
+fallback when the list cannot be read (`tests/cpu_count.rs` runs the real binary confined to
+one CPU and requires the same count).
 
 **v1 rule on cross-module facts:** modules do **not** read each other's findings or
 raw data. Every module gets the same static `Context` and otherwise collects its own

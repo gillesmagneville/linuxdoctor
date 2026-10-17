@@ -839,7 +839,8 @@ tests/       # fixture-driven integration tests, one file per module,
              # starts the binary keeps it away from the reader's own file;
              # hostile_names.rs runs it against escape sequences in names, every format;
              # profile_option.rs runs the real CPU module and the real binary with profiles;
-             # hpc_module.rs runs the binary for the module the hpc profile adds
+             # hpc_module.rs runs the binary for the module the hpc profile adds;
+             # cpu_count.rs runs it confined to one CPU and checks the CPU count stays the machine's
 examples/    # demo_severity.rs, demo_tui_snapshot.rs — not part of the shipping tool
 ```
 

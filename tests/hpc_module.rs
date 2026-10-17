@@ -147,11 +147,15 @@ fn hpc_findings(sandbox: &Sandbox) -> Vec<serde_json::Value> {
 }
 
 #[test]
-fn the_module_reports_two_findings_in_order_the_governor_then_locked_memory() {
+fn the_module_reports_its_four_findings_in_order() {
     let sandbox = Sandbox::new("findings");
     let findings = hpc_findings(&sandbox);
     let ids: Vec<&str> = findings.iter().map(|f| f["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["HPC001", "HPC002"], "{findings:?}");
+    assert_eq!(
+        ids,
+        ["HPC001", "HPC002", "HPC003", "HPC004"],
+        "{findings:?}"
+    );
 }
 
 #[test]
@@ -200,6 +204,86 @@ fn the_locked_memory_finding_says_what_it_found_whatever_the_host() {
     let soft = evidence(finding, "memlock_soft");
     assert!(soft.is_some(), "{finding}");
     assert!(evidence(finding, "memlock_hard").is_some(), "{finding}");
+}
+
+#[test]
+fn numa_balancing_is_reported_with_the_number_of_nodes_whatever_the_host() {
+    let sandbox = Sandbox::new("numa");
+    let findings = hpc_findings(&sandbox);
+    let finding = &findings[2];
+    assert_eq!(finding["id"], "HPC003");
+    assert_eq!(finding["title"], "Automatic NUMA Balancing");
+    assert_eq!(finding["severity"], "info", "{finding}");
+    let nodes: usize = evidence(finding, "numa_nodes")
+        .expect("always reported")
+        .parse()
+        .expect("a number");
+    let explanation = finding["explanation"].as_str().unwrap();
+    // What the host's own files say, when it has them.
+    if let Ok(text) = fs::read_to_string("/proc/sys/kernel/numa_balancing") {
+        assert_eq!(
+            evidence(finding, "numa_balancing").as_deref(),
+            Some(text.trim())
+        );
+    }
+    if std::path::Path::new("/sys/devices/system/node/node0").exists() {
+        assert!(nodes >= 1, "{finding}");
+    }
+    match evidence(finding, "numa_balancing") {
+        // The kernel has no switch.
+        None => assert!(explanation.contains("no switch"), "{explanation}"),
+        Some(_) if nodes < 2 => {
+            assert!(
+                explanation.contains("no remote memory to balance"),
+                "{explanation}"
+            )
+        }
+        Some(_) => assert!(explanation.contains("NUMA nodes"), "{explanation}"),
+    }
+}
+
+#[test]
+fn smt_is_reported_as_information_whatever_the_host() {
+    let sandbox = Sandbox::new("smt");
+    let findings = hpc_findings(&sandbox);
+    let finding = &findings[3];
+    assert_eq!(finding["id"], "HPC004");
+    assert_eq!(finding["title"], "SMT (Hyper-Threading)");
+    assert_eq!(finding["severity"], "info", "{finding}");
+    // The explanation always says which of the states the host is in.
+    let explanation = finding["explanation"].as_str().unwrap();
+    assert!(
+        [
+            "no SMT",
+            "forced off",
+            "SMT is off",
+            "SMT is on",
+            "is not known"
+        ]
+        .iter()
+        .any(|state| explanation.contains(state)),
+        "{explanation}"
+    );
+    // What the host's own files say, when it has them.
+    if let Ok(text) = fs::read_to_string("/sys/devices/system/cpu/smt/control") {
+        assert_eq!(
+            evidence(finding, "smt_control").as_deref(),
+            Some(text.trim())
+        );
+    }
+    if let Ok(text) = fs::read_to_string("/sys/devices/system/cpu/smt/active") {
+        assert_eq!(
+            evidence(finding, "smt_active").as_deref(),
+            Some(text.trim())
+        );
+    }
+    // The topology of a host with CPUs is always readable.
+    let logical: usize = evidence(finding, "logical_cpus")
+        .expect("a host has CPUs")
+        .parse()
+        .expect("a number");
+    let cores: usize = evidence(finding, "cores").unwrap().parse().unwrap();
+    assert!(logical >= cores && cores >= 1, "{finding}");
 }
 
 #[test]

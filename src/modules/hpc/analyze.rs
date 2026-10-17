@@ -6,9 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
 use crate::modules::logs::text::human_size;
-use crate::modules::recommend::Steps;
+use crate::modules::recommend::{family_of, sysctl_commands, Family, Steps};
 
-use super::collect::{CpuFreq, HpcRawData, Limit, MemLock, RdmaDevice};
+use super::collect::{CpuFreq, CpuTopology, HpcRawData, Limit, MemLock, RdmaDevice, Smt};
 
 /// Pure function: RawData -> Findings. No I/O -- see ARCHITECTURE.md
 /// "Testing Strategy".
@@ -17,6 +17,12 @@ pub fn analyze(data: &HpcRawData, ctx: &Context) -> Vec<Finding> {
     vec![
         governor_finding(&data.cpufreq),
         memlock_finding(data.memlock, &data.rdma, ram),
+        numa_balancing_finding(data.numa_balancing, data.numa_nodes),
+        smt_finding(
+            &data.smt,
+            data.topology.as_ref(),
+            family_of(ctx.distro.as_deref()),
+        ),
     ]
 }
 
@@ -509,6 +515,269 @@ fn memlock_steps() -> String {
         .build()
 }
 
+/// How automatic NUMA balancing is set. The sysctl is a bit field: bit 0
+/// balances pages and tasks between the nodes, bit 1 optimises page
+/// placement for memory of different speeds (memory tiering).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Balancing {
+    Off,
+    Normal,
+    Tiering,
+    Both,
+    /// A value with bits this tool does not know.
+    Other(u32),
+}
+
+fn balancing(value: u32) -> Balancing {
+    match value {
+        0 => Balancing::Off,
+        1 => Balancing::Normal,
+        2 => Balancing::Tiering,
+        3 => Balancing::Both,
+        other => Balancing::Other(other),
+    }
+}
+
+/// HPC003 -- automatic NUMA balancing. Reported, never judged: whether it
+/// helps depends on whether the jobs are bound to NUMA nodes, which the node
+/// cannot tell. What it says is how the kernel is set and what that means
+/// for each kind of job. Always reported, like HPC001.
+fn numa_balancing_finding(value: Option<u32>, nodes: usize) -> Finding {
+    let mut builder = Finding::builder(
+        "HPC003",
+        "Automatic NUMA Balancing",
+        Category::Numa,
+        Severity::Info,
+        Confidence::direct_observation(),
+    );
+    if let Some(value) = value {
+        builder = builder.evidence("numa_balancing", value.to_string());
+    }
+    builder = builder.evidence("numa_nodes", nodes.to_string());
+
+    let Some(value) = value else {
+        return builder
+            .explanation(
+                "The kernel has no switch for automatic NUMA balancing \
+                 (`/proc/sys/kernel/numa_balancing` is missing): it is built without it. There \
+                 is nothing to check here.",
+            )
+            .build();
+    };
+    let state = balancing(value);
+    if nodes < 2 {
+        let setting = match state {
+            Balancing::Off => "off".to_string(),
+            Balancing::Normal => "on".to_string(),
+            Balancing::Tiering => "memory tiering".to_string(),
+            Balancing::Both => "on, with memory tiering".to_string(),
+            Balancing::Other(v) => format!("value {v}"),
+        };
+        let layout = if nodes == 1 {
+            "This machine has a single NUMA node"
+        } else {
+            "No NUMA node was found"
+        };
+        return builder
+            .explanation(format!(
+                "{layout}, so there is no remote memory to balance toward and the setting \
+                 ({setting}) changes nothing here."
+            ))
+            .build();
+    }
+
+    let normal = format!(
+        "Automatic NUMA balancing is on across {nodes} NUMA nodes: the kernel periodically \
+         unmaps pages, takes the page faults that follow to see which node uses them, and moves \
+         memory toward it. That helps jobs that are not bound to nodes. The faults cost time \
+         that better locality may not win back, and the kernel documentation says to disable \
+         the feature for a workload already bound to NUMA nodes."
+    );
+    let tiering = "optimises page placement for memory of different speeds (frequently used \
+                   pages are moved to the faster tier)";
+    match state {
+        Balancing::Off => builder.explanation(format!(
+            "Automatic NUMA balancing is off across {nodes} NUMA nodes. Memory stays on the node \
+             where a job first touched it: that is what jobs bound to NUMA nodes (numactl, MPI \
+             or Slurm binding) want, while a job that is not bound gets no help in moving \
+             memory next to the CPUs that use it."
+        )),
+        Balancing::Normal => builder
+            .explanation(normal)
+            .recommendation(numa_balancing_steps()),
+        Balancing::Tiering => builder.explanation(format!(
+            "Automatic NUMA balancing is in memory tiering mode (value 2): the kernel {tiering}, \
+             not between ordinary nodes of the same speed."
+        )),
+        Balancing::Both => builder.explanation(format!(
+            "{normal} Memory tiering is also enabled (value 3): the kernel {tiering}."
+        )),
+        Balancing::Other(v) => builder.explanation(format!(
+            "The value of the switch ({v}) has bits this tool does not know: 0 is off, 1 \
+             balances between nodes, 2 is memory tiering, and 3 is both."
+        )),
+    }
+    .build()
+}
+
+fn numa_balancing_steps() -> String {
+    Steps::new()
+        .step_owned(
+            "If your jobs are bound to NUMA nodes (numactl, MPI or Slurm binding), switch it \
+             off now and keep it off at every boot:",
+            sysctl_commands("kernel.numa_balancing=0", "90-numa-balancing.conf"),
+        )
+        .step(
+            "Check the result:",
+            &["cat /proc/sys/kernel/numa_balancing"],
+        )
+        .build()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmtState {
+    /// The processors have none.
+    Unsupported,
+    /// Off, and the kernel will not switch it on again before a reboot.
+    ForcedOff,
+    Off,
+    On,
+    Unknown,
+}
+
+/// `control` decides when it says something; otherwise `active`, then the
+/// topology (more logical CPUs than cores means threads share cores).
+fn smt_state(smt: &Smt, topology: Option<&CpuTopology>) -> SmtState {
+    match smt.control.as_deref() {
+        Some("notsupported") => SmtState::Unsupported,
+        Some("forceoff") => SmtState::ForcedOff,
+        Some("off") => SmtState::Off,
+        Some("on") => SmtState::On,
+        // `notimplemented`, a word this tool does not know, or no file.
+        _ => match (smt.active, topology) {
+            (Some(true), _) => SmtState::On,
+            (Some(false), _) => SmtState::Off,
+            (None, Some(t)) if t.logical > t.cores => SmtState::On,
+            (None, Some(_)) => SmtState::Off,
+            (None, None) => SmtState::Unknown,
+        },
+    }
+}
+
+/// `56 logical CPUs on 28 cores, 2 threads per core`.
+fn shape_text(topology: &CpuTopology) -> String {
+    let base = format!(
+        "{} logical CPUs on {} cores",
+        topology.logical, topology.cores
+    );
+    match topology.threads_per_core {
+        Some(1) => format!("{base}, 1 thread per core"),
+        Some(n) => format!("{base}, {n} threads per core"),
+        None => format!("{base} (not the same number of threads on every core)"),
+    }
+}
+
+/// HPC004 -- SMT (hyper-threading). Reported, never judged: for jobs that
+/// fill every CPU and compute, one thread per core is often faster, for jobs
+/// that wait on memory the second thread often helps, and only a measurement
+/// on the real jobs settles it. Always reported, like HPC001.
+fn smt_finding(smt: &Smt, topology: Option<&CpuTopology>, family: Family) -> Finding {
+    let state = smt_state(smt, topology);
+    let mut builder = Finding::builder(
+        "HPC004",
+        "SMT (Hyper-Threading)",
+        Category::Cpu,
+        Severity::Info,
+        Confidence::direct_observation(),
+    );
+    if let Some(control) = &smt.control {
+        builder = builder.evidence("smt_control", control.clone());
+    }
+    if let Some(active) = smt.active {
+        builder = builder.evidence("smt_active", if active { "1" } else { "0" });
+    }
+    if let Some(t) = topology {
+        builder = builder
+            .evidence("logical_cpus", t.logical.to_string())
+            .evidence("cores", t.cores.to_string());
+        if let Some(n) = t.threads_per_core {
+            builder = builder.evidence("threads_per_core", n.to_string());
+        }
+    }
+    let topology_sentence = topology.map_or(String::new(), |t| {
+        format!(" The topology shows {}.", shape_text(t))
+    });
+
+    match state {
+        SmtState::Unsupported => builder.explanation(format!(
+            "The processors have no SMT (hyper-threading): each core runs one \
+             thread.{topology_sentence}"
+        )),
+        SmtState::ForcedOff => builder.explanation(format!(
+            "SMT is forced off and cannot be switched back on without a reboot (for example by \
+             the `nosmt=force` kernel parameter): each core runs one \
+             thread.{topology_sentence}"
+        )),
+        SmtState::Off => builder.explanation(format!(
+            "SMT is off: each core runs one thread, so a job that uses every CPU does not make \
+             two threads share a core's execution units. Many compute nodes run this way; jobs \
+             that mostly wait on memory can do better with SMT on.{topology_sentence}"
+        )),
+        SmtState::On => {
+            let explanation = format!(
+                "SMT is on: several threads share each core's execution units. That helps jobs \
+                 that mostly wait on memory and can slow compute-bound jobs that use every \
+                 logical CPU, which is why many sites turn it off on compute nodes. Which is \
+                 better depends on your jobs: measure them.{topology_sentence}"
+            );
+            // Switching it off at run time needs the kernel to offer it.
+            if smt.control.as_deref() == Some("on") {
+                builder
+                    .explanation(explanation)
+                    .recommendation(smt_steps(family))
+            } else {
+                builder.explanation(explanation)
+            }
+        }
+        SmtState::Unknown => builder.explanation(
+            "The kernel exposes no SMT state here and the CPU topology could not be read \
+             either, so whether threads share cores is not known.",
+        ),
+    }
+    .build()
+}
+
+fn smt_steps(family: Family) -> String {
+    let regenerate: &[&str] = match family {
+        Family::DebianLike => &["sudo update-grub"],
+        Family::RedHatLike => &["sudo grub2-mkconfig -o /boot/grub2/grub.cfg"],
+        Family::Unknown => &[],
+    };
+    let regenerate_text = match family {
+        Family::Unknown => {
+            "Regenerate the boot configuration with your distribution's tool, then reboot."
+        }
+        _ => "Regenerate the boot configuration, then reboot:",
+    };
+    Steps::new()
+        .step(
+            "If your jobs do better with one thread per core, switch SMT off now (it lasts until \
+             the next reboot):",
+            &["echo off | sudo tee /sys/devices/system/cpu/smt/control"],
+        )
+        .step(
+            "Make it permanent with the `nosmt` kernel parameter: add it to GRUB_CMDLINE_LINUX \
+             in this file, if the machine boots with GRUB:",
+            &["sudoedit /etc/default/grub"],
+        )
+        .step(regenerate_text, regenerate)
+        .step(
+            "Check the result after the reboot (it should say `off`):",
+            &["cat /sys/devices/system/cpu/smt/control"],
+        )
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,7 +819,7 @@ mod tests {
             ..Default::default()
         };
         let mut findings = analyze(&data, &ctx());
-        assert_eq!(findings.len(), 2);
+        assert_eq!(findings.len(), 4);
         findings.remove(0)
     }
 
@@ -911,17 +1180,17 @@ mod tests {
             ..ctx()
         };
         let mut findings = analyze(&data, &ctx);
-        assert_eq!(findings.len(), 2);
+        assert_eq!(findings.len(), 4);
         findings.remove(1)
     }
 
     #[test]
-    fn the_governor_comes_first_and_the_locked_memory_limit_second() {
+    fn the_findings_come_in_the_order_of_their_ids() {
         let ids: Vec<String> = analyze(&HpcRawData::default(), &ctx())
             .into_iter()
             .map(|f| f.id)
             .collect();
-        assert_eq!(ids, ["HPC001", "HPC002"]);
+        assert_eq!(ids, ["HPC001", "HPC002", "HPC003", "HPC004"]);
     }
 
     #[test]
@@ -1124,5 +1393,365 @@ mod tests {
         assert_eq!(limit_text(Limit::Bytes(0)), "0 B");
         assert_eq!(limit_text(Limit::Bytes(65_536)), "64.0 KiB");
         assert_eq!(limit_text(Limit::Bytes(8 * MIB)), "8.0 MiB");
+    }
+
+    /// HPC003 for a machine with `nodes` NUMA nodes.
+    fn numa_of(value: Option<u32>, nodes: usize) -> Finding {
+        let data = HpcRawData {
+            numa_balancing: value,
+            numa_nodes: nodes,
+            ..Default::default()
+        };
+        let mut findings = analyze(&data, &ctx());
+        assert_eq!(findings.len(), 4);
+        findings.remove(2)
+    }
+
+    #[test]
+    fn numa_balancing_is_always_an_information_about_numa() {
+        for (value, nodes) in [
+            (None, 2),
+            (Some(0), 1),
+            (Some(1), 2),
+            (Some(2), 2),
+            (Some(9), 4),
+        ] {
+            let f = numa_of(value, nodes);
+            assert_eq!(f.id, "HPC003");
+            assert_eq!(f.title, "Automatic NUMA Balancing");
+            assert_eq!(f.category, Category::Numa);
+            assert_eq!(f.severity, Severity::Info, "{value:?} {nodes}");
+            assert_eq!(f.confidence.percent, 100);
+            assert_eq!(evidence(&f, "numa_nodes"), Some(nodes.to_string().as_str()));
+        }
+    }
+
+    #[test]
+    fn a_kernel_without_the_switch_says_there_is_nothing_to_check() {
+        let f = numa_of(None, 2);
+        assert!(f.explanation.contains("no switch"), "{}", f.explanation);
+        assert_eq!(evidence(&f, "numa_balancing"), None);
+        assert!(f.recommendation.is_none());
+    }
+
+    #[test]
+    fn with_fewer_than_two_nodes_the_setting_changes_nothing() {
+        for (value, setting) in [
+            (0, "off"),
+            (1, "on"),
+            (2, "memory tiering"),
+            (3, "on, with memory tiering"),
+            (7, "value 7"),
+        ] {
+            for nodes in [0, 1] {
+                let f = numa_of(Some(value), nodes);
+                let text = &f.explanation;
+                let layout = if nodes == 1 {
+                    "This machine has a single NUMA node,"
+                } else {
+                    "No NUMA node was found,"
+                };
+                assert!(text.contains(layout), "{text}");
+                assert!(text.contains(&format!("the setting ({setting})")), "{text}");
+                assert!(f.recommendation.is_none(), "{value} {nodes}");
+            }
+        }
+        assert_eq!(evidence(&numa_of(Some(1), 1), "numa_balancing"), Some("1"));
+    }
+
+    #[test]
+    fn off_across_several_nodes_suits_bound_jobs() {
+        let f = numa_of(Some(0), 2);
+        let text = &f.explanation;
+        assert!(text.contains("is off across 2 NUMA nodes"), "{text}");
+        assert!(text.contains("first touched"), "{text}");
+        assert!(text.contains("numactl"), "{text}");
+        assert!(f.recommendation.is_none());
+    }
+
+    #[test]
+    fn on_across_several_nodes_is_explained_with_the_way_to_switch_it_off() {
+        let f = numa_of(Some(1), 4);
+        let text = &f.explanation;
+        assert!(text.contains("is on across 4 NUMA nodes"), "{text}");
+        assert!(text.contains("page faults"), "{text}");
+        assert!(text.contains("already bound to NUMA nodes"), "{text}");
+        assert!(!text.contains("tiering"), "{text}");
+        let steps = f.recommendation.as_deref().unwrap();
+        for expected in [
+            "1. If your jobs are bound to NUMA nodes",
+            "sudo sysctl kernel.numa_balancing=0",
+            "echo 'kernel.numa_balancing = 0' | sudo tee /etc/sysctl.d/90-numa-balancing.conf",
+            "2. Check the result:",
+            "cat /proc/sys/kernel/numa_balancing",
+        ] {
+            assert!(steps.contains(expected), "{expected} in {steps}");
+        }
+    }
+
+    #[test]
+    fn two_nodes_are_enough_for_balancing_to_matter() {
+        assert!(numa_of(Some(1), 2).recommendation.is_some());
+        assert!(numa_of(Some(1), 1).recommendation.is_none());
+    }
+
+    #[test]
+    fn memory_tiering_is_not_balancing_between_nodes() {
+        let f = numa_of(Some(2), 2);
+        let text = &f.explanation;
+        assert!(text.contains("memory tiering mode (value 2)"), "{text}");
+        assert!(text.contains("not between ordinary nodes"), "{text}");
+        assert!(!text.contains("page faults"), "{text}");
+        assert!(f.recommendation.is_none());
+    }
+
+    #[test]
+    fn both_bits_are_described_and_the_commands_are_left_out() {
+        let f = numa_of(Some(3), 2);
+        let text = &f.explanation;
+        assert!(text.contains("is on across 2 NUMA nodes"), "{text}");
+        assert!(
+            text.contains("Memory tiering is also enabled (value 3)"),
+            "{text}"
+        );
+        // Writing 0 would also switch tiering off: not suggested blindly.
+        assert!(f.recommendation.is_none());
+    }
+
+    #[test]
+    fn a_value_with_unknown_bits_is_reported_not_interpreted() {
+        for value in [4, 5, 7, 255] {
+            let f = numa_of(Some(value), 2);
+            let text = &f.explanation;
+            assert!(
+                text.contains(&format!("switch ({value}) has bits")),
+                "{text}"
+            );
+            assert!(f.recommendation.is_none());
+            assert_eq!(
+                evidence(&f, "numa_balancing"),
+                Some(value.to_string().as_str())
+            );
+        }
+    }
+
+    fn topology(logical: usize, cores: usize, per_core: Option<usize>) -> Option<CpuTopology> {
+        Some(CpuTopology {
+            logical,
+            cores,
+            threads_per_core: per_core,
+        })
+    }
+
+    fn smt(control: Option<&str>, active: Option<bool>) -> Smt {
+        Smt {
+            control: control.map(str::to_string),
+            active,
+        }
+    }
+
+    /// HPC004 on a machine of the given distribution.
+    fn smt_of(smt: Smt, topology: Option<CpuTopology>, distro: Option<&str>) -> Finding {
+        let data = HpcRawData {
+            smt,
+            topology,
+            ..Default::default()
+        };
+        let ctx = Context {
+            distro: distro.map(str::to_string),
+            ..ctx()
+        };
+        let mut findings = analyze(&data, &ctx);
+        assert_eq!(findings.len(), 4);
+        findings.remove(3)
+    }
+
+    fn smt_text(control: Option<&str>, active: Option<bool>, t: Option<CpuTopology>) -> String {
+        smt_of(smt(control, active), t, None).explanation
+    }
+
+    #[test]
+    fn smt_is_always_an_information_about_the_cpu() {
+        for (control, active) in [
+            (Some("on"), Some(true)),
+            (Some("off"), Some(false)),
+            (Some("forceoff"), Some(false)),
+            (Some("notsupported"), Some(false)),
+            (None, None),
+        ] {
+            let f = smt_of(smt(control, active), topology(8, 4, Some(2)), None);
+            assert_eq!(f.id, "HPC004");
+            assert_eq!(f.title, "SMT (Hyper-Threading)");
+            assert_eq!(f.category, Category::Cpu);
+            assert_eq!(f.severity, Severity::Info, "{control:?}");
+            assert_eq!(f.confidence.percent, 100);
+        }
+    }
+
+    #[test]
+    fn a_processor_without_smt_says_so() {
+        let text = smt_text(Some("notsupported"), Some(false), topology(4, 4, Some(1)));
+        assert!(text.contains("no SMT"), "{text}");
+        assert!(
+            text.contains("The topology shows 4 logical CPUs on 4 cores, 1 thread per core."),
+            "{text}"
+        );
+        let f = smt_of(smt(Some("notsupported"), None), None, None);
+        assert!(f.recommendation.is_none());
+        assert!(!f.explanation.contains("topology"), "{}", f.explanation);
+    }
+
+    #[test]
+    fn forced_off_cannot_be_switched_back_on() {
+        let f = smt_of(
+            smt(Some("forceoff"), Some(false)),
+            topology(28, 28, Some(1)),
+            None,
+        );
+        assert!(f.explanation.contains("forced off"), "{}", f.explanation);
+        assert!(f.explanation.contains("nosmt=force"), "{}", f.explanation);
+        assert!(f.recommendation.is_none());
+    }
+
+    #[test]
+    fn off_is_described_with_both_sides_of_the_choice() {
+        let f = smt_of(
+            smt(Some("off"), Some(false)),
+            topology(28, 28, Some(1)),
+            None,
+        );
+        let text = &f.explanation;
+        assert!(text.contains("SMT is off"), "{text}");
+        assert!(text.contains("mostly wait on memory"), "{text}");
+        assert!(
+            text.contains("28 logical CPUs on 28 cores, 1 thread per core"),
+            "{text}"
+        );
+        assert!(f.recommendation.is_none());
+    }
+
+    #[test]
+    fn on_is_described_with_both_sides_and_the_way_to_switch_it_off() {
+        let f = smt_of(
+            smt(Some("on"), Some(true)),
+            topology(56, 28, Some(2)),
+            Some("Ubuntu 26.04.1 LTS"),
+        );
+        let text = &f.explanation;
+        assert!(text.contains("SMT is on"), "{text}");
+        assert!(text.contains("slow compute-bound jobs"), "{text}");
+        assert!(text.contains("measure them"), "{text}");
+        assert!(
+            text.contains("56 logical CPUs on 28 cores, 2 threads per core"),
+            "{text}"
+        );
+        let steps = f.recommendation.as_deref().unwrap();
+        for expected in [
+            "1. If your jobs do better with one thread per core",
+            "echo off | sudo tee /sys/devices/system/cpu/smt/control",
+            "2. Make it permanent with the `nosmt` kernel parameter",
+            "sudoedit /etc/default/grub",
+            "3. Regenerate the boot configuration, then reboot:",
+            "sudo update-grub",
+            "4. Check the result after the reboot",
+            "cat /sys/devices/system/cpu/smt/control",
+        ] {
+            assert!(steps.contains(expected), "{expected} in {steps}");
+        }
+        assert!(!steps.contains("grub2-mkconfig"), "{steps}");
+    }
+
+    #[test]
+    fn the_command_that_regenerates_the_boot_configuration_follows_the_distribution() {
+        let steps = |distro: Option<&str>| {
+            smt_of(smt(Some("on"), Some(true)), None, distro)
+                .recommendation
+                .unwrap()
+        };
+        let debian = steps(Some("Debian GNU/Linux 12"));
+        assert!(debian.contains("sudo update-grub"), "{debian}");
+        let redhat = steps(Some("Rocky Linux 9.3"));
+        assert!(
+            redhat.contains("sudo grub2-mkconfig -o /boot/grub2/grub.cfg"),
+            "{redhat}"
+        );
+        assert!(!redhat.contains("update-grub"), "{redhat}");
+        for other in [Some("Arch Linux"), None] {
+            let text = steps(other);
+            assert!(text.contains("3. Regenerate the boot configuration with your distribution's tool, then reboot."), "{text}");
+            assert!(!text.contains("update-grub"), "{text}");
+            assert!(!text.contains("grub2-mkconfig"), "{text}");
+            assert!(text.contains("4. Check the result"), "{text}");
+        }
+    }
+
+    #[test]
+    fn smt_that_cannot_be_switched_at_run_time_comes_without_steps() {
+        // No `control`, `notimplemented`, or a word this tool does not know.
+        for control in [None, Some("notimplemented"), Some("2")] {
+            let f = smt_of(smt(control, Some(true)), topology(8, 4, Some(2)), None);
+            assert!(f.explanation.contains("SMT is on"), "{control:?}");
+            assert!(f.recommendation.is_none(), "{control:?}");
+        }
+    }
+
+    #[test]
+    fn the_control_file_decides_before_active_and_the_topology() {
+        let t = topology(8, 4, Some(2));
+        assert!(smt_text(Some("off"), Some(true), t.clone()).contains("SMT is off"));
+        assert!(smt_text(Some("on"), Some(false), topology(4, 4, Some(1))).contains("SMT is on"));
+        assert!(smt_text(Some("notsupported"), Some(true), t.clone()).contains("no SMT"));
+        assert!(smt_text(Some("forceoff"), Some(true), t).contains("forced off"));
+    }
+
+    #[test]
+    fn without_a_control_file_active_decides_before_the_topology() {
+        assert!(smt_text(None, Some(true), topology(4, 4, Some(1))).contains("SMT is on"));
+        assert!(smt_text(None, Some(false), topology(8, 4, Some(2))).contains("SMT is off"));
+        assert!(smt_text(Some("notimplemented"), Some(true), None).contains("SMT is on"));
+        assert!(smt_text(Some("notimplemented"), Some(false), None).contains("SMT is off"));
+    }
+
+    #[test]
+    fn with_nothing_but_the_topology_more_cpus_than_cores_means_smt() {
+        assert!(smt_text(None, None, topology(8, 4, Some(2))).contains("SMT is on"));
+        assert!(smt_text(None, None, topology(4, 4, Some(1))).contains("SMT is off"));
+        // Cores of different sizes (performance and efficiency cores).
+        assert!(smt_text(None, None, topology(6, 4, None)).contains("SMT is on"));
+    }
+
+    #[test]
+    fn with_nothing_at_all_the_state_is_said_to_be_unknown() {
+        let f = smt_of(Smt::default(), None, None);
+        assert!(f.explanation.contains("is not known"), "{}", f.explanation);
+        assert!(f.evidence.iter().all(|(k, _)| k != "smt_control"));
+        assert!(f.recommendation.is_none());
+        // A word this tool does not know and no other reading.
+        let f = smt_of(smt(Some("weird"), None), None, None);
+        assert!(f.explanation.contains("is not known"), "{}", f.explanation);
+        assert_eq!(evidence(&f, "smt_control"), Some("weird"));
+    }
+
+    #[test]
+    fn the_evidence_gives_the_control_the_activity_and_the_shape() {
+        let f = smt_of(smt(Some("on"), Some(true)), topology(56, 28, Some(2)), None);
+        assert_eq!(evidence(&f, "smt_control"), Some("on"));
+        assert_eq!(evidence(&f, "smt_active"), Some("1"));
+        assert_eq!(evidence(&f, "logical_cpus"), Some("56"));
+        assert_eq!(evidence(&f, "cores"), Some("28"));
+        assert_eq!(evidence(&f, "threads_per_core"), Some("2"));
+        let f = smt_of(smt(Some("off"), Some(false)), topology(6, 4, None), None);
+        assert_eq!(evidence(&f, "smt_active"), Some("0"));
+        assert_eq!(evidence(&f, "threads_per_core"), None);
+        assert!(
+            f.explanation
+                .contains("(not the same number of threads on every core)"),
+            "{}",
+            f.explanation
+        );
+        let f = smt_of(Smt::default(), None, None);
+        for key in ["smt_active", "logical_cpus", "cores", "threads_per_core"] {
+            assert_eq!(evidence(&f, key), None, "{key}");
+        }
     }
 }

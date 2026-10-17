@@ -242,13 +242,54 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     l'unité manquante échoue de toute façon). Un test trop lâche (la commande `printf` de
     systemd sans saut de ligne final passait) a été resserré.
 
+- **`--profile hpc` : deux constats d'information de plus, `HPC003` (équilibrage NUMA
+  automatique) et `HPC004` (SMT).** Le module `hpc` en a maintenant quatre. Ce sont des
+  Info, jamais un avertissement : savoir si le réglage aide dépend des tâches, que le nœud
+  ne peut pas connaître. Ils disent comment le noyau est réglé et ce que cela veut dire
+  selon le genre de tâche.
+  - **`HPC003`** lit `/proc/sys/kernel/numa_balancing` (un champ de bits : le bit 0
+    équilibre entre les nœuds, le bit 1 est le mode « tiering » de mémoire) et compte les
+    nœuds NUMA. Sans interrupteur (noyau compilé sans), ou avec moins de deux nœuds, il le
+    dit et dit que le réglage ne change rien. Avec plusieurs nœuds : *actif* = le noyau
+    échantillonne la mémoire par des défauts de page et la déplace vers le nœud qui s'en
+    sert, ce qui aide les tâches non liées à des nœuds mais coûte du temps, et que la
+    documentation du noyau dit de désactiver pour une charge déjà liée à des nœuds NUMA
+    (`numactl`, liaison MPI ou Slurm) ; les commandes pour le désactiver (tout de suite,
+    puis à chaque démarrage) viennent avec le constat. *Inactif* = la mémoire reste sur le
+    nœud où la tâche l'a touchée en premier. Les valeurs 2 (tiering seul) et 3 (les deux)
+    sont décrites à part, sans commande (écrire 0 couperait aussi le tiering) ; une valeur
+    avec d'autres bits est rapportée sans être interprétée.
+  - **`HPC004`** lit `/sys/devices/system/cpu/smt/` (`control`, `active`) et, avec la
+    `thread_siblings_list` de chaque CPU, combien de CPU logiques se partagent un coeur
+    (« 56 logical CPUs on 28 cores, 2 threads per core » ; et il le dit quand les coeurs
+    diffèrent, comme sur un processeur qui mêle coeurs de performance et d'efficacité).
+    Il distingue *actif*, *inactif*, *forcé inactif* (impossible à remettre sans
+    redémarrer) et *pas de SMT dans ce processeur*. Quand le SMT est actif et que le noyau
+    permet de l'arrêter à chaud, il explique le compromis (le SMT aide les tâches qui
+    attendent la mémoire et peut ralentir celles qui calculent sur tous les CPU logiques)
+    et donne les commandes pour un fil par coeur : tout de suite, puis le paramètre de
+    noyau `nosmt` avec la commande de génération de la configuration de démarrage de la
+    famille de la distribution (`update-grub` ou `grub2-mkconfig`, rien d'inventé pour une
+    autre).
+  - **Vérifié** avec le vrai binaire dans le conteneur de développement (un seul nœud ;
+    SMT absent du processeur) et sur de faux arbres sysfs pour les autres cas (deux nœuds,
+    SMT actif, forcé inactif, coeurs de tailles différentes, noms hostiles). **Pas encore
+    vu sur une machine à deux nœuds avec SMT actif**, la tienne en est une : à regarder
+    dans le premier rapport.
+  - Tests : 32 nouveaux (la lecture des interrupteurs, des nœuds, du SMT et de la topologie
+    sur de faux arbres ; chaque état de chaque constat, les frontières — deux nœuds, plus
+    de CPU logiques que de coeurs —, la précédence de `control` sur `active` puis sur la
+    topologie ; et le test de bout en bout, qui compare avec les fichiers de la machine
+    quand elle les a). Ils échouent quand on casse le code : 68 casseurs essayés, 68
+    détectés.
+
 ### Modifié
 
 - Le message sur l'absence de pilote cite maintenant `amdgpu`, `i915` ou `xe`.
 - La description du profil `hpc` (en-tête des rapports, page de manuel) dit maintenant
   aussi qu'il ajoute le module `hpc`.
   Elle dit aussi, ainsi que la phrase du module dans la page de manuel, qu'il vérifie la
-  limite de mémoire verrouillée.
+  limite de mémoire verrouillée et qu'il rapporte l'équilibrage NUMA et le SMT.
 - Le texte sur le lien PCIe d'une carte ne dit plus « worth checking the physical
   slot/cable » : il décrit ce qui est mesuré (`PCIe: 8.0 GT/s PCIe x8 (this card
   supports up to 8.0 GT/s PCIe x16).`), puis explique la largeur et la vitesse

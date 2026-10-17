@@ -476,7 +476,7 @@ What a profile does is deliberately narrow:
 
 | Profile | For | What it changes |
 |---|---|---|
-| `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence. Adds the `hpc` module: `HPC001` checks that the CPU frequency governor does not hold the CPUs back, `HPC002` that the locked-memory limit does not starve RDMA |
+| `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence. Adds the `hpc` module: `HPC001` checks that the CPU frequency governor does not hold the CPUs back, `HPC002` that the locked-memory limit does not starve RDMA; `HPC003` and `HPC004` report how automatic NUMA balancing and SMT are set (information, never a warning) |
 
 One thing to keep in mind: under `hpc`, a node that is oversubscribed *by mistake* looks
 the same as one that is working. The profile removes the alarm, not the number.
@@ -513,6 +513,27 @@ with the commands for logins (`limits.d`) and for systemd services
 (`DefaultLimitMEMLOCK`). The confidence stops at 75% because the limit read is the one of
 the session that ran the audit: jobs started by a scheduler or a systemd service have
 limits of their own, and the finding says so.
+
+**What `HPC003` and `HPC004` say.** Both are information, never a warning: whether the
+setting helps depends on the jobs, which the node cannot tell, so they say how the kernel
+is set and what that means for each kind of job.
+
+* `HPC003` reads `/proc/sys/kernel/numa_balancing` and counts the NUMA nodes. With fewer
+  than two nodes the setting changes nothing, and the finding says so. With several nodes,
+  *on* means the kernel samples memory with page faults and moves it toward the node that
+  uses it: that helps jobs that are not bound to nodes, costs time, and is a feature the
+  kernel documentation says to disable for workloads already bound to NUMA nodes
+  (`numactl`, MPI or Slurm binding), so the commands to disable it come with the finding.
+  *Off* means memory stays on the node where the job first touched it. Value 2 is memory
+  tiering, a different feature, and is described as such.
+* `HPC004` reads `/sys/devices/system/cpu/smt/` and, from the `thread_siblings_list` of each
+  CPU, how many logical CPUs share each core (`56 logical CPUs on 28 cores, 2 threads per
+  core`, and it says so when cores differ, as on a processor mixing performance and
+  efficiency cores). It tells *on*, *off*, *forced off* (cannot be switched back on without
+  a reboot) and *no SMT in this processor* apart. With SMT on and switchable, it explains the
+  trade-off (it helps jobs that wait on memory and can slow compute-bound jobs that fill
+  every logical CPU) and gives the commands for one thread per core, now and with the
+  `nosmt` kernel parameter, with the boot-configuration command of the distribution.
 
 `linuxdoctor diff` has no `--profile`; it reads the profile each report recorded, and warns
 when the two differ.
@@ -711,7 +732,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1166 lib unit tests + 92 CLI unit tests + 188 integration tests
+cargo test               # 1203 lib unit tests + 92 CLI unit tests + 191 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

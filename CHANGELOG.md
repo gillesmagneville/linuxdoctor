@@ -66,6 +66,60 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     long pas coupé, les paquets au-delà de dix, l'horloge de lecture, une racine fausse) et
     les tests ont été resserrés. Un contrôle de type de fichier inutile a été retiré en route.
 
+- **`--profile server` : deux vérifications de plus, `SRV004` (des mises à jour attendent-elles ?)
+  et `SRV005` (un noyau plus récent est-il installé que celui qui tourne ?).** Le module `server`
+  en a maintenant cinq, dans cet ordre ; `SRV003` et `SRV005` n'apparaissent que s'il y a quelque
+  chose à dire, `SRV004` seulement sur Debian et dérivées.
+  - **`SRV004` — mises à jour en attente (Debian et dérivées).** `apt list --upgradable` liste
+    ce qui attend, sans être root et sans réseau (il lit les listes que apt a déjà) ; `SRV004`
+    compte les paquets, et ceux qui viennent d'un dépôt dont le nom finit par `-security`. Le
+    nombre seul ne juge rien : sur une machine qui se met à jour chaque nuit, une mise à jour
+    sortie ce matin est normale. **Avertissement à 80 %** dans deux cas seulement : les listes de
+    paquets n'ont pas été rafraîchies depuis 7 jours (`update-success-stamp`) — le vrai nombre
+    peut être plus grand et le rafraîchissement quotidien ne marche pas — ou des mises à jour de
+    sécurité attendent alors que rien n'a été installé ni mis à jour depuis 3 jours (le plus
+    récent de `unattended-upgrades-stamp` et de la date de `/var/log/dpkg.log`). Sinon une
+    **Info** avec les nombres. Si `apt` ne répond pas, le nombre est dit inconnu, jamais zéro.
+    Les commandes (rafraîchir, voir, installer, comprendre pourquoi la tâche automatique ne l'a
+    pas fait) ne sont données que pour l'avertissement. Rien sur Red Hat et dérivées : `dnf`
+    devrait rafraîchir ses métadonnées par le réseau pour répondre.
+  - **`SRV005` — noyau plus récent installé que celui qui tourne.** Un noyau n'est remplacé qu'au
+    redémarrage suivant. Debian le dit avec `/var/run/reboot-required` (`SRV003`, `KERN004`) ;
+    les autres familles n'ont pas de marqueur, donc `SRV005` compare le noyau qui tourne
+    (`/proc/sys/kernel/osrelease`) aux noyaux installés (`/boot/vmlinuz-*` et
+    `/usr/lib/modules/*/vmlinuz`). Les versions se comparent comme des nombres (`6.8.0-9` est
+    plus ancien que `6.8.0-45`) et seulement entre noyaux de même variante (`generic` avec
+    `generic` ; l'étiquette `el9_4` ou `fc40` de Red Hat est ignorée) : une machine qui a un
+    noyau « lowlatency » à côté de celui qu'elle utilise n'a rien oublié. Rien avant 7 jours
+    depuis l'installation (la date de l'initrd) ; ensuite un **Avertissement à 90 %**, avec l'âge
+    et les trois étapes (voir, redémarrer dans une fenêtre de maintenance, vérifier) ; une
+    **Info** quand un correctif à chaud est chargé (`/sys/kernel/livepatch`), et une Info à 80 %
+    quand la date d'installation est introuvable. Rien quand le système a déjà un marqueur de
+    redémarrage : c'est lui qui l'a dit.
+  - Les outils sont derrière le trait `Tools` comme avant (un `apt` de plus, `slow()` : lire le
+    cache de paquets peut prendre quelques secondes) ; les lectures de fichiers se font sous la
+    racine que les tests remplacent par un arbre factice, l'âge vient de l'horloge passée avec
+    les données, `analyze` reste une fonction pure.
+  - **Vérifié** avec le vrai binaire dans le conteneur de développement : le vrai `apt` compte
+    63 mises à jour dont 59 de sécurité (Info, car `dpkg.log` date d'un jour) ; avec un faux
+    noyau plus récent dans `/boot` : rien à 2 jours, Avertissement à 10 jours avec ses étapes,
+    noyau d'une autre variante ignoré, noyau plus ancien ignoré, puis `/boot` remis comme avant.
+    Les tests de bout en bout mettent un faux `apt` en tête du `PATH` (les deux tests du module
+    qui s'en servent s'arrêtent d'eux-mêmes sur une machine qui n'est pas Debian) ; ils ne
+    peuvent pas déplacer la racine, donc pour `SRV005` ils comparent seulement le noyau nommé à
+    celui que la machine dit.
+  - Tests : 50 nouveaux (le comptage de la liste d'`apt` et les dépôts de sécurité, les dates
+    des deux marques, chaque verdict et chaque phrase aux limites de 3 et 7 jours, les versions
+    et leurs variantes, les noyaux installés sur de faux arbres, l'ordre des constatations du
+    module, quatre tests de bout en bout). Ils échouent quand on casse le code : 73 casseurs
+    essayés, 73 détectés (un avait survécu : le seuil « au moins une mise à jour de sécurité »
+    n'était testé qu'avec deux, un test a été ajouté).
+  - **Limites connues** : `dpkg.log` change à la moindre installation, pas seulement à une mise
+    à jour de sécurité, d'où le texte « installé ou mis à jour » ; une distribution dont la
+    variante change à chaque version (Arch : `arch1-1`, `arch1-2`) n'est pas comparée à travers
+    ce changement. **Pas encore vu sur une vraie machine de production** : à regarder dans ton
+    premier rapport.
+
 ## [1.10.0] - 2026-10-17
 
 Les profils de machine arrivent : `--profile hpc` (quatre vérifications propres aux

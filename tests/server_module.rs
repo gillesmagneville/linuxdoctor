@@ -7,7 +7,7 @@
 //! not: that the module is there only with the profile, where it comes in the
 //! report, that asking for it without the profile is refused in words that say
 //! what to do, and that the profile lowers nothing. The two tools the module
-//! asks, `apt-config` and `systemctl`, are replaced by fake ones first on
+//! asks, `apt-config`, `apt` and `systemctl`, are replaced by fake ones first on
 //! `PATH`, which is what lets the tests say what they answer; those tests need
 //! a Debian-like host (they say so and stop on another). What the module says
 //! about every possible setup is tested on fake data in its own unit tests.
@@ -32,7 +32,7 @@ impl Sandbox {
         fs::create_dir_all(root.join("xdg/linuxdoctor")).unwrap();
         fs::create_dir_all(root.join("bin")).unwrap();
         fs::create_dir_all(root.join("states")).unwrap();
-        for tool in ["smartctl", "docker", "podman"] {
+        for tool in ["smartctl", "docker", "podman", "apt"] {
             sandbox_script(&root.join("bin").join(tool), "#!/bin/sh\nexit 127\n");
         }
         Sandbox { root }
@@ -51,6 +51,16 @@ impl Sandbox {
             self.root.join("dump").display()
         );
         sandbox_script(&self.root.join("bin/apt-config"), &script);
+    }
+
+    /// `apt list --upgradable` prints `listing`.
+    fn apt_list(&self, listing: &str) {
+        fs::write(self.root.join("listing"), listing).unwrap();
+        let script = format!(
+            "#!/bin/sh\n[ \"$#\" -eq 2 ] && [ \"$1\" = list ] && [ \"$2\" = --upgradable ] || exit 2\ncat '{}'\n",
+            self.root.join("listing").display()
+        );
+        sandbox_script(&self.root.join("bin/apt"), &script);
     }
 
     /// `systemctl is-enabled UNIT` answers what the file `states/UNIT` says,
@@ -767,7 +777,14 @@ fn the_checks_come_in_order_and_the_logs_follow_the_host() {
         .map(|f| f["id"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(&ids[..2], ["SRV001", "SRV002"], "{ids:?}");
-    assert!(ids.len() <= 3, "{ids:?}");
+    // What follows is what the host has to say, always in the same order.
+    let rest = &ids[2..];
+    assert!(
+        rest.iter()
+            .all(|id| ["SRV003", "SRV004", "SRV005"].contains(&id.as_str())),
+        "{ids:?}"
+    );
+    assert!(rest.windows(2).all(|pair| pair[0] < pair[1]), "{ids:?}");
 
     let logs = finding_of(&report, "SRV002");
     assert_eq!(logs["title"], "Logs Kept Across Reboots");
@@ -852,5 +869,103 @@ fn a_waiting_reboot_is_reported_when_it_has_waited_a_week_and_not_before() {
         Some(age) if age + 600 < WEEK => assert!(reboot.is_empty(), "{reboot:?}"),
         Some(_) => {}
         None => assert!(reboot.is_empty(), "no marker, no finding: {reboot:?}"),
+    }
+}
+
+// ----- SRV004: the updates that are waiting -------------------------------------
+
+const LISTING: &str = "Listing...\n\
+curl/noble-security 8.5.0-2ubuntu10.16 amd64 [upgradable from: 8.5.0-2ubuntu10.15]\n\
+git/noble-updates,noble-security 1:2.43.0-1ubuntu7.3 amd64 [upgradable from: 1:2.43.0-1ubuntu7.2]\n\
+vim/noble-updates 2:9.1.0016-1ubuntu7.9 amd64 [upgradable from: 2:9.1.0016-1ubuntu7.8]\n";
+
+#[test]
+fn the_waiting_updates_are_counted_from_what_apt_lists() {
+    let sandbox = Sandbox::new("pending");
+    if !host_uses_apt(&sandbox) {
+        return;
+    }
+    both_timers(&sandbox, "enabled");
+    sandbox.apt_list(LISTING);
+    let report = sandbox.module(&[]);
+    let finding = finding_of(&report, "SRV004");
+    assert_eq!(finding["title"], "Updates Waiting");
+    assert_eq!(finding["category"], "security");
+    assert_eq!(evidence(&finding, "updates_waiting").as_deref(), Some("3"));
+    assert_eq!(
+        evidence(&finding, "security_updates_waiting").as_deref(),
+        Some("2")
+    );
+    // The first findings are the ones before it.
+    let ids: Vec<String> = findings(&report)
+        .iter()
+        .map(|f| f["id"].as_str().unwrap().to_string())
+        .collect();
+    let at = |id: &str| ids.iter().position(|i| i == id).unwrap();
+    assert!(
+        at("SRV001") < at("SRV002") && at("SRV002") < at("SRV004"),
+        "{ids:?}"
+    );
+    // How old the package lists are is the host's own stamp; a warning is
+    // never certain.
+    let severity = finding["severity"].as_str().unwrap();
+    assert!(["info", "warning"].contains(&severity), "{finding}");
+    if severity == "warning" {
+        assert_eq!(finding["confidence"]["percent"], 80, "{finding}");
+        assert!(finding["recommendation"].is_string(), "{finding}");
+    } else {
+        assert_eq!(finding["confidence"]["percent"], 100, "{finding}");
+    }
+}
+
+#[test]
+fn an_apt_that_does_not_answer_leaves_the_count_unread() {
+    let sandbox = Sandbox::new("pending-silent");
+    if !host_uses_apt(&sandbox) {
+        return;
+    }
+    both_timers(&sandbox, "enabled");
+    sandbox_script(&sandbox.root.join("bin/apt"), "#!/bin/sh\nexit 100\n");
+    let finding = finding_of(&sandbox.module(&[]), "SRV004");
+    assert_eq!(evidence(&finding, "updates_waiting"), None, "{finding}");
+    assert_eq!(evidence(&finding, "security_updates_waiting"), None);
+    assert!(
+        finding["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("could not be counted"),
+        "{finding}"
+    );
+}
+
+#[test]
+fn a_host_that_is_not_debian_like_has_no_waiting_updates_finding() {
+    let sandbox = Sandbox::new("pending-other");
+    sandbox.systemctl();
+    sandbox.apt_list(LISTING);
+    let report = sandbox.module(&[]);
+    let manager = evidence(&srv001(&report), "package_manager").unwrap();
+    let has = findings(&report).iter().any(|f| f["id"] == "SRV004");
+    assert_eq!(has, manager == "apt", "{manager}");
+}
+
+#[test]
+fn a_newer_kernel_is_reported_with_the_running_one_when_there_is_one() {
+    let sandbox = Sandbox::new("kernel");
+    let report = sandbox.module(&[]);
+    let running = fs::read_to_string("/proc/sys/kernel/osrelease").unwrap();
+    // Whether the host has a kernel installed that it has not rebooted into
+    // is the host's; if it has, the finding must name the one that runs.
+    if let Some(finding) = findings(&report).into_iter().find(|f| f["id"] == "SRV005") {
+        assert_eq!(finding["title"], "Newer Kernel Installed");
+        assert_eq!(finding["category"], "kernel");
+        assert_eq!(
+            evidence(&finding, "running_kernel").as_deref(),
+            Some(running.trim())
+        );
+        assert!(
+            evidence(&finding, "installed_kernel").is_some(),
+            "{finding}"
+        );
     }
 }

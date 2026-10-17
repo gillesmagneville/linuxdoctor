@@ -2,9 +2,13 @@
 
 //! What the checks of the `server` module read.
 //!
-//! For the logs that survive a reboot (SRV002) and the reboot that has been
-//! waiting for days (SRV003), files only: see [`super::journal`] and
-//! [`super::reboot`].
+//! For the logs that survive a reboot (SRV002), the reboot that has been
+//! waiting for days (SRV003) and the newer kernel that is installed (SRV005),
+//! files only: see [`super::journal`], [`super::reboot`] and [`super::kernel`].
+//!
+//! For the package updates that are waiting (SRV004), the stamps of apt's
+//! daily jobs (files) and the output of `apt list --upgradable`: see
+//! [`super::pending`].
 //!
 //! For the automatic security updates (SRV001), which depend on the package
 //! manager of the system:
@@ -33,6 +37,8 @@ use crate::core::text::clean;
 use crate::modules::recommend::Family;
 
 use super::journal::{self, JournalSetup};
+use super::kernel::{self, NewerKernel};
+use super::pending::{self, PendingUpdates};
 use super::reboot::{self, PendingReboot};
 
 /// Longest value kept from a configuration file. The real ones are a word or a
@@ -167,6 +173,12 @@ pub struct ServerRawData {
     pub journal: JournalSetup,
     /// `None` when no reboot is waiting (or the system has no marker for it).
     pub reboot: Option<PendingReboot>,
+    /// The updates that are waiting. `None` outside Debian-like systems: only
+    /// `apt` can count them without going to the network.
+    pub pending: Option<PendingUpdates>,
+    /// A kernel installed that is newer than the one running; `None` when
+    /// there is not one, or when the installed ones could not be listed.
+    pub kernel: Option<NewerKernel>,
     /// When it was read, in seconds since 1970: the ages are taken from it.
     pub now_unix: u64,
 }
@@ -174,8 +186,8 @@ pub struct ServerRawData {
 /// Where each reading comes from, so that the readings together are tested
 /// on fake files.
 pub struct Sources<'a> {
-    /// What the files of the journal and of the reboot marker are under: `/`
-    /// on a real machine.
+    /// What the files of the journal, of the reboot marker, of the kernels
+    /// and of the package stamps are under: `/` on a real machine.
     pub root: &'a Path,
     /// The time to take the ages of files from.
     pub now_unix: u64,
@@ -202,10 +214,12 @@ impl Sources<'static> {
     }
 }
 
-/// The two external tools, so that the readings are tested without them.
+/// The external tools, so that the readings are tested without them.
 pub trait Tools {
     /// The output of `apt-config dump`; `None` when it did not run.
     fn apt_config_dump(&mut self) -> Option<String>;
+    /// The output of `apt list --upgradable`; `None` when it did not run.
+    fn apt_upgradable(&mut self) -> Option<String>;
     /// What systemd says about a unit file.
     fn unit_state(&mut self, unit: &str) -> UnitState;
 }
@@ -214,6 +228,7 @@ pub trait Tools {
 /// next calls to it are skipped rather than each waiting out its own limit.
 pub struct SystemTools {
     apt_config: ToolSession,
+    apt: ToolSession,
     systemctl: ToolSession,
 }
 
@@ -221,6 +236,9 @@ impl SystemTools {
     pub fn system() -> Self {
         SystemTools {
             apt_config: ToolSession::new("apt-config"),
+            // Reading the whole package cache can take a few seconds on a
+            // machine that has just been updated.
+            apt: ToolSession::new("apt").slow(),
             systemctl: ToolSession::new("systemctl"),
         }
     }
@@ -229,6 +247,10 @@ impl SystemTools {
 impl Tools for SystemTools {
     fn apt_config_dump(&mut self) -> Option<String> {
         self.apt_config.run(&["dump"])
+    }
+
+    fn apt_upgradable(&mut self) -> Option<String> {
+        self.apt.run(&["list", "--upgradable"])
     }
 
     fn unit_state(&mut self, unit: &str) -> UnitState {
@@ -256,10 +278,16 @@ pub fn collect_from(family: Family, sources: &Sources, tools: &mut impl Tools) -
         Family::RedHatLike => Updates::Dnf(read_dnf(sources, tools)),
         Family::Unknown => Updates::Unsupported,
     };
+    let pending = (family == Family::DebianLike).then(|| {
+        let listing = tools.apt_upgradable();
+        pending::read(sources.root, listing.as_deref())
+    });
     ServerRawData {
         updates,
         journal: journal::read(sources.root, sources.now_unix),
         reboot: reboot::read(sources.root),
+        pending,
+        kernel: kernel::read(sources.root),
         now_unix: sources.now_unix,
     }
 }
@@ -704,6 +732,7 @@ Unattended-Upgrade::Automatic-Reboot "false";
 
     struct FakeTools {
         dump: Option<String>,
+        listing: Option<String>,
         states: BTreeMap<&'static str, UnitState>,
         asked: Vec<String>,
     }
@@ -712,6 +741,7 @@ Unattended-Upgrade::Automatic-Reboot "false";
         fn new(dump: Option<&str>, states: &[(&'static str, UnitState)]) -> Self {
             FakeTools {
                 dump: dump.map(str::to_string),
+                listing: None,
                 states: states.iter().cloned().collect(),
                 asked: Vec::new(),
             }
@@ -722,6 +752,11 @@ Unattended-Upgrade::Automatic-Reboot "false";
         fn apt_config_dump(&mut self) -> Option<String> {
             self.asked.push("apt-config".into());
             self.dump.clone()
+        }
+
+        fn apt_upgradable(&mut self) -> Option<String> {
+            self.asked.push("apt-list".into());
+            self.listing.clone()
         }
 
         fn unit_state(&mut self, unit: &str) -> UnitState {
@@ -834,8 +869,89 @@ Unattended-Upgrade::Automatic-Reboot "false";
         assert_eq!(apt.upgrade_timer, UnitState::Disabled);
         assert_eq!(
             tools.asked,
-            ["apt-config", APT_UPDATE_TIMER, APT_UPGRADE_TIMER]
+            [
+                "apt-config",
+                APT_UPDATE_TIMER,
+                APT_UPGRADE_TIMER,
+                "apt-list"
+            ]
         );
+    }
+
+    fn touched(root: &Path, relative: &str, ago: u64) {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(NOW - ago))
+            .unwrap();
+    }
+
+    #[test]
+    fn the_waiting_updates_are_counted_on_a_debian_like_system_only() {
+        let root = tree("pending");
+        touched(&root, "fs/var/lib/apt/periodic/update-success-stamp", 7200);
+        touched(&root, "fs/var/log/dpkg.log", 3 * 86_400);
+        let mut tools = FakeTools::new(None, &[]);
+        tools.listing = Some(
+            "Listing...\na/noble-security 2 amd64 [upgradable from: 1]\nb/noble-updates 2 all [upgradable from: 1]\n"
+                .into(),
+        );
+        let data = collect_from(Family::DebianLike, &sources(&root), &mut tools);
+        let pending = data.pending.unwrap();
+        let upgradable = pending.upgradable.unwrap();
+        assert_eq!((upgradable.total, upgradable.security), (2, 1));
+        assert_eq!(pending.lists_unix, Some(NOW - 7200));
+        assert_eq!(pending.last_run_unix, Some(NOW - 3 * 86_400));
+
+        // `apt` that does not answer is a count that is not known, not zero.
+        let mut silent = FakeTools::new(None, &[]);
+        let data = collect_from(Family::DebianLike, &sources(&root), &mut silent);
+        assert_eq!(data.pending.unwrap().upgradable, None);
+
+        // The other families are not asked, and have nothing to say.
+        for family in [Family::RedHatLike, Family::Unknown] {
+            let mut tools = FakeTools::new(None, &[]);
+            tools.listing = Some("Listing...\n".into());
+            let data = collect_from(family, &sources(&root), &mut tools);
+            assert_eq!(data.pending, None, "{family:?}");
+            assert!(!tools.asked.iter().any(|a| a == "apt-list"), "{family:?}");
+        }
+    }
+
+    #[test]
+    fn a_newer_kernel_is_looked_for_on_every_family() {
+        let root = tree("kernel");
+        let files = root.join("fs");
+        fs::create_dir_all(files.join("proc/sys/kernel")).unwrap();
+        fs::create_dir_all(files.join("boot")).unwrap();
+        fs::write(
+            files.join("proc/sys/kernel/osrelease"),
+            "6.8.0-45-generic\n",
+        )
+        .unwrap();
+        touch(&files, "boot/vmlinuz-6.8.0-45-generic");
+        touch(&files, "boot/vmlinuz-6.8.0-52-generic");
+        touched(&root, "fs/boot/initrd.img-6.8.0-52-generic", 2 * 86_400);
+        for family in [Family::DebianLike, Family::RedHatLike, Family::Unknown] {
+            let mut tools = FakeTools::new(None, &[]);
+            let data = collect_from(family, &sources(&root), &mut tools);
+            let kernel = data.kernel.unwrap_or_else(|| panic!("{family:?}"));
+            assert_eq!(kernel.running, "6.8.0-45-generic", "{family:?}");
+            assert_eq!(kernel.installed, "6.8.0-52-generic", "{family:?}");
+            assert_eq!(kernel.installed_unix, Some(NOW - 2 * 86_400), "{family:?}");
+        }
+        // The kernel that runs is the newest: nothing to say.
+        fs::remove_file(files.join("boot/vmlinuz-6.8.0-52-generic")).unwrap();
+        let data = collect_from(
+            Family::Unknown,
+            &sources(&root),
+            &mut FakeTools::new(None, &[]),
+        );
+        assert_eq!(data.kernel, None);
     }
 
     #[test]

@@ -478,7 +478,7 @@ What a profile does is deliberately narrow:
 | Profile | For | What it changes |
 |---|---|---|
 | `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence. Adds the `hpc` module: `HPC001` checks that the CPU frequency governor does not hold the CPUs back, `HPC002` that the locked-memory limit does not starve RDMA; `HPC003` and `HPC004` report how automatic NUMA balancing and SMT are set (information, never a warning) |
-| `server` | A server nobody sits at, which has to look after itself | Nothing is lowered: under `server` every other finding keeps the severity it has without a profile. Adds the `server` module: `SRV001` checks that security updates are installed automatically (`unattended-upgrades` with apt, `dnf-automatic` with dnf), `SRV002` that the logs survive a reboot, `SRV003` that no reboot has been waiting for days |
+| `server` | A server nobody sits at, which has to look after itself | Nothing is lowered: under `server` every other finding keeps the severity it has without a profile. Adds the `server` module: `SRV001` checks that security updates are installed automatically (`unattended-upgrades` with apt, `dnf-automatic` with dnf), `SRV002` that the logs survive a reboot, `SRV003` that no reboot has been waiting for days, `SRV004` how many package updates are waiting (apt), `SRV005` that no newer kernel is installed than the one that runs |
 
 One thing to keep in mind: under `hpc`, a node that is oversubscribed *by mistake* looks
 the same as one that is working. The profile removes the alarm, not the number.
@@ -586,6 +586,33 @@ reboot (each one writes the file again), so the reboot has been waiting for *at 
 long; the finding says so, and that a live-patched kernel already has its fixes. Systems
 without that file (Red Hat-like ones, for instance) get nothing from `SRV003`, which does
 not mean that nothing is waiting.
+
+**What `SRV004` says.** On a Debian-like system, `apt list --upgradable` lists the updates
+that are waiting, without root and without the network: it reads the package lists apt
+already has. `SRV004` counts them, and counts how many come from a repository whose name
+ends in `-security`. The number alone judges nothing: on a machine that upgrades every
+night, an update published this morning is normal. It is a Warning, at 80% confidence, in
+two cases only. The package lists have not been refreshed for a week
+(`/var/lib/apt/periodic/update-success-stamp`): the real number may be higher, and the
+daily refresh is not working. Or security updates are waiting while nothing has been
+installed or upgraded for 3 days (the later of `unattended-upgrades-stamp` and the date of
+`/var/log/dpkg.log`): the automatic job is not doing its work (`SRV001` says whether it is
+set up). Otherwise it is an Info with the numbers. If `apt` does not answer, the count is
+said to be unknown rather than zero. Red Hat-like systems get nothing from `SRV004`: `dnf`
+would have to refresh its metadata over the network to answer.
+
+**What `SRV005` says.** A new kernel only takes effect at the next boot. A Debian-like
+system says so with the reboot marker (`SRV003`, `KERN004`); the other families have none,
+so `SRV005` compares the kernel that runs (`/proc/sys/kernel/osrelease`) with the ones that
+are installed (`/boot/vmlinuz-*`, and `/usr/lib/modules/*/vmlinuz`). Versions are compared
+as numbers (`6.8.0-9` is older than `6.8.0-45`), and only among kernels of the same flavor
+(`generic` with `generic`; the `el9_4` or `fc40` of a Red Hat-like release is ignored): a
+machine that has a low-latency kernel installed beside the one it runs has not forgotten to
+reboot. Nothing is said before the newer kernel has been installed for 7 days (the date of
+its initial RAM disk); then it is a Warning, at 90% confidence, with the age and the steps.
+It is an Info when a live patch is loaded (`/sys/kernel/livepatch`), and an Info at 80%
+when the date of the installation cannot be told. It says nothing when the system has a
+reboot marker: that one has already said it.
 
 `linuxdoctor diff` has no `--profile`; it reads the profile each report recorded, and warns
 when the two differ.
@@ -784,7 +811,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1313 lib unit tests + 95 CLI unit tests + 210 integration tests
+cargo test               # 1359 lib unit tests + 95 CLI unit tests + 214 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

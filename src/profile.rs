@@ -81,8 +81,9 @@ impl Profile {
             Profile::Server => {
                 "a server nobody sits at, which has to look after itself: no severity is \
                  lowered, and the `server` module checks that security updates are installed \
-                 automatically, that the logs survive a reboot and that no reboot has been \
-                 waiting for days"
+                 automatically, that the logs survive a reboot, that no reboot has been \
+                 waiting for days, how many package updates are waiting and that no newer \
+                 kernel is installed than the one that runs"
             }
         }
     }

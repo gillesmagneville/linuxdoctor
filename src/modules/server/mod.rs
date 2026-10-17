@@ -14,11 +14,16 @@
 //!   ([`analyze`], [`collect`]).
 //! * `SRV002`: whether the logs survive a reboot ([`journal`]).
 //! * `SRV003`: whether a reboot has been waiting for days ([`reboot`]).
+//! * `SRV004`: the package updates that are waiting ([`pending`]).
+//! * `SRV005`: whether a newer kernel is installed than the one running
+//!   ([`kernel`]).
 
 pub mod age;
 pub mod analyze;
 pub mod collect;
 pub mod journal;
+pub mod kernel;
+pub mod pending;
 pub mod reboot;
 
 use crate::core::context::Context;

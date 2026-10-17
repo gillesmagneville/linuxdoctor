@@ -6,6 +6,8 @@ use crate::models::{Category, Confidence, Finding, Severity};
 use crate::modules::recommend::Steps;
 
 use super::journal::journal_finding;
+use super::kernel::kernel_finding;
+use super::pending::pending_finding;
 use super::reboot::reboot_finding;
 
 use super::collect::{
@@ -26,6 +28,20 @@ pub fn analyze(data: &ServerRawData, ctx: &Context) -> Vec<Finding> {
             .as_ref()
             .and_then(|pending| reboot_finding(pending, data.now_unix)),
     );
+    findings.extend(
+        data.pending
+            .as_ref()
+            .map(|pending| pending_finding(pending, data.now_unix)),
+    );
+    // A system that says "reboot required" has said it: SRV003 is the one that
+    // speaks of it, once the wait is long.
+    if data.reboot.is_none() {
+        findings.extend(
+            data.kernel
+                .as_ref()
+                .and_then(|kernel| kernel_finding(kernel, data.now_unix)),
+        );
+    }
     findings
 }
 
@@ -1850,6 +1866,8 @@ mod tests {
             updates,
             journal: JournalSetup::default(),
             reboot: None,
+            pending: None,
+            kernel: None,
             now_unix: 0,
         }
     }
@@ -1910,6 +1928,58 @@ mod tests {
             evidence(&findings[2], "reboot_required_age_days"),
             Some("7")
         );
+    }
+
+    #[test]
+    fn analyze_adds_the_waiting_updates_and_the_newer_kernel_after_the_others() {
+        use super::super::kernel::NewerKernel;
+        use super::super::pending::{PendingUpdates, Upgradable};
+
+        let ids = |data: &ServerRawData| -> Vec<String> {
+            analyze(data, &context(None))
+                .into_iter()
+                .map(|f| f.id)
+                .collect()
+        };
+        let mut data = raw(Updates::Unsupported);
+        data.now_unix = 100 * DAY;
+        data.pending = Some(PendingUpdates {
+            upgradable: Some(Upgradable {
+                total: 0,
+                security: 0,
+            }),
+            lists_unix: Some(100 * DAY),
+            last_run_unix: Some(100 * DAY),
+        });
+        // The count is always given, even when nothing is waiting.
+        assert_eq!(ids(&data), ["SRV001", "SRV002", "SRV004"]);
+
+        let newer = |ago: u64| NewerKernel {
+            running: "6.8.0-45-generic".into(),
+            installed: "6.8.0-52-generic".into(),
+            installed_unix: Some(100 * DAY - ago),
+            livepatch: false,
+        };
+        data.kernel = Some(newer(7 * DAY - 1));
+        assert_eq!(ids(&data), ["SRV001", "SRV002", "SRV004"], "a day short");
+        data.kernel = Some(newer(7 * DAY));
+        assert_eq!(ids(&data), ["SRV001", "SRV002", "SRV004", "SRV005"]);
+
+        // With a reboot waiting for a week, SRV003 is the one that speaks.
+        data.reboot = Some(PendingReboot {
+            modified_unix: Some(100 * DAY - STALE_AFTER_SECS),
+            packages: vec!["linux-base".into()],
+            more_packages: 0,
+        });
+        assert_eq!(ids(&data), ["SRV001", "SRV002", "SRV003", "SRV004"]);
+        // And with a reboot marker that is recent, the kernel is not said
+        // twice either: the system has said it already.
+        data.reboot = Some(PendingReboot {
+            modified_unix: Some(100 * DAY),
+            packages: Vec::new(),
+            more_packages: 0,
+        });
+        assert_eq!(ids(&data), ["SRV001", "SRV002", "SRV004"]);
     }
 
     #[test]

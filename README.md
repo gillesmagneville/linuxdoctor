@@ -478,7 +478,7 @@ What a profile does is deliberately narrow:
 | Profile | For | What it changes |
 |---|---|---|
 | `hpc` | A compute node, where fully used CPUs are the normal state | `CPU002` (load average pressure) and `CPU003` (sustained overload) are reported as Info at most; the load figures stay in the evidence. Adds the `hpc` module: `HPC001` checks that the CPU frequency governor does not hold the CPUs back, `HPC002` that the locked-memory limit does not starve RDMA; `HPC003` and `HPC004` report how automatic NUMA balancing and SMT are set (information, never a warning) |
-| `server` | A server nobody sits at, which has to look after itself | Nothing is lowered: under `server` every other finding keeps the severity it has without a profile. Adds the `server` module: `SRV001` checks that security updates are installed automatically (`unattended-upgrades` with apt, `dnf-automatic` with dnf) |
+| `server` | A server nobody sits at, which has to look after itself | Nothing is lowered: under `server` every other finding keeps the severity it has without a profile. Adds the `server` module: `SRV001` checks that security updates are installed automatically (`unattended-upgrades` with apt, `dnf-automatic` with dnf), `SRV002` that the logs survive a reboot, `SRV003` that no reboot has been waiting for days |
 
 One thing to keep in mind: under `hpc`, a node that is oversubscribed *by mistake* looks
 the same as one that is working. The profile removes the alarm, not the number.
@@ -561,6 +561,31 @@ the check cannot see; the finding says so. It tells whether the mechanism is set
 whether its last run worked. Another system (SUSE, Arch, Alpine...) gets an Info that says
 the check does not know its mechanism, and so does a timer that systemd does not answer
 about: neither is ever a Warning.
+
+**What `SRV002` says.** After a crash, a power cut or a reboot nobody asked for, the logs
+are what says what happened, and on a server nobody was watching they are the only
+witness. systemd's journal is on disk only if `Storage=` says so: `persistent`, or `auto`
+(the default) **and** a `/var/log/journal` directory; otherwise it is in memory and goes
+with the reboot. The check reads `Storage=` the way journald does (`journald.conf`, then the
+files of `journald.conf.d` sorted by name, a name in `/etc` hiding the same name below it,
+an invalid value ignored), the directory, and whether the classic log files
+(`/var/log/syslog`, `/var/log/messages`) have been written in the last 7 days. A journal on
+disk, or classic files that are written, is an Info. A journal in memory with no classic
+file is a Warning, at 80% confidence, with the commands to keep it: the machine may send
+its logs to another one, which the check cannot see, and the finding says so. It adds to
+`LOG008`, which judges the journal from its directory alone and ignores `Storage=`, so it
+does not see `Storage=volatile` over an existing directory. Without systemd's journal it is
+an Info that says it did not check.
+
+**What `SRV003` says.** On a Debian-like system, an update that only takes effect after a
+reboot writes `/var/run/reboot-required` (`KERN004` reports that it is there). `SRV003` adds
+for how long: nothing is said for the first week, which is a maintenance window to come;
+after that it is a Warning, at 90% confidence, with the age and the packages
+(`/var/run/reboot-required.pkgs`). The date is that of the *last* update that needed the
+reboot (each one writes the file again), so the reboot has been waiting for *at least* that
+long; the finding says so, and that a live-patched kernel already has its fixes. Systems
+without that file (Red Hat-like ones, for instance) get nothing from `SRV003`, which does
+not mean that nothing is waiting.
 
 `linuxdoctor diff` has no `--profile`; it reads the profile each report recorded, and warns
 when the two differ.
@@ -759,7 +784,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1271 lib unit tests + 95 CLI unit tests + 208 integration tests
+cargo test               # 1313 lib unit tests + 95 CLI unit tests + 210 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

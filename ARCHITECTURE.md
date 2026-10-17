@@ -98,6 +98,10 @@ linuxdoctor/
 │   │   ├── gpu/
 │   │   ├── hpc/              # added by --profile hpc, not in all_modules() — see "Profiles"
 │   │   ├── server/           # added by --profile server, not in all_modules() — see "Profiles"
+│   │   │   ├── collect.rs / analyze.rs   # SRV001 (updates), the tools and the raw data
+│   │   │   ├── journal.rs    # SRV002 (collect + finding)
+│   │   │   ├── reboot.rs     # SRV003 (collect + finding)
+│   │   │   └── age.rs        # "3 hours", "40 days"
 │   │   ├── storage/
 │   │   ├── systemd/
 │   │   ├── ntp/
@@ -1056,18 +1060,25 @@ alarm, not the number.
 load that is too high, a full disk or an exposed service is as wrong on a server as
 anywhere, and the general audit already judges it. The profile exists for its module,
 `server` (`src/modules/server/`, category `Security`), whose checks would be noise on a
-desktop — a desktop shows its updates to the person using it:
+desktop — a desktop shows its updates to the person using it, and its logs and its pending
+reboot are one person's to look after:
 
 | Finding | What it judges |
 |---|---|
 | `SRV001` Automatic Security Updates | Whether the system's own mechanism for installing security updates unattended is set up. It is chosen by the family of the distribution (`family_of(Context.distro)`): Debian-like reads **apt**, Red Hat-like reads **dnf**, anything else gets an Info that says the check was not made. **apt**: the settings come from `apt-config dump`, which merges `/etc/apt/apt.conf.d/` as apt does (keys compared without regard to case, because apt's are not), and are read as `/usr/lib/apt/apt.systemd.daily` reads them: `APT::Periodic::Enable` is a number and only 0 turns the jobs off; an interval is off when absent or exactly `0`, on when `always` or a number with an optional `s`, `m`, `h` or `d` suffix (the script compares the *text* with `0`, so `0d` runs every time and is "on" here too), invalid otherwise. Required: `/usr/bin/unattended-upgrade` exists; `Unattended-Upgrade` and `Update-Package-Lists` are on; at least one entry in `Unattended-Upgrade::Allowed-Origins::` or `Origins-Pattern::` (not reported while the package is missing: the file with the list is the package's own); `apt-daily.timer` (refreshes the lists) and `apt-daily-upgrade.timer` (runs `unattended-upgrade`) are enabled. **dnf**: dnf 5 if `/usr/bin/dnf5` exists, else dnf 4. Installed means `/usr/bin/dnf-automatic` (4) or the packaged defaults `/usr/share/dnf5/dnf5-plugins/automatic.conf` (5). `apply_updates` and `upgrade_type` are read from the `[commands]` section of `/etc/dnf/automatic.conf`, over the defaults with dnf 5; booleans as dnf reads them (`1`, `yes`, `true`, `enabled` and their opposites, in any case). It installs when `dnf-automatic-install.timer` is enabled (dnf 4 only; it ignores `apply_updates`), or when the timer that follows the file (`dnf-automatic.timer`, `dnf5-automatic.timer`) is enabled and `apply_updates` is true. The download-only and notify-only timers are named when they are the ones that are on. A timer is **enabled** when `systemctl is-enabled` says `enabled` or `enabled-runtime`: the persistent intent, readable without a running systemd. **Verdict**: everything in place is an Info (90%, `correlated`) with no recommendation; anything missing is a Warning (80%, `strong_indication`) that lists every fault and gives the numbered steps for them; a reading that failed (no `apt-config`, a timer systemd did not answer about) with no fault in what could be read is an Info (100%) that says what could not be told — a failed reading is never a Warning. It stops at 80% because the machine may be patched another way (a configuration-management tool, Landscape, Satellite, a maintenance window), which nothing here can see; the explanation says so. It does not say whether the last run worked. |
+| `SRV002` Logs Kept Across Reboots (`journal.rs`, category `Logs`) | Whether the logs are still there after a reboot. Reads files only, under a root (`/` on a real machine, a temporary tree in the tests). **`Storage=`** as journald has it: the main file is the first that exists of `/etc/systemd/journald.conf`, `/run/systemd/…`, `/usr/local/lib/systemd/…`, `/usr/lib/systemd/…`; the `journald.conf.d/*.conf` of the same four directories apply after it, sorted by file name whatever the directory, a name in a directory of higher priority hiding the same name below it (a link to `/dev/null` hides it too); the last *valid* assignment of the `[Journal]` section wins (the four words are exact, as journald compares them; an invalid value is ignored, so what was set before stays). **On disk** means `persistent`, or `auto`/unset with `/var/log/journal` present; `volatile` and `none` never, whatever the directory holds. **Classic logs** are `/var/log/syslog` and `/var/log/messages` when regular, non-empty and written in the last 7 days. **Verdict**: no journald (none of its directories) is an Info (100%) that says nothing was checked; on disk, or classic logs written, is an Info (90%, `correlated`); otherwise a Warning (80%, `strong_indication`) with the numbered steps (change `Storage=` in the file that sets `volatile`/`none` — `sudoedit` only if the path is safe in a command —, create `/var/log/journal` with `systemd-tmpfiles`, restart journald, check with `--list-boots`). It stops at 80% because the logs may be forwarded elsewhere. The logs module (`LOG008`) judges the journal from its directory alone; this check is the one that sees `Storage=`. |
+| `SRV003` Reboot Left Pending (`reboot.rs`, category `Kernel`) | How long a reboot has been waiting. The marker is `/var/run/reboot-required` (and `….pkgs`, each package once, at most 10 named and the rest counted, names cleaned) of Debian-like systems; `/run` is emptied at boot, so its date is no older than the boot, and every update that needs a reboot writes it again, so its date is that of the *last* one: the finding says "at least". Nothing before 7 days (a maintenance window to come); from then a Warning (90%, `correlated`) with the age in days and the packages, the three steps (see, reboot, check), and a note that a live-patched kernel has its fixes. No finding without the marker (`KERN004` already says that other families have none), and none when its date is unknown or in the future. |
 
 The tools are behind a trait (`collect::Tools`) so that `collect_from` is tested with fake
 answers, and the real ones are two `ToolSession`s (`apt-config`, `systemctl`): one hung
 `systemctl` costs one time limit, not one per unit. `systemctl is-enabled` answers
 `disabled` with exit status 1, so the module uses `ToolSession::run_ignoring_status`, which
 returns the output whatever the status. The end-to-end test (`tests/server_module.rs`) puts
-fake `apt-config` and `systemctl` first on `PATH`.
+fake `apt-config` and `systemctl` first on `PATH`. `SRV002` and `SRV003` read files, under
+the `Sources::root` that `collect_from` is given, and take their ages from `Sources::now_unix`
+(kept in `ServerRawData::now_unix`, so that `analyze` stays a pure function): the unit tests
+build fake trees with files dated by `File::set_modified`; the end-to-end tests can only
+check the findings against what the host itself says, since they cannot move the root.
 
 ### Modules a profile adds
 

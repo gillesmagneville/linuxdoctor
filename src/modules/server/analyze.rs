@@ -5,6 +5,9 @@ use crate::core::text::clean;
 use crate::models::{Category, Confidence, Finding, Severity};
 use crate::modules::recommend::Steps;
 
+use super::journal::journal_finding;
+use super::reboot::reboot_finding;
+
 use super::collect::{
     AptPeriodic, AptSetup, DnfConfig, DnfSetup, DnfVersion, ServerRawData, Timer, UnitState,
     Updates, APT_UPDATE_TIMER, APT_UPGRADE_TIMER, DNF4_CONFIG_TIMER, DNF4_DOWNLOAD_TIMER,
@@ -14,7 +17,16 @@ use super::collect::{
 /// Pure function: RawData -> Findings. No I/O -- see ARCHITECTURE.md
 /// "Testing Strategy".
 pub fn analyze(data: &ServerRawData, ctx: &Context) -> Vec<Finding> {
-    vec![updates_finding(&data.updates, ctx.distro.as_deref())]
+    let mut findings = vec![
+        updates_finding(&data.updates, ctx.distro.as_deref()),
+        journal_finding(&data.journal),
+    ];
+    findings.extend(
+        data.reboot
+            .as_ref()
+            .and_then(|pending| reboot_finding(pending, data.now_unix)),
+    );
+    findings
 }
 
 // ---------------------------------------------------------------------------
@@ -728,6 +740,9 @@ fn unsupported_finding(distro: Option<&str>) -> Finding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::server::age::DAY;
+    use crate::modules::server::journal::JournalSetup;
+    use crate::modules::server::reboot::{PendingReboot, STALE_AFTER_SECS};
 
     fn periodic(
         enable: Option<&str>,
@@ -1830,32 +1845,70 @@ mod tests {
         );
     }
 
+    fn raw(updates: Updates) -> ServerRawData {
+        ServerRawData {
+            updates,
+            journal: JournalSetup::default(),
+            reboot: None,
+            now_unix: 0,
+        }
+    }
+
     #[test]
-    fn analyze_reports_the_one_check_with_the_system_it_found() {
-        let data = ServerRawData {
-            updates: Updates::Apt(working_apt()),
-        };
+    fn analyze_reports_the_update_check_with_the_system_it_found() {
+        let data = raw(Updates::Apt(working_apt()));
         let findings = analyze(&data, &context(Some("Ubuntu 24.04 LTS")));
-        assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].id, "SRV001");
         assert_eq!(findings[0].severity, Severity::Info);
         assert_eq!(evidence(&findings[0], "package_manager"), Some("apt"));
 
-        let data = ServerRawData {
-            updates: Updates::Dnf(dnf5(Some("yes"), Enabled)),
-        };
+        let data = raw(Updates::Dnf(dnf5(Some("yes"), Enabled)));
         let findings = analyze(&data, &context(Some("Fedora Linux 42")));
         assert_eq!(evidence(&findings[0], "package_manager"), Some("dnf"));
         assert_eq!(evidence(&findings[0], "dnf_version"), Some("5"));
 
-        let data = ServerRawData {
-            updates: Updates::Unsupported,
-        };
+        let data = raw(Updates::Unsupported);
         let findings = analyze(&data, &context(Some("Alpine Linux v3.20")));
         assert!(
             findings[0].explanation.contains("`Alpine Linux v3.20`"),
             "{}",
             findings[0].explanation
+        );
+    }
+
+    #[test]
+    fn analyze_reports_the_checks_in_order_and_the_reboot_only_when_it_is_stale() {
+        let ids = |data: &ServerRawData| -> Vec<String> {
+            analyze(data, &context(None))
+                .into_iter()
+                .map(|f| f.id)
+                .collect()
+        };
+        let mut data = raw(Updates::Unsupported);
+        assert_eq!(ids(&data), ["SRV001", "SRV002"]);
+
+        let pending = |modified: u64| PendingReboot {
+            modified_unix: Some(modified),
+            packages: vec!["linux-base".into()],
+            more_packages: 0,
+        };
+        data.now_unix = 100 * DAY;
+        data.reboot = Some(pending(100 * DAY - STALE_AFTER_SECS + 1));
+        assert_eq!(ids(&data), ["SRV001", "SRV002"], "a day short of a week");
+        data.reboot = Some(pending(100 * DAY - STALE_AFTER_SECS));
+        assert_eq!(ids(&data), ["SRV001", "SRV002", "SRV003"]);
+
+        // The journal's finding is the journal's.
+        data.journal = JournalSetup {
+            journald: true,
+            directory: true,
+            ..JournalSetup::default()
+        };
+        let findings = analyze(&data, &context(None));
+        assert_eq!(evidence(&findings[1], "var_log_journal"), Some("present"));
+        assert_eq!(
+            evidence(&findings[2], "reboot_required_age_days"),
+            Some("7")
         );
     }
 

@@ -16,7 +16,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 /// A throwaway configuration directory, and fake tools that go first on PATH
 /// so that a full audit cannot hang on a missing disk or container tool.
@@ -155,12 +155,23 @@ fn evidence(finding: &serde_json::Value, key: &str) -> Option<String> {
         .find_map(|pair| (pair[0] == key).then(|| pair[1].as_str().expect("text").to_string()))
 }
 
-/// The one finding of the module.
+/// The findings of the module, in the order of the report.
+fn findings(report: &serde_json::Value) -> Vec<serde_json::Value> {
+    report["results"][0]["findings"].as_array().unwrap().clone()
+}
+
+/// The finding of the module with this id, which there is exactly one of.
+fn finding_of(report: &serde_json::Value, id: &str) -> serde_json::Value {
+    let all = findings(report);
+    let mut with_id = all.iter().filter(|f| f["id"] == id);
+    let found = with_id.next().unwrap_or_else(|| panic!("no {id}: {all:?}"));
+    assert!(with_id.next().is_none(), "{id} twice: {all:?}");
+    found.clone()
+}
+
+/// The finding about the automatic updates.
 fn srv001(report: &serde_json::Value) -> serde_json::Value {
-    let findings = report["results"][0]["findings"].as_array().unwrap();
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0]["id"], "SRV001");
-    findings[0].clone()
+    finding_of(report, "SRV001")
 }
 
 const NEEDS_PROFILE: &str = "the module 'server' is added by the server profile: \
@@ -260,7 +271,7 @@ fn a_full_audit_under_the_profile_ends_with_the_server_module_and_not_the_hpc_on
 }
 
 #[test]
-fn the_module_reports_one_security_finding_whatever_the_host() {
+fn the_module_reports_the_update_finding_whatever_the_host() {
     let sandbox = Sandbox::new("finding");
     let report = sandbox.module(&[]);
     assert_eq!(module_ids(&report), ["server"]);
@@ -738,4 +749,108 @@ fn a_warning_does_not_fail_the_default_gate_but_fails_it_when_asked() {
     );
     let o = sandbox.run(&args(&["--fail-on", "warning"]));
     assert_eq!(o.status.code(), Some(1), "{}", stdout(&o));
+}
+
+// ----- SRV002 and SRV003: the logs and the reboot marker ---------------------------
+//
+// What they read -- `/var/log`, `/run` -- belongs to the host, and a test can
+// neither plant files there nor point the binary somewhere else. So these
+// check the findings against what the host itself says; what each file would
+// make the module say is tested on fake trees in the unit tests.
+
+#[test]
+fn the_checks_come_in_order_and_the_logs_follow_the_host() {
+    let sandbox = Sandbox::new("logs");
+    let report = sandbox.module(&[]);
+    let ids: Vec<String> = findings(&report)
+        .iter()
+        .map(|f| f["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(&ids[..2], ["SRV001", "SRV002"], "{ids:?}");
+    assert!(ids.len() <= 3, "{ids:?}");
+
+    let logs = finding_of(&report, "SRV002");
+    assert_eq!(logs["title"], "Logs Kept Across Reboots");
+    assert_eq!(logs["category"], "logs");
+    let journald = ["var/log/journal", "run/log/journal", "run/systemd/journal"]
+        .iter()
+        .any(|dir| Path::new("/").join(dir).is_dir());
+    if !journald {
+        assert_eq!(evidence(&logs, "journald").as_deref(), Some("not found"));
+        assert_eq!(logs["severity"], "info");
+        assert_eq!(logs["confidence"]["percent"], 100);
+        return;
+    }
+    assert_eq!(
+        evidence(&logs, "var_log_journal").as_deref(),
+        Some(if Path::new("/var/log/journal").is_dir() {
+            "present"
+        } else {
+            "absent"
+        }),
+        "{logs}"
+    );
+    let setting = evidence(&logs, "journal_storage").expect("always reported");
+    assert!(
+        ["auto", "persistent", "volatile", "none", "not set"].contains(&setting.as_str()),
+        "{logs}"
+    );
+    // Never worse than a warning, and a warning is never certain: the logs
+    // may be sent somewhere else, which this cannot see.
+    match logs["severity"].as_str().unwrap() {
+        "info" => assert!(logs["recommendation"].is_null(), "{logs}"),
+        "warning" => {
+            assert_eq!(logs["confidence"]["percent"], 80, "{logs}");
+            let steps = logs["recommendation"].as_str().expect("steps");
+            assert!(steps.contains("sudo mkdir -p /var/log/journal"), "{steps}");
+            assert_eq!(
+                evidence(&logs, "syslog_files").as_deref(),
+                Some("none written lately"),
+                "a warning means no classic log either: {logs}"
+            );
+        }
+        other => panic!("{other}: {logs}"),
+    }
+}
+
+#[test]
+fn a_waiting_reboot_is_reported_when_it_has_waited_a_week_and_not_before() {
+    let sandbox = Sandbox::new("reboot");
+    let report = sandbox.module(&[]);
+    let reboot: Vec<_> = findings(&report)
+        .into_iter()
+        .filter(|f| f["id"] == "SRV003")
+        .collect();
+    let age_secs = fs::metadata("/var/run/reboot-required")
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(|t| {
+            SystemTime::now()
+                .duration_since(t)
+                .unwrap_or_default()
+                .as_secs()
+        });
+    const WEEK: u64 = 7 * 24 * 3600;
+    match age_secs {
+        // Far enough from the limit that the time the audit took does not matter.
+        Some(age) if age > WEEK + 600 => {
+            assert_eq!(reboot.len(), 1, "{reboot:?}");
+            let f = &reboot[0];
+            assert_eq!(f["title"], "Reboot Left Pending");
+            assert_eq!(f["severity"], "warning");
+            assert_eq!(f["confidence"]["percent"], 90);
+            let days: u64 = evidence(f, "reboot_required_age_days")
+                .expect("age")
+                .parse()
+                .unwrap();
+            assert!(days >= 7 && days <= age / 86400 + 1, "{days} {age}");
+            assert!(f["recommendation"]
+                .as_str()
+                .unwrap()
+                .contains("sudo reboot"));
+        }
+        Some(age) if age + 600 < WEEK => assert!(reboot.is_empty(), "{reboot:?}"),
+        Some(_) => {}
+        None => assert!(reboot.is_empty(), "no marker, no finding: {reboot:?}"),
+    }
 }

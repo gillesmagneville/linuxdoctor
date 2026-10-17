@@ -9,6 +9,63 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **`--profile server` : deux vérifications de plus, `SRV002` (les journaux survivent-ils
+  à un redémarrage ?) et `SRV003` (un redémarrage attend-il depuis des jours ?).** Le module
+  `server` en a maintenant trois, dans cet ordre ; `SRV003` n'apparaît que s'il y a quelque
+  chose à dire. Comme `SRV001`, elles n'existent qu'avec le profil, et ne baissent aucune
+  sévérité.
+  - **`SRV002` — journaux conservés après un redémarrage.** Après un plantage, une coupure de
+    courant ou un redémarrage que personne n'a demandé, les journaux sont le seul témoin de ce
+    qui s'est passé, et sur un serveur que personne ne regardait c'est le seul. Le journal de
+    systemd n'est sur disque que si `Storage=` le veut : `persistent`, ou `auto` (le défaut)
+    **avec** un dossier `/var/log/journal` ; sinon il est en mémoire et part avec le
+    redémarrage. La vérification lit `Storage=` comme journald le lit : `journald.conf`
+    (le premier qui existe de `/etc`, `/run`, `/usr/local/lib`, `/usr/lib`), puis les fichiers
+    de `journald.conf.d` des mêmes dossiers, triés par nom quel que soit le dossier, un nom
+    dans un dossier plus prioritaire cachant le même nom plus bas (un lien vers `/dev/null`
+    aussi), la dernière valeur **valide** gagnant (les quatre mots sont exacts ; une valeur
+    invalide est ignorée, donc ce qui précédait reste). Elle regarde aussi le dossier, et si
+    les journaux classiques (`/var/log/syslog`, `/var/log/messages`) ont été écrits dans les
+    7 derniers jours.
+    - Journal sur disque, ou journaux classiques écrits : **Info** (90 %). Journal en mémoire
+      et aucun journal classique : **Avertissement à 80 %**, avec les commandes pour le
+      garder (changer `Storage=` dans le fichier qui dit `volatile` ou `none`, créer
+      `/var/log/journal` avec `systemd-tmpfiles`, relancer journald, vérifier avec
+      `--list-boots`). Pas plus de 80 % : la machine peut envoyer ses journaux ailleurs
+      (collecteur syslog ou journal-remote, Promtail, Filebeat), ce que rien ici ne voit, et
+      le texte le dit. Sans journal systemd : une Info qui dit que rien n'a été vérifié.
+    - **Ce que `LOG008` ne fait pas** : il juge le journal d'après son seul dossier et ignore
+      `Storage=`, donc il ne voit pas `Storage=volatile` par-dessus un dossier qui existe.
+  - **`SRV003` — redémarrage laissé en attente.** Sur Debian et dérivées, une mise à jour qui
+    ne prend effet qu'après un redémarrage écrit `/var/run/reboot-required` (`KERN004` dit
+    qu'il est là). `SRV003` ajoute depuis combien de temps : rien pendant la première
+    semaine (une fenêtre de maintenance à venir) ; ensuite un **Avertissement à 90 %**, avec
+    l'âge en jours et les paquets de `/var/run/reboot-required.pkgs` (chacun une fois, dix
+    nommés au plus, les autres comptés). La date est celle de la *dernière* mise à jour qui a
+    demandé le redémarrage (chacune réécrit le fichier) : il attend **au moins** autant, et le
+    texte le dit, ainsi qu'un noyau patché à chaud a déjà ses correctifs. Rien sans le
+    marqueur (les autres familles n'en ont pas, `KERN004` le dit déjà), ni quand sa date est
+    inconnue ou dans le futur.
+  - Tout se lit dans des fichiers (aucun outil lancé), sous une racine que les tests
+    remplacent par un arbre factice, et l'âge vient d'une horloge passée avec les données :
+    `analyze` reste une fonction pure.
+  - **Vérifié** avec le vrai binaire dans le conteneur de développement : journal présent
+    (Info) ; dossier retiré et aucun journal classique (Avertissement avec les commandes) ;
+    marqueur vieux de 12 jours avec trois paquets dont un en double (`SRV003` avec l'âge et
+    deux paquets, `KERN004` inchangé), puis tout remis. Les tests de bout en bout ne peuvent
+    pas déplacer la racine : ils comparent les constatations à ce que la machine dit
+    elle-même. **Pas encore vu sur une machine réelle avec un journal en mémoire ni avec un
+    redémarrage en attente depuis des semaines** : à regarder dans ton premier rapport.
+  - Tests : 44 nouveaux (la lecture de `Storage=` et des fichiers sur de faux arbres :
+    ordre, masquage, liens vers `/dev/null`, fichier énorme, noms hostiles, dates aux
+    limites ; chaque verdict et chaque phrase ; les paquets ; l'ordre des constatations dans
+    le module ; et deux tests de bout en bout). Ils échouent quand on casse le code : 146
+    casseurs essayés, 146 détectés ; cinq avaient survécu à la première série (un chemin trop
+    long pas coupé, les paquets au-delà de dix, l'horloge de lecture, une racine fausse) et
+    les tests ont été resserrés. Un contrôle de type de fichier inutile a été retiré en route.
+
 ## [1.10.0] - 2026-10-17
 
 Les profils de machine arrivent : `--profile hpc` (quatre vérifications propres aux

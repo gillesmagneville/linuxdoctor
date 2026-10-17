@@ -4,6 +4,7 @@ use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
 
 use super::collect::{NetworkInterface, NetworkRawData};
+use super::conntrack::conntrack_finding;
 
 /// Minimum total packets (rx+tx) before error/drop *rates* are evaluated.
 /// Below this, a handful of startup-time drops can produce a misleading
@@ -23,6 +24,7 @@ pub fn analyze(data: &NetworkRawData, _ctx: &Context) -> Vec<Finding> {
 
     findings.push(default_gateway_finding(data));
     findings.push(dns_configuration_finding(data));
+    findings.extend(data.conntrack.as_ref().and_then(conntrack_finding));
 
     findings
 }
@@ -356,10 +358,40 @@ mod tests {
             interfaces: vec![iface("eth0", 5000, 0)],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         assert!(findings.iter().any(|f| f.id == "NET001"));
         assert!(findings.iter().any(|f| f.id == "NET002"));
+    }
+
+    #[test]
+    fn the_connection_table_comes_last_and_only_when_there_is_one() {
+        use crate::modules::saturation::Fill;
+
+        let mut data = NetworkRawData {
+            interfaces: vec![iface("eth0", 5000, 0)],
+            route: route(true),
+            dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
+        };
+        let ids = |data: &NetworkRawData| -> Vec<String> {
+            analyze(data, &ctx()).into_iter().map(|f| f.id).collect()
+        };
+        assert_eq!(ids(&data), ["NET001", "NET002", "NET003", "NET004"]);
+        data.conntrack = Some(Fill {
+            used: 900,
+            limit: 1000,
+        });
+        assert_eq!(
+            ids(&data),
+            ["NET001", "NET002", "NET003", "NET004", "NET005"]
+        );
+        let findings = analyze(&data, &ctx());
+        assert_eq!(findings[4].severity, Severity::Warning);
+        // A maximum of zero is not a table to judge.
+        data.conntrack = Some(Fill { used: 5, limit: 0 });
+        assert_eq!(ids(&data), ["NET001", "NET002", "NET003", "NET004"]);
     }
 
     #[test]
@@ -373,6 +405,7 @@ mod tests {
             interfaces: vec![low_traffic],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
@@ -386,6 +419,7 @@ mod tests {
             interfaces: vec![iface("eth0", 5000, 0)],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
@@ -399,6 +433,7 @@ mod tests {
             interfaces: vec![iface("eth0", 5000, 10)],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
@@ -412,6 +447,7 @@ mod tests {
             interfaces: vec![iface("eth0", 99, 13)],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
@@ -425,6 +461,7 @@ mod tests {
             interfaces: vec![],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net003 = findings.iter().find(|f| f.id == "NET003").unwrap();
@@ -437,6 +474,7 @@ mod tests {
             interfaces: vec![],
             route: route(false),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net003 = findings.iter().find(|f| f.id == "NET003").unwrap();
@@ -449,6 +487,7 @@ mod tests {
             interfaces: vec![],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net004 = findings.iter().find(|f| f.id == "NET004").unwrap();
@@ -461,6 +500,7 @@ mod tests {
             interfaces: vec![],
             route: route(true),
             dns_servers: vec![],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net004 = findings.iter().find(|f| f.id == "NET004").unwrap();
@@ -474,6 +514,7 @@ mod tests {
             interfaces: vec![iface("eth0", 99, 13)],
             route: route(false),
             dns_servers: vec![],
+            ..Default::default()
         };
         for f in analyze(&data, &ctx()) {
             assert!(f.confidence.percent >= 60);
@@ -488,6 +529,7 @@ mod tests {
             interfaces: vec![sriov_iface],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
@@ -510,6 +552,7 @@ mod tests {
             interfaces: vec![plain_iface],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
@@ -525,6 +568,7 @@ mod tests {
             interfaces: vec![plain_iface],
             route: route(true),
             dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();

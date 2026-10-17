@@ -47,6 +47,7 @@ fn healthy_system_fixture_produces_only_info_findings() {
             default_route_interface: Some("eth0".to_string()),
         },
         dns_servers: vec!["8.8.8.8".to_string()],
+        ..Default::default()
     };
 
     let findings = analyze(&data, &test_context());
@@ -86,6 +87,7 @@ fn real_sandbox_drop_rate_fixture_produces_error() {
             default_route_interface: Some("eth0".to_string()),
         },
         dns_servers: vec!["8.8.8.8".to_string()],
+        ..Default::default()
     };
 
     let findings = analyze(&data, &test_context());
@@ -103,6 +105,7 @@ fn missing_gateway_and_dns_fixture_flags_both() {
         interfaces: vec![],
         route: RouteInfo::default(),
         dns_servers: vec![],
+        ..Default::default()
     };
 
     let findings = analyze(&data, &test_context());
@@ -143,6 +146,7 @@ fn sriov_interface_with_high_pf_rx_dropped_is_not_a_confident_error() {
             default_route_interface: Some("enp6s0".to_string()),
         },
         dns_servers: vec!["8.8.8.8".to_string()],
+        ..Default::default()
     };
 
     let findings = analyze(&data, &test_context());
@@ -159,4 +163,77 @@ fn sriov_interface_with_high_pf_rx_dropped_is_not_a_confident_error() {
         .as_ref()
         .unwrap()
         .contains("VF interfaces"));
+}
+
+/// A connection table that is nearly full, from the figures the kernel
+/// prints, through the whole analysis; and no table, no finding.
+#[test]
+fn a_full_connection_table_is_found_and_a_missing_one_is_not() {
+    use linuxdoctor::modules::saturation::{parse_number, Fill};
+
+    let data = NetworkRawData {
+        interfaces: vec![healthy_iface("eth0")],
+        conntrack: Some(Fill {
+            used: parse_number("253000\n").unwrap(),
+            limit: parse_number("262144\n").unwrap(),
+        }),
+        ..Default::default()
+    };
+    let findings = analyze(&data, &test_context());
+    let net005 = findings.iter().find(|f| f.id == "NET005").unwrap();
+    assert_eq!(net005.severity, Severity::Error);
+    assert!(net005
+        .evidence
+        .iter()
+        .any(|(k, v)| k == "usage_percent" && v == "96"));
+    assert!(net005.recommendation.is_some());
+
+    let without = NetworkRawData {
+        conntrack: None,
+        ..data
+    };
+    assert!(analyze(&without, &test_context())
+        .iter()
+        .all(|f| f.id != "NET005"));
+}
+
+/// The real binary: the table exists only where `nf_conntrack` is loaded,
+/// so what is checked is that the finding agrees with `/proc`.
+#[test]
+fn the_real_binary_reports_the_connection_table_exactly_when_the_host_has_one() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))
+        .args([
+            "--no-config",
+            "audit",
+            "--modules",
+            "network",
+            "--fail-on",
+            "never",
+            "--output",
+            "json",
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("linuxdoctor binary should start");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let findings = report["results"][0]["findings"].as_array().unwrap();
+    let net005 = findings.iter().find(|f| f["id"] == "NET005");
+
+    let read = |name: &str| {
+        std::fs::read_to_string(format!("/proc/sys/net/netfilter/{name}"))
+            .ok()
+            .and_then(|text| text.trim().parse::<u64>().ok())
+    };
+    let table = read("nf_conntrack_count").zip(read("nf_conntrack_max"));
+    let expected = table.filter(|&(_, max)| max > 0);
+    assert_eq!(net005.is_some(), expected.is_some(), "{table:?}");
+    if let (Some(finding), Some((_, max))) = (net005, expected) {
+        let reported = finding["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|pair| (pair[0] == "conntrack_max").then(|| pair[1].as_str().unwrap()))
+            .unwrap();
+        assert_eq!(reported, max.to_string(), "{finding}");
+    }
 }

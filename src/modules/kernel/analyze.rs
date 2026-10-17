@@ -4,18 +4,21 @@ use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
 
 use super::collect::{active_taint_bits, KernelRawData};
+use super::limits;
 
 /// Pure function: RawData -> Findings. No I/O — see ARCHITECTURE.md
 /// "Testing Strategy".
 pub fn analyze(data: &KernelRawData, _ctx: &Context) -> Vec<Finding> {
-    vec![
+    let mut findings = vec![
         taint_status_finding(data),
         oom_kill_finding(data),
         build_info_finding(data),
         reboot_required_finding(data),
         aslr_finding(data),
         boot_parameters_finding(data),
-    ]
+    ];
+    findings.extend(limits::findings(&data.limits));
+    findings
 }
 
 /// KERN001 — always reported, a single finding covering every active
@@ -388,6 +391,7 @@ mod tests {
             reboot_required: RebootRequiredInfo::default(),
             aslr_mode: Some(2),
             notable_cmdline_flags: vec![],
+            ..Default::default()
         }
     }
 
@@ -406,6 +410,42 @@ mod tests {
         assert!(findings.iter().any(|f| f.id == "KERN004"));
         assert!(findings.iter().any(|f| f.id == "KERN005"));
         assert!(findings.iter().any(|f| f.id == "KERN006"));
+    }
+
+    #[test]
+    fn the_tables_come_after_the_other_checks_and_only_when_they_were_read() {
+        use crate::modules::kernel::limits::{Limits, Tasks};
+        use crate::modules::saturation::Fill;
+
+        let ids = |data: &KernelRawData| -> Vec<String> {
+            analyze(data, &ctx()).into_iter().map(|f| f.id).collect()
+        };
+        let mut with = data(0, Some(0));
+        assert_eq!(
+            ids(&with),
+            ["KERN001", "KERN002", "KERN003", "KERN004", "KERN005", "KERN006"]
+        );
+        with.limits = Limits {
+            files: Some(Fill {
+                used: 90,
+                limit: 100,
+            }),
+            tasks: Some(Tasks {
+                count: 10,
+                pid_max: Some(1000),
+                threads_max: None,
+            }),
+        };
+        assert_eq!(
+            ids(&with),
+            [
+                "KERN001", "KERN002", "KERN003", "KERN004", "KERN005", "KERN006", "KERN007",
+                "KERN008"
+            ]
+        );
+        let findings = analyze(&with, &ctx());
+        assert_eq!(findings[6].severity, Severity::Warning);
+        assert_eq!(findings[7].severity, Severity::Info);
     }
 
     #[test]

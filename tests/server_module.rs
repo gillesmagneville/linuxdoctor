@@ -395,7 +395,8 @@ fn the_manual_page_and_the_completions_know_the_profile_and_its_module() {
 fn the_profile_lowers_no_finding_of_the_other_modules() {
     // `server` has no rules: the same modules give the same findings with
     // and without it. (Modules whose figures move from one run to the next
-    // are left out.)
+    // are left out, and so are the figures of the two kernel tables, which
+    // are counters of the machine: their severity is still compared.)
     let sandbox = Sandbox::new("lowers-nothing");
     let run = |extra: &[&str]| {
         let mut args = vec![
@@ -415,11 +416,21 @@ fn the_profile_lowers_no_finding_of_the_other_modules() {
             .iter()
             .flat_map(|r| r["findings"].as_array().unwrap().clone())
             .map(|f| {
+                let id = f["id"].as_str().unwrap().to_string();
+                let counter = id == "KERN007" || id == "KERN008";
                 (
-                    f["id"].as_str().unwrap().to_string(),
+                    id,
                     f["severity"].as_str().unwrap().to_string(),
-                    f["explanation"].as_str().unwrap().to_string(),
-                    f["evidence"].clone(),
+                    if counter {
+                        String::new()
+                    } else {
+                        f["explanation"].as_str().unwrap().to_string()
+                    },
+                    if counter {
+                        serde_json::Value::Null
+                    } else {
+                        f["evidence"].clone()
+                    },
                 )
             })
             .collect::<Vec<_>>()

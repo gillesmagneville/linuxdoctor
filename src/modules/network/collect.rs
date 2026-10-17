@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use crate::core::error::ModuleError;
+use crate::modules::saturation::Fill;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetworkInterface {
@@ -41,11 +42,14 @@ pub struct RouteInfo {
     pub default_route_interface: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct NetworkRawData {
     pub interfaces: Vec<NetworkInterface>,
     pub route: RouteInfo,
     pub dns_servers: Vec<String>,
+    /// The firewall's table of tracked connections; `None` when the kernel
+    /// has none (`nf_conntrack` is not loaded).
+    pub conntrack: Option<Fill>,
 }
 
 /// Interface name prefixes that are never a real network path worth
@@ -137,6 +141,7 @@ pub fn collect() -> Result<NetworkRawData, ModuleError> {
         interfaces,
         route,
         dns_servers,
+        conntrack: super::conntrack::read(std::path::Path::new("/")),
     })
 }
 

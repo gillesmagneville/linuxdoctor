@@ -92,6 +92,8 @@ linuxdoctor/
 │   │   ├── recommend.rs      # shared by modules: the numbered `Steps` builder, sysctl
 │   │   │                     # command snippets and the distribution family (`Family`,
 │   │   │                     # `family_of`) used to pick `apt` or `dnf` commands
+│   │   ├── saturation.rs     # shared: "how full is this kernel table" (80% / 95%) — see
+│   │   │                     # "Tables of the kernel that fill up" below
 │   │   ├── memory/           # richest module: see "Memory module layout" below
 │   │   ├── cpu/
 │   │   ├── numa/
@@ -107,10 +109,10 @@ linuxdoctor/
 │   │   ├── storage/          # see "Storage module layout" below
 │   │   ├── systemd/
 │   │   ├── ntp/
-│   │   ├── network/
+│   │   ├── network/          # + conntrack.rs (NET005, see "Tables of the kernel that fill up")
 │   │   ├── security/         # see "Security module layout" below
 │   │   ├── logs/             # see "Logs module layout" below
-│   │   ├── kernel/
+│   │   ├── kernel/           # + limits.rs (KERN007, KERN008, see "Tables of the kernel that fill up")
 │   │   ├── firmware/
 │   │   └── virtualization/
 │   │       # each module folder has the same shape:
@@ -1329,6 +1331,44 @@ server built from fixtures, and on the real binary against a fake `journalctl`):
   you, cut access, look for what an intruder leaves, then block). Commands are only
   suggested, never run; the module never rotates, vacuums or truncates anything.
 - Out-of-memory kills are the Kernel module's (`KERN` findings) and are not repeated here.
+
+## Tables of the kernel that fill up
+
+The kernel has a few tables of fixed size. Nothing shows while they have room; when one is
+full the next program that asks for an entry is refused, and what fails (a login, a service
+restarting itself, a new connection) rarely points back to the table. Three findings judge
+them, with one shared rule (`modules/saturation.rs`) so that they cannot drift apart:
+
+| Finding | Reads | Limit |
+|---|---|---|
+| `KERN007` File Handle Table (`kernel/limits.rs`) | `proc/sys/fs/file-nr`: the first number (handles allocated) and the third (`fs.file-max`); the second is always 0 on a kernel since 2.6 and is not read | `fs.file-max` |
+| `KERN008` Process and Thread Table (`kernel/limits.rs`) | the second number of the fourth field of `proc/loadavg` (`running/total`: every process **and thread**, since each has its own identifier) | the lower of `kernel.pid_max` and `kernel.threads-max`, `pid_max` when equal; a limit of 0 is ignored, and with neither known there is no finding |
+| `NET005` Connection Tracking Table (`network/conntrack.rs`) | `proc/sys/net/netfilter/nf_conntrack_count` and `…_max`. Both must be readable: with `nf_conntrack` not loaded there is no table, so no finding | `net.netfilter.nf_conntrack_max` |
+
+**The rule.** `Fill { used, limit }`; `level()` compares `used × 100` with `limit × 80` and
+`limit × 95` **exactly, in `u128`** (not on the rounded percent, and without overflow: `fs.file-max`
+is `i64::MAX` on some systems). Below 80% is Info (100%, a direct observation); from 80% a Warning,
+from 95% an Error, both at 85% (`strong_indication`): the figure is exact, but a counter read once
+may have been a spike, so that it is a problem is only a strong indication. A limit of 0 has no level
+and no finding. The finding always exists while the table does (Info with the figures), which keeps
+`linuxdoctor diff` from reporting a finding that appears only when a table is under pressure.
+
+**The steps** (Warning and Error only) look before they change: the programs holding the most handles
+(a `/proc/[0-9]*/fd` count) or the most threads (`ps -eo nlwp`), the tracked protocols and addresses
+(root only), the TCP timeout of established connections; then the limit raised to twice what it is
+now through `recommend::sysctl_commands` (applied now, persisted in `/etc/sysctl.d`), never above
+`i64::MAX`. `kernel.pid_max` is raised to the most the kernel accepts (4194304, 64-bit only) and,
+when it is already there, the step says so and offers no command. Nothing is run by LinuxDoctor.
+
+**What it does not see**: a single program that meets its own limit (`ulimit -n`, a systemd
+service's `TasksMax`) needs a walk of `/proc/*/limits` and `/proc/*/fd`, and the process count in a
+container is the host's (`/proc/loadavg` is not namespaced) while `pid_max` can be the container's.
+The explanation of each Warning says the first.
+
+All three read under a root (`/` on a real machine, a temporary tree in the unit tests), and the
+raw data of each module holds only the readings (`KernelRawData::limits`,
+`NetworkRawData::conntrack`), so `analyze` stays pure. The end-to-end tests run the real binary
+and compare what it reports with `/proc` (the host's own limits), not with a severity.
 
 ---
 

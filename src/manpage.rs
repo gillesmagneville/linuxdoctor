@@ -40,7 +40,10 @@ fn module_summary(id: &str) -> Option<&'static str> {
         }
         "systemd" => "Overall systemd state and failed units.",
         "ntp" => "Clock synchronization and real-time clock mode.",
-        "network" => "Interfaces, error and drop rates, default gateway and DNS configuration.",
+        "network" => {
+            "Interfaces, error and drop rates, default gateway, DNS configuration and how full \
+             the connection-tracking table is."
+        }
         "security" => {
             "Listening services, firewall, SSH configuration, SELinux and AppArmor, kernel \
              hardening, accounts and permissions of sensitive files."
@@ -49,7 +52,10 @@ fn module_summary(id: &str) -> Option<&'static str> {
             "Failed logins, system errors, kernel messages, and the health of the journal \
              and of the log files."
         }
-        "kernel" => "Kernel taint status, out-of-memory kills, build information, pending reboot and boot parameters.",
+        "kernel" => {
+            "Kernel taint status, out-of-memory kills, build information, pending reboot, boot \
+             parameters, and how full the tables of open files and of processes are."
+        }
         "firmware" => {
             "BIOS/UEFI identity, boot mode, Secure Boot, virtualization extensions, IOMMU and TPM."
         }

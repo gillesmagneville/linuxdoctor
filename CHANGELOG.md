@@ -147,6 +147,58 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     été vérifié sur le code du noyau et sur des exemples réels (RAID 1, 5, conteneur
     Intel), `STOR006` l'a été sur un vrai montage en lecture seule.
 
+- **Trois tables du noyau qui se remplissent : `KERN007`, `KERN008` et `NET005`.** Le noyau a
+  quelques tables de taille fixe. Tant qu'elles ont de la place, rien ne se voit ; quand l'une
+  est pleine, le prochain programme qui demande une entrée est refusé (`Too many open files in
+  system`, `fork` qui échoue avec `Resource temporarily unavailable`, un paquet jeté), et ce qui
+  tombe en panne (une connexion, un service qui se relance, une base de données) ne remonte
+  presque jamais jusqu'à la table. Aucun outil lancé : tout se lit dans `/proc`, sous une racine
+  que les tests remplacent par un arbre factice.
+  - **`KERN007` — table des fichiers ouverts** (module `kernel`) : `/proc/sys/fs/file-nr`
+    contre `fs.file-max`.
+  - **`KERN008` — table des processus et des threads** (module `kernel`) : le total de
+    `/proc/loadavg` (chaque thread a son identifiant) contre le plus bas de `kernel.pid_max` et
+    `kernel.threads-max`, avec lequel des deux est en cause. Un seuil à zéro est ignoré.
+  - **`NET005` — table de suivi des connexions** (module `network`) : `nf_conntrack_count`
+    contre `nf_conntrack_max`. Pleine, elle jette les paquets qui ouvriraient une connexion
+    (`nf_conntrack: table full, dropping packet`) : les connexions existantes continuent, les
+    nouvelles expirent, ce qui ressemble à un réseau instable. Pas de constatation quand
+    `nf_conntrack` n'est pas chargé (pas de table).
+  - **Une seule règle pour les trois** (`src/modules/saturation.rs`) : **Info** (100 %) avec les
+    chiffres tant qu'il y a de la place ; **Avertissement** dès 80 % ; **Erreur** dès 95 %, tous
+    deux à 85 % de confiance (le chiffre est exact, mais un compteur lu une fois peut être un
+    pic : « c'est un problème » reste une forte indication). La comparaison est exacte, sur des
+    entiers de 128 bits (pas sur le pourcentage arrondi, et sans débordement : `fs.file-max` vaut
+    `i64::MAX` sur certains systèmes). Les trois constatations existent toujours quand la table
+    existe, même à 0 %, pour que `linuxdoctor diff` ne signale pas une constatation qui
+    n'apparaît que sous pression.
+  - **Les étapes** (Avertissement et Erreur seulement) regardent avant de toucher : qui tient le
+    plus de fichiers (un compte de `/proc/[0-9]*/fd`) ou de threads (`ps -eo nlwp`), quels
+    protocoles et quelles adresses remplissent la table de suivi, le délai d'une connexion TCP
+    établie (5 jours par défaut) ; puis la limite relevée au double (appliquée tout de suite et
+    gardée dans `/etc/sysctl.d`, jamais au-delà de `i64::MAX`). `kernel.pid_max` monte au plus que
+    le noyau accepte (4194304) et, s'il y est déjà, l'étape le dit sans proposer de commande.
+  - **Limites connues** : un programme seul qui atteint sa propre limite (`ulimit -n`, le
+    `TasksMax` d'un service systemd) n'est pas vu, il faudrait parcourir `/proc/*/limits` ; dans
+    un conteneur, `/proc/loadavg` donne le nombre de tâches de la machine hôte alors que
+    `pid_max` peut être celui du conteneur. Le texte de l'avertissement dit la première.
+  - **Vérifié** avec le vrai binaire dans le conteneur de développement : tout à ~0 % (Info),
+    puis `fs.file-max` ramené à 140 et `kernel.threads-max` à 112 pour une seconde : `KERN007`
+    (93 %) et `KERN008` (84 %, limite en cause `kernel.threads-max`) passent en Avertissement
+    avec leurs étapes, valeurs remises ensuite. Les commandes proposées ont été lancées sur la
+    machine et répondent. La table de suivi était vide (0 entrée sur 262144) : son Avertissement
+    n'a été vu que sur des chiffres de test, pas sur une vraie table qui se remplit.
+  - Tests : 46 nouveaux (la règle et ses bornes exactes, y compris les limites énormes ; la
+    lecture des trois fichiers sur de faux arbres, morceaux manquants ou illisibles ; chaque
+    verdict et chaque phrase ; le choix de la limite en cause ; les étapes et le doublement
+    plafonné ; l'ordre des constatations dans les deux modules ; quatre tests de bout en bout dont
+    deux avec le vrai binaire, qui comparent ce qu'il dit à `/proc`). Ils échouent quand on casse
+    le code : 39 casseurs essayés, 39 détectés (deux avaient survécu : une limite de 1 n'était
+    testée nulle part, des cas ont été ajoutés). Un test existant
+    (`the_profile_lowers_no_finding_of_the_other_modules`) comparait toutes les constatations du
+    module `kernel` d'un lancement à l'autre : les compteurs de `KERN007` et `KERN008` bougent,
+    donc il compare maintenant leur sévérité seulement.
+
 ## [1.10.0] - 2026-10-17
 
 Les profils de machine arrivent : `--profile hpc` (quatre vérifications propres aux

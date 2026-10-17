@@ -11,6 +11,7 @@ pub mod network;
 pub mod ntp;
 pub mod numa;
 pub mod recommend;
+pub mod saturation;
 pub mod security;
 pub mod server;
 pub mod storage;

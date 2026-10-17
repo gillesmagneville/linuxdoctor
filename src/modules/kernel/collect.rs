@@ -6,7 +6,9 @@ use crate::core::command::command;
 use crate::core::error::ModuleError;
 use crate::models::Severity;
 
-#[derive(Debug, Clone, PartialEq)]
+use super::limits::{self, Limits};
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct KernelRawData {
     pub tainted_raw: u64,
     /// `None` means the check couldn't run at all (dmesg unavailable or
@@ -17,6 +19,8 @@ pub struct KernelRawData {
     pub reboot_required: RebootRequiredInfo,
     pub aslr_mode: Option<u8>,
     pub notable_cmdline_flags: Vec<&'static str>,
+    /// The tables of open files and of processes, against their limits.
+    pub limits: Limits,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -235,6 +239,7 @@ pub fn collect() -> Result<KernelRawData, ModuleError> {
         reboot_required,
         aslr_mode,
         notable_cmdline_flags,
+        limits: limits::read(std::path::Path::new("/")),
     })
 }
 

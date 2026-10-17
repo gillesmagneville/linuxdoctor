@@ -2,6 +2,7 @@
 
 pub mod analyze;
 pub mod collect;
+pub mod limits;
 
 use crate::core::context::Context;
 use crate::core::error::ModuleError;

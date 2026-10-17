@@ -149,6 +149,9 @@ v1 scaffold, thirteen modules shipping end-to-end:
   interface can't produce a misleading percentage), default gateway,
   DNS configuration. Zero subprocess calls — `/proc/net/dev`,
   `/proc/net/route`, `/sys/class/net/*`, `/etc/resolv.conf` only.
+  Also how full the firewall's connection-tracking table is (`NET005`,
+  `/proc/sys/net/netfilter`; no finding where `nf_conntrack` is not loaded):
+  a full table drops new connections, which looks like a flaky network.
   Detects active SR-IOV VFs (`sriov_numvfs`) and downgrades the
   error/drop-rate severity and confidence accordingly — on some NIC/
   driver combinations, VF-steered traffic inflates the physical
@@ -216,7 +219,15 @@ v1 scaffold, thirteen modules shipping end-to-end:
   `/var/run/reboot-required` — absence on other distros is reported as
   "not confirmed", not "clean", since the file is distro-specific),
   ASLR status, and a small set of notable boot parameters
-  (`mitigations=off` and similar).
+  (`mitigations=off` and similar). It also says how full the kernel's two
+  system-wide tables are: the open files (`KERN007`, `/proc/sys/fs/file-nr`)
+  and the processes and threads (`KERN008`, `/proc/loadavg` against the lower
+  of `kernel.pid_max` and `kernel.threads-max`). Both are Info with the figures
+  while there is room, a Warning from 80% and an Error from 95%, because a full
+  table refuses the next program that asks (`Too many open files in system`,
+  `fork` failing with `Resource temporarily unavailable`) and what fails
+  rarely says why. A single program that meets its own limit (`ulimit -n`, a
+  service's `TasksMax`) is not seen.
 * **Firmware** — what's readable of BIOS/UEFI from userspace, which is a
   real but bounded subset: there's no universal Linux API for the full
   Setup-menu contents (fan curves, memory timings/XMP, detailed boot
@@ -817,7 +828,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1429 lib unit tests + 95 CLI unit tests + 216 integration tests
+cargo test               # 1471 lib unit tests + 95 CLI unit tests + 220 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real
@@ -903,6 +914,7 @@ linuxdoctor/
     │   ├── mod.rs              # the Module trait + all_modules()
     │   ├── recommend.rs        # numbered-steps builder (Steps), sysctl snippets and the
     │   │                       #   distribution family, shared by modules that write advice
+    │   ├── saturation.rs       # "how full is this kernel table": the 80% / 95% rule, shared
     │   ├── memory/              # collect.rs (I/O) + analyze.rs + one file per topic (used, cache,
     │   │                        #   shared, swap, pressure, tuning, kernel) + format.rs
     │   ├── cpu/                  # per-socket topology, load, isolated/offline CPUs
@@ -913,12 +925,12 @@ linuxdoctor/
     │   ├── storage/                # filesystems (df) + per-device SMART (smartctl)
     │   ├── systemd/                  # system state, failed units
     │   ├── ntp/                        # clock sync, RTC mode
-    │   ├── network/                    # interfaces, gateway, DNS (zero subprocess calls)
+    │   ├── network/                    # interfaces, gateway, DNS, connection-tracking table (zero subprocess calls)
     │   ├── security/                   # collect.rs (I/O) + one pure file per topic (listeners,
     │   │                               #   firewall, ssh, access, accounts) + analyze.rs
     │   ├── logs/                       # collect.rs (I/O) + journal.rs (parsers) + one pure file
     │   │                               #   per topic (auth, errors, kernel, health) + analyze.rs
-    │   ├── kernel/                       # taint status, OOM history (dmesg)
+    │   ├── kernel/                       # taint status, OOM history (dmesg), file and process tables
     │   └── virtualization/                 # systemd-detect-virt, no PID1 gate
     │
     └── output/

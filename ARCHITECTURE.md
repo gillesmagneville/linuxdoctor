@@ -104,7 +104,7 @@ linuxdoctor/
 │   │   │   ├── pending.rs    # SRV004 (stamps + `apt list --upgradable`, finding)
 │   │   │   ├── kernel.rs     # SRV005 (installed kernels, finding)
 │   │   │   └── age.rs        # "3 hours", "40 days"
-│   │   ├── storage/
+│   │   ├── storage/          # see "Storage module layout" below
 │   │   ├── systemd/
 │   │   ├── ntp/
 │   │   ├── network/
@@ -1256,6 +1256,35 @@ neglected server built from fixtures):
 - Text that comes from the machine (program names, user names, configuration values) is
   data: it reaches the renderers unmodified and is escaped there, which the integration
   tests check through the Markdown and HTML renderers with hostile names.
+
+## Storage module layout
+
+`collect.rs` runs `df` and `smartctl`, and calls the two readers below with the root of the
+machine (`/`). Everything else is pure parsing and analysis tested against literal text; the
+readers take the root as an argument so their tests build a fake `proc/mdstat`,
+`proc/mounts` and `etc/fstab` in a temporary directory. `StorageRawData` has a `Default`, so
+a test names only the facts it is about.
+
+| File | Findings | What it judges |
+|---|---|---|
+| `analyze.rs` | `STOR001` space, `STOR002` inodes, `STOR003` SMART summary, `STOR004` one per disk | `df` and `smartctl` output; coordinator that orders the findings above and the two below |
+| `raid.rs` | `STOR005` one per md array | `/proc/mdstat`: the `[n/m]` count and `[UU_]` slots, `(F)` failed members, `inactive`, and a resync, check or recovery in progress |
+| `mounts.rs` | `STOR006` one per read-only mount | `/proc/mounts` against `/etc/fstab` |
+| `device.rs` | — | `disk_of`: the whole disk behind a partition name, for the `smartctl` commands |
+
+- `STOR005` is Info for a whole array (a check or a resync running on one is information),
+  Warning while a spare is being filled or when the array is whole again with a failed device
+  still listed, Error when it has no redundancy left and nothing is rebuilding, or when it
+  was never started. Confidence is 100: the kernel's own count. A container of firmware RAID
+  metadata (`super external:imsm`, `ddf`) is always `inactive` and has no health of its own, so
+  it is not reported; the arrays inside it are.
+- `STOR006` only looks at mount points that fstab lists and wants writable (no `ro`, `noauto`,
+  `bind`), served by a device under `/dev/` and not read-only by nature (`iso9660`, `squashfs`,
+  ...). Error, Critical for `/`. Confidence is 90, not 100: someone may have remounted it on
+  purpose. It complements `LOG006`, which reads the kernel message that says it happened but
+  only while that boot's journal is there and readable.
+- Names from the machine reach commands only when `is_safe_word` accepts them (otherwise a
+  placeholder like `/dev/<array>`), and every text field is passed through `clean`.
 
 ## Logs module layout
 

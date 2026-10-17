@@ -34,7 +34,10 @@ fn module_summary(id: &str) -> Option<&'static str> {
         "gpu" => {
             "AMD, Intel and NVIDIA graphics cards: temperature, memory, clocks, throttling and PCIe link."
         }
-        "storage" => "Disk space and inodes per filesystem, and the SMART health of each disk.",
+        "storage" => {
+            "Disk space and inodes per filesystem, the SMART health of each disk, software RAID \
+             arrays and filesystems that went read-only."
+        }
         "systemd" => "Overall systemd state and failed units.",
         "ntp" => "Clock synchronization and real-time clock mode.",
         "network" => "Interfaces, error and drop rates, default gateway and DNS configuration.",

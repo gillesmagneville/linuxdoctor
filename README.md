@@ -47,7 +47,13 @@ v1 scaffold, thirteen modules shipping end-to-end:
   filesystems like tmpfs/proc/overlay/AppImage FUSE mounts are excluded),
   4 severity tiers, plus per-device SMART health (`smartctl` JSON output —
   ATA "big four" attributes and NVMe health log) in its own submenu,
-  separate from the filesystem instances.
+  separate from the filesystem instances. It also reads the state of the
+  software RAID (md) arrays in `/proc/mdstat` (`STOR005`: whole, rebuilding,
+  degraded or not started — `smartctl` judges one disk at a time and cannot
+  see that an array has lost one) and the filesystems that `/etc/fstab`
+  wants writable and the kernel serves read-only (`STOR006`: what stays after
+  a disk error made the kernel remount it, long after the kernel log
+  mentioned it once).
 * **NUMA** — per-node CPU/memory breakdown; automatic cross-node
   comparison on two axes — memory *usage* balance (`NUMA002`) and
   *structural* topology symmetry (`NUMA003`: CPU count, memory capacity,
@@ -811,7 +817,7 @@ works regardless.
 ## Tests
 
 ```bash
-cargo test               # 1359 lib unit tests + 95 CLI unit tests + 214 integration tests
+cargo test               # 1429 lib unit tests + 95 CLI unit tests + 216 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

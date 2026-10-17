@@ -4,6 +4,7 @@ use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
 
 use super::collect::{DiskHealth, FilesystemUsage, InodeUsage, StorageRawData};
+use super::{mounts, raid};
 
 /// Pseudo/virtual filesystems that don't represent real, manageable disk
 /// space — excluded so findings only cover storage an administrator can
@@ -73,6 +74,9 @@ pub fn analyze(data: &StorageRawData, _ctx: &Context) -> Vec<Finding> {
     for disk in &data.disk_health {
         findings.push(smart_health_finding(disk));
     }
+
+    findings.extend(raid::findings(&data.raid));
+    findings.extend(data.read_only_mounts.iter().map(mounts::mount_finding));
 
     findings
 }
@@ -447,6 +451,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         // 1 real filesystem finding (STOR001 for "/") + always-present STOR003.
@@ -470,6 +475,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         assert_eq!(findings.len(), 2); // STOR001 for "/" + always-present STOR003
@@ -489,6 +495,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         assert_eq!(analyze(&data, &ctx())[0].severity, Severity::Info);
     }
@@ -502,6 +509,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         assert_eq!(analyze(&data, &ctx())[0].severity, Severity::Warning);
     }
@@ -515,6 +523,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         assert_eq!(analyze(&data, &ctx())[0].severity, Severity::Error);
     }
@@ -528,6 +537,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         assert_eq!(analyze(&data, &ctx())[0].severity, Severity::Critical);
     }
@@ -541,6 +551,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         assert_eq!(findings[0].id, "STOR002");
@@ -556,6 +567,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         assert_eq!(analyze(&data, &ctx()).len(), 3); // 2 filesystems + STOR003
     }
@@ -569,6 +581,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         for f in analyze(&data, &ctx()) {
             assert!(f.confidence.percent >= 60);
@@ -584,6 +597,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         assert!(findings.iter().any(|f| f.id == "STOR003"));
@@ -598,6 +612,7 @@ mod tests {
             disks_checked: 0,
             disk_health: vec![],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor003 = findings.iter().find(|f| f.id == "STOR003").unwrap();
@@ -613,6 +628,7 @@ mod tests {
             disks_checked: 2,
             disk_health: vec![],
             running_as_root: false,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor003 = findings.iter().find(|f| f.id == "STOR003").unwrap();
@@ -628,6 +644,7 @@ mod tests {
             disks_checked: 2,
             disk_health: vec![],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor003 = findings.iter().find(|f| f.id == "STOR003").unwrap();
@@ -643,6 +660,7 @@ mod tests {
             disks_checked: 1,
             disk_health: vec![healthy_disk("/dev/sda")],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor004 = findings.iter().find(|f| f.id == "STOR004").unwrap();
@@ -661,6 +679,7 @@ mod tests {
             disks_checked: 1,
             disk_health: vec![disk],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor004 = findings.iter().find(|f| f.id == "STOR004").unwrap();
@@ -679,6 +698,7 @@ mod tests {
             disks_checked: 1,
             disk_health: vec![disk],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor004 = findings.iter().find(|f| f.id == "STOR004").unwrap();
@@ -696,6 +716,7 @@ mod tests {
             disks_checked: 1,
             disk_health: vec![disk],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor004 = findings.iter().find(|f| f.id == "STOR004").unwrap();
@@ -716,6 +737,7 @@ mod tests {
             disks_checked: 1,
             disk_health: vec![disk],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor004 = findings.iter().find(|f| f.id == "STOR004").unwrap();
@@ -736,6 +758,7 @@ mod tests {
             disks_checked: 1,
             disk_health: vec![disk],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let stor004 = findings.iter().find(|f| f.id == "STOR004").unwrap();
@@ -751,6 +774,7 @@ mod tests {
             disks_checked: 2,
             disk_health: vec![healthy_disk("/dev/sda"), healthy_disk("/dev/sdb")],
             running_as_root: true,
+            ..Default::default()
         };
         let findings = analyze(&data, &ctx());
         let instances: Vec<_> = findings
@@ -759,5 +783,48 @@ mod tests {
             .filter_map(|f| f.instance.as_deref())
             .collect();
         assert_eq!(instances, vec!["/dev/sda", "/dev/sdb"]);
+    }
+
+    #[test]
+    fn arrays_and_read_only_mounts_come_after_the_disks_in_that_order() {
+        let data = StorageRawData {
+            smartctl_available: true,
+            disks_checked: 1,
+            disk_health: vec![healthy_disk("/dev/sda")],
+            raid: raid::parse_mdstat(
+                "md0 : active raid1 sdb1[1] sda1[0]\n  1 blocks [2/2] [UU]\n\
+                 md1 : active raid1 sdd1[1](F) sdc1[0]\n  1 blocks [2/1] [U_]\n",
+            ),
+            read_only_mounts: mounts::read_only_against_fstab(
+                "/dev/sdb1 /data xfs ro 0 0\n/dev/sdc1 /srv xfs ro 0 0\n",
+                "/dev/sdb1 /data xfs defaults 0 0\n/dev/sdc1 /srv xfs defaults 0 0\n",
+            ),
+            ..Default::default()
+        };
+        let findings = analyze(&data, &ctx());
+        let seen: Vec<(String, Option<String>)> = findings
+            .iter()
+            .map(|f| (f.id.clone(), f.instance.clone()))
+            .collect();
+        let expected: Vec<(String, Option<String>)> = [
+            ("STOR003", None),
+            ("STOR004", Some("/dev/sda")),
+            ("STOR005", Some("md0")),
+            ("STOR005", Some("md1")),
+            ("STOR006", Some("/data")),
+            ("STOR006", Some("/srv")),
+        ]
+        .into_iter()
+        .map(|(id, instance)| (id.to_string(), instance.map(str::to_string)))
+        .collect();
+        assert_eq!(seen, expected);
+    }
+
+    #[test]
+    fn a_machine_without_arrays_or_read_only_mounts_has_neither_finding() {
+        let findings = analyze(&StorageRawData::default(), &ctx());
+        assert!(findings
+            .iter()
+            .all(|f| f.id != "STOR005" && f.id != "STOR006"));
     }
 }

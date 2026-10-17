@@ -116,6 +116,7 @@ fn main() {
             },
         ],
         running_as_root: true,
+        ..Default::default()
     };
     let storage_findings = analyze_storage(&storage_data, &ctx);
 

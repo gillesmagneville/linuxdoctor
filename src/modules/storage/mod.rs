@@ -2,6 +2,9 @@
 
 pub mod analyze;
 pub mod collect;
+pub mod device;
+pub mod mounts;
+pub mod raid;
 
 use crate::core::context::Context;
 use crate::core::error::ModuleError;

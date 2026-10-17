@@ -6,6 +6,7 @@ use linuxdoctor::modules::storage::analyze::analyze;
 use linuxdoctor::modules::storage::collect::{
     parse_inode_usage, parse_space_usage, StorageRawData,
 };
+use linuxdoctor::modules::storage::{mounts, raid};
 
 fn test_context() -> Context {
     Context {
@@ -39,6 +40,7 @@ tmpfs          tmpfs   511718     20   511698    1% /dev/shm
         disks_checked: 0,
         disk_health: vec![],
         running_as_root: false,
+        ..Default::default()
     };
 
     let findings = analyze(&data, &test_context());
@@ -69,6 +71,7 @@ Filesystem     Type    Inodes  IUsed    IFree IUse% Mounted on
         disks_checked: 0,
         disk_health: vec![],
         running_as_root: false,
+        ..Default::default()
     };
 
     let findings = analyze(&data, &test_context());
@@ -77,4 +80,48 @@ Filesystem     Type    Inodes  IUsed    IFree IUse% Mounted on
 
     assert_eq!(stor001.severity, Severity::Critical);
     assert_eq!(stor002.severity, Severity::Info); // inodes are fine even though space isn't
+}
+
+#[test]
+fn a_degraded_array_fixture_is_an_error_naming_the_array() {
+    let data = StorageRawData {
+        raid: raid::parse_mdstat(
+            "\
+Personalities : [raid1]
+md2 : active raid1 sdb1[1](F) sda1[0]
+      976630336 blocks super 1.2 [2/1] [U_]
+
+unused devices: <none>
+",
+        ),
+        ..Default::default()
+    };
+
+    let findings = analyze(&data, &test_context());
+    let md2 = findings.iter().find(|f| f.id == "STOR005").unwrap();
+
+    assert_eq!(md2.severity, Severity::Error);
+    assert_eq!(md2.instance.as_deref(), Some("md2"));
+    assert!(md2
+        .recommendation
+        .as_deref()
+        .unwrap()
+        .contains("sudo mdadm /dev/md2 --remove failed"));
+}
+
+#[test]
+fn a_root_filesystem_that_went_read_only_fixture_is_critical() {
+    let data = StorageRawData {
+        read_only_mounts: mounts::read_only_against_fstab(
+            "/dev/nvme0n1p2 / ext4 ro,relatime,errors=remount-ro 0 0\n",
+            "UUID=aaaa-bbbb / ext4 errors=remount-ro 0 1\n",
+        ),
+        ..Default::default()
+    };
+
+    let findings = analyze(&data, &test_context());
+    let root = findings.iter().find(|f| f.id == "STOR006").unwrap();
+
+    assert_eq!(root.severity, Severity::Critical);
+    assert_eq!(root.instance.as_deref(), Some("/"));
 }

@@ -120,6 +120,33 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
     ce changement. **Pas encore vu sur une vraie machine de production** : à regarder dans ton
     premier rapport.
 
+- **Storage : l'état actuel des tableaux RAID et des systèmes de fichiers passés en
+  lecture seule.** `smartctl` juge un disque à la fois et le journal du noyau ne dit les
+  choses qu'une fois ; ces deux constats lisent ce qui reste vrai.
+  - **`STOR005` — un constat par tableau RAID logiciel (md)**, lu dans `/proc/mdstat`.
+    Info quand le tableau est entier (un `check` ou un `resync` en cours n'est qu'une
+    information, avec son avancement). Avertissement pendant qu'un disque de rechange se
+    remplit (« recovery 12,6 %, environ 60 min restantes »), ou quand le tableau est
+    complet mais qu'un disque en échec y figure encore. Erreur quand il n'a plus de
+    redondance et que rien ne se reconstruit, ou qu'il n'a pas démarré (`inactive`). Les
+    commandes proposées vont de `mdadm --detail` à `mdadm … --remove failed` et `--add`,
+    avec `smartctl -a` sur le disque entier derrière chaque partition en échec. Un
+    conteneur de RAID firmware (`imsm`, `ddf`) n'est jamais « démarré » et n'a pas de santé
+    propre : il n'est pas signalé, les tableaux qu'il contient le sont.
+  - **`STOR006` — un constat par système de fichiers que `/etc/fstab` veut en
+    lecture-écriture et que le noyau sert en lecture seule.** C'est ce que laisse un
+    remontage après erreur disque (`errors=remount-ro`). Erreur, Critique pour `/` (le
+    système ne peut plus écrire ses journaux ni son état). Confiance 90 % et non 100 :
+    quelqu'un a pu le remonter exprès (une sauvegarde, une maintenance), et le texte le
+    dit. Seuls les montages que fstab liste sont regardés, ni ceux qu'il écrit `ro`,
+    `noauto` ou `bind`, ni ceux dont le support est en lecture seule par nature
+    (`iso9660`, `squashfs`…), ni ceux qui ne sont pas sur un disque local (`tmpfs`, NFS).
+    Il complète `LOG006`, qui lit le message du noyau mais seulement tant que le journal de
+    ce démarrage existe et se lit.
+  - `STOR005` n'a pas encore été vu sur un vrai tableau md : le format de `/proc/mdstat` a
+    été vérifié sur le code du noyau et sur des exemples réels (RAID 1, 5, conteneur
+    Intel), `STOR006` l'a été sur un vrai montage en lecture seule.
+
 ## [1.10.0] - 2026-10-17
 
 Les profils de machine arrivent : `--profile hpc` (quatre vérifications propres aux

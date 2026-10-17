@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::fs;
+use std::path::Path;
 
 use crate::core::command::command;
 use crate::core::error::ModuleError;
 use crate::core::parallel::parallel_map;
+
+use super::mounts::{self, ReadOnlyMount};
+use super::raid::{self, MdArray};
 
 /// Raw facts read from the system, before any interpretation. See
 /// ARCHITECTURE.md "Collectors". Deliberately includes every mounted
@@ -31,7 +35,7 @@ pub struct InodeUsage {
     pub use_percent: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct StorageRawData {
     pub filesystems: Vec<FilesystemUsage>,
     pub inodes: Vec<InodeUsage>,
@@ -47,6 +51,11 @@ pub struct StorageRawData {
     /// device access, which is normally root-only, so this is used to
     /// give an accurate hint when no devices report SMART data at all.
     pub running_as_root: bool,
+    /// The software RAID (md) arrays the kernel lists, if any (STOR005).
+    pub raid: Vec<MdArray>,
+    /// Filesystems fstab wants writable that the kernel serves read-only
+    /// (STOR006).
+    pub read_only_mounts: Vec<ReadOnlyMount>,
 }
 
 /// Health facts for one block device with usable SMART data. Fields are
@@ -256,6 +265,8 @@ pub fn collect() -> Result<StorageRawData, ModuleError> {
         disks_checked,
         disk_health,
         running_as_root: is_root(),
+        raid: raid::read(Path::new("/")),
+        read_only_mounts: mounts::read(Path::new("/")),
     })
 }
 

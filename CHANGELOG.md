@@ -9,6 +9,24 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.11.0] - 2026-10-17
+
+Onze nouvelles vérifications, toutes en lecture seule. Le profil `--profile server` passe
+d'une vérification à cinq : `SRV002` (les journaux survivent-ils à un redémarrage ?), `SRV003`
+(un redémarrage attend-il depuis des jours ?), `SRV004` (des mises à jour attendent-elles ?) et
+`SRV005` (un noyau plus récent que celui qui tourne est-il installé ?). Le module `storage`
+voit les tableaux RAID logiciels et les systèmes de fichiers passés en lecture seule
+(`STOR005`, `STOR006`) ; les modules `kernel` et `network` jugent les tables du noyau qui se
+remplissent (`KERN007`, `KERN008`, `NET005`) ; le module `network` voit un agrégat de liens qui
+a perdu une carte et un lien qui saute (`NET006`, `NET007`). Un profil se choisit, il ne se
+devine pas : sans `--profile`, seules les vérifications de `storage`, `kernel` et `network`
+s'ajoutent au rapport, et aucune sévérité existante ne change. La disposition du rapport JSON
+ne change pas (`schema_version` reste 1).
+Ce qui n'a pas été vu sur une vraie machine : le format de `/proc/net/bonding` (`NET006`) vient du
+code du noyau et d'exemples, pas d'un vrai noyau ; `/proc/mdstat` (`STOR005`) n'a été vu que sur
+des exemples réels, pas sur un tableau qui tourne ; `SRV004` et `SRV005` n'ont pas encore passé
+une vraie machine de production ; la table de suivi des connexions (`NET005`) n'a été vue qu'à 0 %.
+
 ### Ajouté
 
 - **`--profile server` : deux vérifications de plus, `SRV002` (les journaux survivent-ils

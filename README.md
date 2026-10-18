@@ -37,7 +37,7 @@ Compatibility depends on the distribution version, architecture and available sy
 
 [**Download the latest release**](https://github.com/gillesmagneville/linuxdoctor/releases/latest) · [Report a bug](https://github.com/gillesmagneville/linuxdoctor/issues) · [Read the documentation](#documentation)
 
-![Illustration of the LinuxDoctor terminal interface](docs/linuxdoctor-tui.svg)
+![Illustration of the LinuxDoctor terminal interface](docs/linuxdoctor-tui.png)
 
 ## Why LinuxDoctor?
 

@@ -2,7 +2,7 @@
 
 //! The optional configuration file, `~/.config/linuxdoctor/config.toml`:
 //! the options a person types every time, written down once. [`EXAMPLE`] is
-//! the file as the manual page shows it.
+//! the file as the manual page and the README show it.
 //!
 //! Three rules keep it predictable:
 //!
@@ -38,9 +38,9 @@ use crate::cli::{
     DiffFormat, FailOnArg, OutputFormat, ProfileArg, SeverityArg, MAX_TIMEOUT_SECONDS,
 };
 
-/// The file as the manual page shows it. Kept here, next to the parser, and
-/// read by tests (this module's and the manual page's), so that what is
-/// documented is a file the program really accepts.
+/// The file as the manual page and the README show it. Kept here, next to
+/// the parser, and read by a test, so that what is documented is a file the
+/// program really accepts.
 pub const EXAMPLE: &str = r#"# ~/.config/linuxdoctor/config.toml
 # Every line is optional. An option typed on the command line always wins
 # over this file.
@@ -496,7 +496,7 @@ fail_on = "never"
     }
 
     #[test]
-    fn the_example_in_the_manual_is_a_file_the_program_accepts() {
+    fn the_example_in_the_manual_and_the_readme_is_a_file_the_program_accepts() {
         let config = parsed(EXAMPLE);
         assert_eq!(config.timeout, Some(20));
         assert_eq!(config.audit.fail_on, Some(FailOnArg::Warning));
@@ -509,6 +509,16 @@ fail_on = "never"
         );
         assert_eq!(config.diff.output, Some(DiffFormat::Markdown));
         assert_eq!(config.profile, Some(ProfileArg::Hpc));
+    }
+
+    #[test]
+    fn the_readme_shows_the_example_verbatim() {
+        let readme = include_str!("../README.md");
+        assert!(
+            readme.contains(EXAMPLE),
+            "README.md must contain config::EXAMPLE exactly (the section \
+             \"The configuration file\")"
+        );
     }
 
     #[test]

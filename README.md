@@ -205,6 +205,73 @@ linuxdoctor --help
 linuxdoctor audit --help
 ```
 
+## The configuration file
+
+If you always type the same options, write them down once in
+`~/.config/linuxdoctor/config.toml` (under `$XDG_CONFIG_HOME` when that is set to an
+absolute path). The file is optional, and every line of it is optional:
+
+```toml
+# ~/.config/linuxdoctor/config.toml
+# Every line is optional. An option typed on the command line always wins
+# over this file.
+
+# Longest an external tool may run, in seconds (--timeout).
+timeout = 20
+
+# Exit with status 1 from this severity up, for audit and diff (--fail-on):
+# info, warning, error, critical or never.
+fail_on = "warning"
+
+# Only show findings from this severity up (--min-severity).
+min_severity = "warning"
+
+# The kind of machine, for audit and tui (--profile): hpc or server. A profile
+# only lowers findings that are normal for that kind of machine; without one,
+# every finding keeps the severity its check gave it.
+profile = "hpc"
+
+[audit]
+# terminal, json, markdown or html (--output).
+output = "markdown"
+
+[diff]
+# terminal, json or markdown (--output).
+output = "markdown"
+# A section can change the lines above for its own command.
+fail_on = "error"
+```
+
+```bash
+mkdir -p ~/.config/linuxdoctor && editor ~/.config/linuxdoctor/config.toml
+```
+
+- **What you type always wins.** The file only fills in what you did not type, option by
+  option: with the file above, `linuxdoctor audit --output json` prints JSON and still
+  uses the file's `fail_on` and `min_severity`. Typing the default value counts as
+  typing something: `--output terminal` beats `output = "markdown"`.
+- **The words are the ones of the command line**, read by the same parser, so `"md"`
+  works wherever `--output md` does. The top-level `timeout`, `fail_on` and
+  `min_severity` apply to `audit` and `diff` (`timeout` to every command), and the
+  top-level `profile` to `audit` and `tui`; the
+  `[audit]` and `[diff]` sections hold `output` — it cannot be set at the top, because
+  the two commands do not accept the same formats (`diff` has no `html`) — and may
+  repeat the other two for their own command.
+- **A mistake is an error, never a guess.** An unknown key, a value the option would not
+  accept or a file that cannot be read stops the program with exit status **2**, before
+  anything is run, and says which file and which line. `--no-config` ignores the file
+  for one run (the way out of a broken file); `--config FILE` reads another one, which
+  must exist (one file per CI job, for instance).
+- **A level from the file explains itself**, like `--fail-on` does, when it makes the
+  exit status 1: `fail_on = "warning" in /home/you/.config/linuxdoctor/config.toml`.
+- `--modules` cannot be set in the file on purpose: a file that quietly narrowed every
+  audit would produce clean-looking reports of checks that were never made.
+- `man` and `completions` never read the file, so a broken file cannot stop you from
+  printing them; `tui` reads only `timeout` and `profile`.
+- The file is untrusted text like any other: it must be a regular file of at most
+  64 KiB, and whatever is quoted from it in an error message has its control characters
+  replaced.
+
 ## Read-only by design
 
 LinuxDoctor is intended to inspect and explain, not to administer the machine on your behalf.
@@ -231,6 +298,33 @@ Some diagnostics can use optional external tools when available, including:
 - `journalctl` and `dmesg` for log and kernel information.
 
 Optional tools extend the available coverage. Their absence can limit individual checks without making every other diagnostic unavailable.
+
+## Toolchain note
+
+This was built and tested against `rustc`/`cargo` 1.75 (Ubuntu 24.04's apt package).
+Five dependencies are pinned for that MSRV:
+
+* `clap` at `4.4.18` — newer `clap_builder` releases declare `edition2024` in their
+  own manifest, which requires Cargo ≥ 1.85 just to parse.
+* `clap_complete` at `4.4.10` and `clap_mangen` at `0.2.20` (which brings `roff`
+  0.2.2) — the last releases that accept `clap` 4.4; the 4.5/0.3 series need it
+  newer and a Rust of 1.85.
+* `unicode-segmentation` (a transitive dependency of `ratatui`) pinned to `1.11.0`
+  in `Cargo.lock` for the same reason.
+* `toml` at `0.9.6`, with only the `std`, `serde` and `parse` features (it reads the
+  configuration file, it never writes TOML): later 0.9 releases need Rust 1.76. Its
+  own dependencies are held in `Cargo.lock` at the last releases that build on 1.75
+  (`toml_parser` 1.0.2, `serde_spanned` 1.0.1, `toml_datetime` 0.7.1, `winnow` 0.7.15).
+  To choose versions for 1.75 yourself, `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback
+  cargo add ...` does it from a newer Cargo.
+
+`Cargo.toml` declares `rust-version = "1.75"`, and the GitHub Actions workflow
+(`.github/workflows/ci.yml`) builds and tests on exactly 1.75.0 as well as on
+stable, then checks formatting and Clippy (`-D warnings`) on stable. Always build
+with `--locked` so those pins are respected.
+
+If you're on a newer toolchain (1.85+), these pins are safe to remove — `cargo update`
+will pick up current versions without any code changes.
 
 ## Project status
 

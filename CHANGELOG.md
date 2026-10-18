@@ -9,6 +9,13 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.11.1] - 2026-10-18
+
+Version de documentation : le programme est le même que celui de la 1.11.0 (aucune ligne de code
+livrée ne change). Ce qui change, c'est le README embarqué dans les paquets : plus court, écrit
+pour qui découvre LinuxDoctor, et qui garde la section sur le fichier de configuration et la
+note sur la toolchain.
+
 ### Modifié
 
 - **Le README est plus court et s'adresse à qui découvre LinuxDoctor** : environnements visés,

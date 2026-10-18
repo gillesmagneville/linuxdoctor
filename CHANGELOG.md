@@ -12,23 +12,36 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 ## [1.11.1] - 2026-10-18
 
 Version de documentation : le programme est le même que celui de la 1.11.0 (aucune ligne de code
-livrée ne change). Ce qui change, c'est le README embarqué dans les paquets : plus court, écrit
-pour qui découvre LinuxDoctor, et qui garde la section sur le fichier de configuration et la
-note sur la toolchain.
+livrée ne change). Ce qui change, c'est le README embarqué dans les paquets : écrit pour qui
+découvre LinuxDoctor, et complet, car toutes les sections utiles de l'ancien README y sont
+revenues.
 
 ### Modifié
 
-- **Le README est plus court et s'adresse à qui découvre LinuxDoctor** : environnements visés,
-  distributions et paquets, principes, ce que l'outil diagnostique, installation, commandes
-  courantes, capture de l'interface (`docs/linuxdoctor-tui.png`). Deux sections de l'ancien
-  README sont remises telles quelles, au lieu d'être renvoyées au manuel ou à
-  `ARCHITECTURE.md` : **« The configuration file »** (le fichier `config.toml` et son exemple
-  exact) et **« Toolchain note »** (les cinq dépendances épinglées pour Rust 1.75, que
-  `ci.yml` et `ARCHITECTURE.md` citent). Le test qui exige que le README contienne l'exemple de
-  `config::EXAMPLE` est rétabli (la PR #34 l'avait retiré tant que la section manquait). La
-  phrase finale de la note (« both are safe to unpin ») disait « les deux » alors qu'il y a
-  cinq épingles : elle dit maintenant « ces épingles ».
-  Aucun changement de code livré : le programme est le même que celui de la 1.11.0.
+- **Le README est plus court au début et s'adresse à qui découvre LinuxDoctor** : environnements
+  visés, distributions et paquets, principes, ce que l'outil diagnostique, installation, commandes
+  courantes, capture de l'interface (`docs/linuxdoctor-tui.png`). Ce texte est resté tel qu'il a
+  été écrit ; les sections de l'ancien README qui n'y figuraient plus sont ajoutées à la suite,
+  sans rien retirer : **Quickstart from a source build**, **Reports, filtering and exit codes**,
+  **Profiles**, **Comparing two reports**, **The configuration file** (avec l'exemple exact),
+  **Manual page and shell completions**, **Speed and slow tools**, **Modules in detail** (le
+  détail de chacun des treize modules), **Runtime dependencies in detail**, **Toolchain note**
+  (les cinq dépendances épinglées pour Rust 1.75, que `ci.yml` et `ARCHITECTURE.md` citent),
+  **Packaging**, **Tests** et **Layout**.
+  - **Texte repris tel quel, sauf là où il était devenu faux** : « Status » devient « Modules in
+    detail » (et « v1 scaffold » devient « Thirteen modules ») ; « Quickstart » et « Runtime
+    dependencies » prennent un titre qui ne se heurte pas aux sections courtes du nouveau texte ;
+    le paragraphe de « Packaging » qui disait que `VERSION` ne fait pas partie des sources était
+    faux depuis la 1.9.0 et dit maintenant comment une version se prépare (`VERSION`,
+    `Cargo.toml` et `Cargo.lock` ensemble, paquets construits avec `--no-version-change`) ;
+    « Layout » connaît `docs/`, les contrôles ajoutés aux profils `hpc` et `server`, le RAID et
+    les montages en lecture seule de `storage`, et deux fichiers de tests de plus ; la fin de la
+    « Toolchain note » disait « les deux » alors qu'il y a cinq épingles ; un renvoi « see below »
+    devient « see above ».
+  - **« Getting set up » n'est pas reprise** : elle décrivait une archive à décompresser et un
+    premier `git commit`, et « Option 2: Build from source » la remplace.
+  - Le test qui exige que le README contienne l'exemple de `config::EXAMPLE` est rétabli (la
+    PR #34 l'avait retiré tant que la section manquait).
 
 ## [1.11.0] - 2026-10-17
 

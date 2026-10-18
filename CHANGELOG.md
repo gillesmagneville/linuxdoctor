@@ -9,6 +9,20 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Modifié
+
+- **Le README est plus court et s'adresse à qui découvre LinuxDoctor** : environnements visés,
+  distributions et paquets, principes, ce que l'outil diagnostique, installation, commandes
+  courantes, capture de l'interface (`docs/linuxdoctor-tui.png`). Deux sections de l'ancien
+  README sont remises telles quelles, au lieu d'être renvoyées au manuel ou à
+  `ARCHITECTURE.md` : **« The configuration file »** (le fichier `config.toml` et son exemple
+  exact) et **« Toolchain note »** (les cinq dépendances épinglées pour Rust 1.75, que
+  `ci.yml` et `ARCHITECTURE.md` citent). Le test qui exige que le README contienne l'exemple de
+  `config::EXAMPLE` est rétabli (la PR #34 l'avait retiré tant que la section manquait). La
+  phrase finale de la note (« both are safe to unpin ») disait « les deux » alors qu'il y a
+  cinq épingles : elle dit maintenant « ces épingles ».
+  Aucun changement de code livré : le programme est le même que celui de la 1.11.0.
+
 ## [1.11.0] - 2026-10-17
 
 Onze nouvelles vérifications, toutes en lecture seule. Le profil `--profile server` passe

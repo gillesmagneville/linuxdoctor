@@ -1131,8 +1131,9 @@ $XDG_CONFIG_HOME/linuxdoctor/config.toml      (~/.config/linuxdoctor/config.toml
 ```
 
 An optional file holding the options a person would otherwise type every time. The
-README ("The configuration file") shows it and `config::EXAMPLE` is the text a test
-keeps identical in the README and the manual page.
+manual page (section FILES) shows it, and `config::EXAMPLE` is the text a test keeps
+identical in the manual page and accepted by the parser. (The README used to show it
+too, with a test of its own; the shorter README of 1.11.0 no longer does.)
 
 | Key | Where | Same as |
 |---|---|---|

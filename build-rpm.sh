@@ -200,6 +200,12 @@ for doc in README.md CHANGELOG.md PROJECT_CONTEXT.md ARCHITECTURE.md LICENSE; do
   [ -f "$PROJECT_DIR/$doc" ] && cp "$PROJECT_DIR/$doc" "$BUILD_DIR/usr/share/doc/$PACKAGE_NAME/"
 done
 
+# docs/ : les images que le README affiche (liens relatifs docs/...). Elles
+# vont a cote du README, donc les liens restent valables dans le paquet.
+if [ -d "$PROJECT_DIR/docs" ]; then
+  cp -r "$PROJECT_DIR/docs" "$BUILD_DIR/usr/share/doc/$PACKAGE_NAME/"
+fi
+
 # Page de manuel et completions : generees par le binaire qu'on vient de
 # compiler (sous-commandes `man` et `completions`), donc toujours d'accord
 # avec les options reelles de cette version.

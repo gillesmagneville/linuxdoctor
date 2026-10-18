@@ -14,10 +14,18 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 Version de documentation : le programme est le même que celui de la 1.11.0 (aucune ligne de code
 livrée ne change). Ce qui change, c'est le README embarqué dans les paquets : écrit pour qui
 découvre LinuxDoctor, et complet, car toutes les sections utiles de l'ancien README y sont
-revenues.
+revenues ; et la capture de l'interface qu'il montre est maintenant dans les paquets aussi.
 
 ### Modifié
 
+- **Les paquets installent le dossier `docs/`.** `build-deb.sh` et `build-rpm.sh` ne copiaient
+  dans `/usr/share/doc/linuxdoctor/` que cinq fichiers de la racine (`README.md`, `CHANGELOG.md`,
+  `PROJECT_CONTEXT.md`, `ARCHITECTURE.md`, `LICENSE`) ; le lien relatif du README vers
+  `docs/linuxdoctor-tui.png` était donc cassé une fois le paquet installé. Les deux scripts copient
+  maintenant `docs/` à côté du README (les permissions sont normalisées ensuite comme le reste).
+  Vérifié sur une copie des lignes de mise en place des scripts ; **pas encore vu dans un vrai
+  paquet** : `fpm` n'est pas installé dans le conteneur de développement, la première
+  construction le montrera (`dpkg -c linuxdoctor_1.11.1_amd64.deb | grep docs`).
 - **Le README est plus court au début et s'adresse à qui découvre LinuxDoctor** : environnements
   visés, distributions et paquets, principes, ce que l'outil diagnostique, installation, commandes
   courantes, capture de l'interface (`docs/linuxdoctor-tui.png`). Ce texte est resté tel qu'il a

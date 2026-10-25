@@ -9,6 +9,12 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.11.2] - 2026-10-25
+
+Version de correction : une seule chose change dans le programme, le module de stockage
+(`STOR001`, `STOR002`). Il ne prend plus `efivarfs`, un DVD monté ou les systèmes de fichiers
+du noyau pour des disques pleins.
+
 ### Corrigé
 
 - **Les systèmes de fichiers du noyau ne sont plus pris pour des disques pleins (`STOR001`,

@@ -9,6 +9,35 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Corrigé
+
+- **Les systèmes de fichiers du noyau ne sont plus pris pour des disques pleins (`STOR001`,
+  `STOR002`).** `efivarfs`, qui contient les variables UEFI, ressortait en Critical (confiance
+  89 %) sous « Filesystem Usage — /sys/firmware/efi/efivars », avec la recommandation de
+  supprimer des fichiers : `df` le liste parce qu'il a une petite taille, presque entièrement
+  utilisée, alors que `proc`, `sysfs` ou `cgroup2`, de taille nulle, sont déjà masqués par
+  `df`. Ce n'est pas un disque qu'un administrateur remplit ni qu'il peut agrandir. Trois
+  changements, dans `is_real_filesystem` :
+  - `efivarfs`, `selinuxfs`, `resctrl` et `nfsd` rejoignent la liste des types ignorés (les
+    autres types du signalement — `sysfs`, `proc`, `tmpfs`, `devtmpfs`, `cgroup2`,
+    `securityfs` — y étaient déjà) ;
+  - tout ce qui est monté sous `/sys` ou `/proc` est ignoré, quel que soit son type, pour que le
+    prochain système de fichiers du noyau ne refasse pas la même erreur. Le chemin est comparé
+    composant par composant : `/sysroot` ou `/proc-backup` restent des disques ;
+  - les supports pleins par construction (`iso9660`, `udf`, `erofs`, `cramfs`, et `squashfs`
+    qui l'était déjà) sont ignorés par la même liste que celle de `STOR006`. Un DVD monté
+    ressortait à 100 %, en Critical, avec « les écritures échouent peut-être déjà ».
+  - La liste reste une liste d'exclusion, pas d'inclusion : une liste d'inclusion ferait
+    disparaître sans bruit `lustre`, `gpfs`, `virtiofs` ou le prochain vrai système de fichiers.
+  - Vérifié sur du texte `df` réaliste (une ligne `efivarfs` à 97 % et un DVD à 100 %, jusqu'aux
+    findings produits) ; **pas sur une vraie machine UEFI** : le conteneur de développement n'en
+    est pas une. Le texte exact que `df` imprime pour `efivarfs` n'a donc pas été relevé sur une
+    vraie machine, seulement sa forme.
+  - Tests : 6 nouveaux (les 26 types du noyau un par un, les 5 supports en lecture seule,
+    les montages sous `/sys` et `/proc`, `/sysroot` et ses semblables qui restent des disques,
+    15 types de vrais systèmes de fichiers qui restent signalés, et un test de bout en bout sur
+    du texte `df`).
+
 ## [1.11.1] - 2026-10-18
 
 Version de documentation : le programme est le même que celui de la 1.11.0 (aucune ligne de code

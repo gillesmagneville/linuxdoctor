@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::path::Path;
+
 use crate::core::context::Context;
 use crate::models::{Category, Confidence, Finding, Severity};
 
@@ -12,6 +14,14 @@ use super::{mounts, raid};
 /// container's own ephemeral layer, not persistent storage this tool's
 /// target audience (PROJECT_CONTEXT.md: sysadmins auditing a single
 /// machine) manages directly.
+///
+/// `df` hides the ones that have no size at all (`proc`, `sysfs`,
+/// `cgroup2`, ...), but not those that report a small one: `efivarfs`, the
+/// UEFI variable store, is a few hundred KiB that are nearly all in use,
+/// which would read as a Critical "nearly full" disk.
+///
+/// The filesystems that are full by construction (`iso9660`, `squashfs`,
+/// ...) are excluded too, through `mounts::READ_ONLY_BY_NATURE`.
 const EXCLUDED_FSTYPES: &[&str] = &[
     "tmpfs",
     "devtmpfs",
@@ -20,7 +30,10 @@ const EXCLUDED_FSTYPES: &[&str] = &[
     "cgroup",
     "cgroup2",
     "overlay",
-    "squashfs",
+    "efivarfs",
+    "selinuxfs",
+    "resctrl",
+    "nfsd",
     "devpts",
     "mqueue",
     "debugfs",
@@ -38,8 +51,21 @@ const EXCLUDED_FSTYPES: &[&str] = &[
     "hugetlbfs",
 ];
 
-fn is_real_filesystem(fstype: &str) -> bool {
-    if EXCLUDED_FSTYPES.contains(&fstype) {
+/// Where the kernel mounts what it provides itself. Whatever is mounted
+/// under these is a view of the kernel, however its type is named — which
+/// also covers the next pseudo-filesystem before the list above knows it.
+/// Compared by whole path components: `/sysroot` is a real mount.
+const KERNEL_MOUNT_ROOTS: [&str; 2] = ["/proc", "/sys"];
+
+fn is_real_filesystem(fstype: &str, mount_point: &str) -> bool {
+    if EXCLUDED_FSTYPES.contains(&fstype) || mounts::READ_ONLY_BY_NATURE.contains(&fstype) {
+        return false;
+    }
+    let mount_point = Path::new(mount_point);
+    if KERNEL_MOUNT_ROOTS
+        .iter()
+        .any(|root| mount_point.starts_with(root))
+    {
         return false;
     }
     // AppImage runtimes mount themselves via FUSE with a type string that
@@ -62,11 +88,15 @@ pub fn analyze(data: &StorageRawData, _ctx: &Context) -> Vec<Finding> {
     for fs in data
         .filesystems
         .iter()
-        .filter(|f| is_real_filesystem(&f.fstype))
+        .filter(|f| is_real_filesystem(&f.fstype, &f.mount_point))
     {
         findings.push(space_usage_finding(fs));
     }
-    for fs in data.inodes.iter().filter(|f| is_real_filesystem(&f.fstype)) {
+    for fs in data
+        .inodes
+        .iter()
+        .filter(|f| is_real_filesystem(&f.fstype, &f.mount_point))
+    {
         findings.push(inode_usage_finding(fs));
     }
 
@@ -484,6 +514,152 @@ mod tests {
             .evidence
             .iter()
             .any(|(k, v)| k == "mount_point" && v == "/"));
+    }
+
+    /// STOR001 and STOR002 findings the analysis produced for `data`, as
+    /// `(id, mount point)` pairs.
+    fn usage_findings(data: &StorageRawData) -> Vec<(String, String)> {
+        analyze(data, &ctx())
+            .into_iter()
+            .filter(|f| f.id == "STOR001" || f.id == "STOR002")
+            .map(|f| (f.id, f.instance.unwrap_or_default()))
+            .collect()
+    }
+
+    /// One mount, full on blocks and on inodes, of the given type and place.
+    fn full_mount(mount_point: &str, fstype: &str) -> StorageRawData {
+        StorageRawData {
+            filesystems: vec![fs(mount_point, fstype, 100.0)],
+            inodes: vec![inode(mount_point, fstype, 100.0)],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn excludes_every_kernel_pseudo_filesystem() {
+        // Mounted outside /sys and /proc on purpose: only the type decides here.
+        // `efivarfs` is the one a real machine showed as a Critical "full disk":
+        // `df` lists it because it has a small size, nearly all of it used.
+        for fstype in [
+            "efivarfs",
+            "selinuxfs",
+            "resctrl",
+            "nfsd",
+            "sysfs",
+            "proc",
+            "tmpfs",
+            "devtmpfs",
+            "cgroup",
+            "cgroup2",
+            "securityfs",
+            "debugfs",
+            "tracefs",
+            "configfs",
+            "fusectl",
+            "binfmt_misc",
+            "pstore",
+            "bpf",
+            "devpts",
+            "mqueue",
+            "hugetlbfs",
+            "ramfs",
+            "rpc_pipefs",
+            "autofs",
+            "nsfs",
+            "overlay",
+        ] {
+            assert_eq!(
+                usage_findings(&full_mount("/mnt/x", fstype)),
+                vec![],
+                "{fstype} must not be reported as a disk"
+            );
+        }
+    }
+
+    #[test]
+    fn excludes_images_that_are_full_by_construction() {
+        // A mounted ISO, a snap, an EROFS image: 100% used because that is
+        // what the medium is, not because anything filled up.
+        for fstype in ["iso9660", "udf", "squashfs", "erofs", "cramfs"] {
+            assert_eq!(
+                usage_findings(&full_mount("/mnt/x", fstype)),
+                vec![],
+                "{fstype} must not be reported as a full disk"
+            );
+        }
+    }
+
+    #[test]
+    fn excludes_whatever_is_mounted_under_sys_and_proc() {
+        // A kernel filesystem this list has never heard of still lives there.
+        for mount_point in [
+            "/sys",
+            "/proc",
+            "/sys/fs/futurefs",
+            "/sys/firmware/efi/efivars",
+            "/proc/fs/nfsd",
+            "/proc/sys/fs/binfmt_misc",
+        ] {
+            assert_eq!(
+                usage_findings(&full_mount(mount_point, "futurefs")),
+                vec![],
+                "{mount_point} is kernel-provided"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_real_filesystems_with_a_name_like_sys_or_proc() {
+        // `/sysroot` is a real mount on ostree systems; the match is on whole
+        // path components, not on the start of the text.
+        for mount_point in [
+            "/sysroot",
+            "/system",
+            "/proc-backup",
+            "/mnt/sys",
+            "/data/proc",
+        ] {
+            assert_eq!(
+                usage_findings(&full_mount(mount_point, "ext4")),
+                vec![
+                    ("STOR001".to_string(), mount_point.to_string()),
+                    ("STOR002".to_string(), mount_point.to_string()),
+                ],
+                "{mount_point} is a real disk"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_every_kind_of_real_filesystem() {
+        // Local, network, userspace and shared-folder filesystems all hold
+        // data an administrator can fill up.
+        for fstype in [
+            "ext4",
+            "xfs",
+            "btrfs",
+            "zfs",
+            "f2fs",
+            "vfat",
+            "exfat",
+            "ntfs3",
+            "fuseblk",
+            "nfs4",
+            "cifs",
+            "9p",
+            "virtiofs",
+            "lustre",
+            "fuse.sshfs",
+        ] {
+            assert_eq!(
+                usage_findings(&full_mount("/mnt/x", fstype)),
+                vec![
+                    ("STOR001".to_string(), "/mnt/x".to_string()),
+                    ("STOR002".to_string(), "/mnt/x".to_string()),
+                ],
+                "{fstype} is a real filesystem"
+            );
+        }
     }
 
     #[test]

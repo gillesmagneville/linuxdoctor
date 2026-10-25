@@ -1274,6 +1274,16 @@ a test names only the facts it is about.
 | `mounts.rs` | `STOR006` one per read-only mount | `/proc/mounts` against `/etc/fstab` |
 | `device.rs` | — | `disk_of`: the whole disk behind a partition name, for the `smartctl` commands |
 
+- `STOR001` and `STOR002` judge only what an administrator can fill up. `df` lists the kernel
+  filesystems that report a size, and one of them looks like a nearly full disk:
+  `efivarfs` (the UEFI variables, a few hundred KiB almost all in use). `is_real_filesystem`
+  therefore leaves out (1) the types in `EXCLUDED_FSTYPES` (`tmpfs`, `efivarfs`, `overlay`,
+  AppImage FUSE mounts, ...), (2) the media that are full by construction, the same
+  `READ_ONLY_BY_NATURE` list `STOR006` uses (`iso9660`, `squashfs`, ...), and (3) anything
+  mounted under `/sys` or `/proc`, whatever its type, so that the next kernel filesystem is
+  already covered. The path is compared by whole components (`/sysroot` is a real disk).
+  The list is a deny-list on purpose: an allow-list would silently drop `lustre`, `gpfs`,
+  `virtiofs` or whatever the next real filesystem is called.
 - `STOR005` is Info for a whole array (a check or a resync running on one is information),
   Warning while a spare is being filled or when the array is whole again with a failed device
   still listed, Error when it has no redundancy left and nothing is rebuilding, or when it

@@ -1419,6 +1419,27 @@ is exact, but a rate since boot also counts a burst long ago, and the explanatio
 steps are `dmesg`, `ethtool` and its error counters, `ethtool --show-eee` before `--set-eee … off`
 (Energy-Efficient Ethernet is a usual cause), a change of cable or port, and the counter watched.
 
+## SR-IOV and the drops of `NET002`
+
+`NET002` judges the worst of the four error and drop rates of an interface. With SR-IOV two kinds
+of interface make that rate less conclusive, and in both the severity goes down one tier (Error to
+Warning, Warning to Info) and the confidence to 65%, because the numbers are still directly
+observed but what they mean is less certain:
+
+- the **physical function** (PF) of active VFs, read from `device/sriov_numvfs` (`sriov_vfs`): on
+  some NIC and driver combinations the traffic steered to a VF is counted in the PF's `rx_dropped`.
+  The note is always added, even for a healthy PF, and says how many VFs there are;
+- the **virtual function** (VF) itself (`vf_of`), recognised by the `physfn` link that the kernel
+  creates in the PCI device of a VF and of nothing else (`collect::read_vf_parent`). Its PF is named
+  by the interface under `physfn/net/` (the first by name), or by the PCI address the link points
+  to when the PF has none. A VF has no cable, duplex or switch port of its own, so the sentence about
+  them is not given and the recommendation says to look at how the VF is used first (its traffic,
+  and the MAC, VLAN and trust settings that `ip link show` lists on the PF). The note is added only
+  when the rate reaches the Warning threshold (0.1%): a VF without drops has nothing to explain.
+  The evidence `sriov_vf_of` names the PF in every case.
+
+Inside a guest the VF is a plain PCI device with no `physfn`, so it is judged like any interface.
+
 ---
 
 # Testing Strategy

@@ -811,7 +811,11 @@ Thirteen modules, shipping end-to-end:
   Detects active SR-IOV VFs (`sriov_numvfs`) and downgrades the
   error/drop-rate severity and confidence accordingly — on some NIC/
   driver combinations, VF-steered traffic inflates the physical
-  function's `rx_dropped` without indicating a real link problem.
+  function's `rx_dropped` without indicating a real link problem. The
+  virtual functions themselves (`enp6s0v1`, found by the `physfn` link of
+  their PCI device) get the same treatment and an explanation of their
+  own: a VF has no cable or link of its own, so the cabling and
+  switch-port advice is not given for it.
 * **Security** — strictly read-only, usable without root (root only adds
   visibility, and each finding says what it could not see). Six topics
   (TUI submenu): **Listening services** (every TCP/UDP socket in
@@ -1074,7 +1078,7 @@ equivalent artifact. Nothing else to add.
 ## Tests
 
 ```bash
-cargo test               # 1524 lib unit tests + 95 CLI unit tests + 224 integration tests
+cargo test               # 1535 lib unit tests + 95 CLI unit tests + 225 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

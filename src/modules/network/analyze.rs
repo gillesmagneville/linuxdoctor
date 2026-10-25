@@ -129,8 +129,14 @@ fn interface_errors_finding(iface: &NetworkInterface) -> Finding {
     // downgrades severity by one tier and lowers confidence -- the raw
     // numbers are still directly observed, but what they *mean* is
     // genuinely less certain with VFs active.
+    //
+    // The same goes for a VF itself: it has no cable or link of its own (it
+    // shares its physical function's), and the NIC can steer traffic to it
+    // that nothing on the host consumes, which counts as RX drops too.
     let sriov_active = matches!(iface.sriov_vfs, Some(n) if n > 0);
-    if sriov_active && severity > Severity::Info {
+    let is_vf = iface.vf_of.is_some();
+    let flagged = severity > Severity::Info;
+    if (sriov_active || is_vf) && flagged {
         severity = match severity {
             Severity::Error => Severity::Warning,
             Severity::Warning => Severity::Info,
@@ -139,8 +145,21 @@ fn interface_errors_finding(iface: &NetworkInterface) -> Finding {
         confidence = Confidence::weak_indication(65);
     }
 
-    let sriov_note = match iface.sriov_vfs {
-        Some(n) if n > 0 => format!(
+    let sriov_note = match (&iface.vf_of, iface.sriov_vfs) {
+        // Only said when the numbers call for it: a VF without drops has
+        // nothing to explain.
+        (Some(pf), _) if flagged => format!(
+            " This interface is an SR-IOV virtual function (VF) of {pf}. A VF \
+             has no cable or link of its own: it shares {pf}'s. The NIC can \
+             steer traffic to a VF that nothing on the host consumes \
+             (broadcast and multicast frames, for example), and that is \
+             counted as RX drops without being a link problem, so these \
+             numbers are less conclusive here than they would be on a \
+             physical interface. Compare them with this VF's own traffic and \
+             with {pf}'s counters (`ip -s link show <iface>`)."
+        ),
+        (Some(_), _) => String::new(),
+        (None, Some(n)) if n > 0 => format!(
             " This interface has {n} active SR-IOV VF{s} — on some NIC/driver \
              combinations, traffic steered to a VF's own queue is counted in \
              the physical function's rx_dropped without indicating a real \
@@ -159,12 +178,18 @@ fn interface_errors_finding(iface: &NetworkInterface) -> Finding {
             iface.name
         )
     } else {
+        // A VF has no cable, duplex or switch port: the note says what it is.
+        let physical_advice = if is_vf {
+            ""
+        } else {
+            " Sustained rates like this commonly point to a cabling, \
+             driver, duplex-mismatch, or switch-port problem rather than \
+             normal network conditions."
+        };
         format!(
             "{}: RX errors {rx_err_pct:.2}%, RX drops {rx_drop_pct:.2}%, TX \
-             errors {tx_err_pct:.2}%, TX drops {tx_drop_pct:.2}% of packets. \
-             Sustained rates like this commonly point to a cabling, \
-             driver, duplex-mismatch, or switch-port problem rather than \
-             normal network conditions.{sriov_note}",
+             errors {tx_err_pct:.2}%, TX drops {tx_drop_pct:.2}% of \
+             packets.{physical_advice}{sriov_note}",
             iface.name
         )
     };
@@ -188,11 +213,21 @@ fn interface_errors_finding(iface: &NetworkInterface) -> Finding {
     if let Some(n) = iface.sriov_vfs {
         builder = builder.evidence("sriov_vfs", n.to_string());
     }
+    if let Some(pf) = &iface.vf_of {
+        builder = builder.evidence("sriov_vf_of", pf.clone());
+    }
 
     builder = builder.explanation(explanation);
 
     if severity > Severity::Info {
-        let recommendation = if sriov_active {
+        let recommendation = if is_vf {
+            "A VF has no cable or switch port of its own, so look at how it \
+             is used before suspecting the link: compare its drops with its \
+             own traffic (`ip -s link show <vf-iface>`) and check its MAC, \
+             VLAN and trust settings on the physical function (`ip link show \
+             <pf-iface>` lists them). Only if neither explains it, check the \
+             physical function's `ethtool <pf-iface>`, cable and switch port."
+        } else if sriov_active {
             "Compare against the VF interfaces' own traffic (`ip -s link \
              show <vf-iface>`) before assuming a cabling/driver problem — \
              with SR-IOV active, elevated PF rx_dropped is often explained \
@@ -329,6 +364,7 @@ mod tests {
             speed_mbps: Some(1000),
             carrier: Some(true),
             sriov_vfs: None,
+            vf_of: None,
             rx_bytes: 1_000_000,
             rx_packets,
             rx_errors: 0,
@@ -628,6 +664,122 @@ mod tests {
         let net002 = findings.iter().find(|f| f.id == "NET002").unwrap();
         assert_eq!(net002.severity, Severity::Error);
         assert!(!net002.explanation.contains("SR-IOV"));
+    }
+
+    /// `iface` through the whole analysis, and its NET002 finding.
+    fn net002_of(iface: NetworkInterface) -> Finding {
+        let data = NetworkRawData {
+            interfaces: vec![iface],
+            route: route(true),
+            dns_servers: vec!["8.8.8.8".to_string()],
+            ..Default::default()
+        };
+        analyze(&data, &ctx())
+            .into_iter()
+            .find(|f| f.id == "NET002")
+            .unwrap()
+    }
+
+    /// A virtual function of `enp6s0`, with the given traffic and drops.
+    fn vf(rx_packets: u64, rx_dropped: u64) -> NetworkInterface {
+        let mut vf = iface("enp6s0v1", rx_packets, rx_dropped);
+        vf.vf_of = Some("enp6s0".to_string());
+        vf
+    }
+
+    fn evidence<'a>(f: &'a Finding, key: &str) -> Option<&'a str> {
+        f.evidence
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn a_virtual_function_with_heavy_drops_is_downgraded_and_explained() {
+        let net002 = net002_of(vf(150_102, 37_175)); // ~24.8% drop rate
+        assert_eq!(net002.severity, Severity::Warning); // downgraded from Error
+        assert_eq!(net002.confidence.percent, 65);
+        assert!(
+            net002.explanation.contains(
+                "This interface is an SR-IOV virtual function (VF) of enp6s0. \
+                 A VF has no cable or link of its own: it shares enp6s0's."
+            ),
+            "{}",
+            net002.explanation
+        );
+        assert!(net002.explanation.contains("less conclusive here"));
+        // The advice for a physical interface does not apply to a VF.
+        assert!(!net002.explanation.contains("cabling"));
+        assert_eq!(evidence(&net002, "sriov_vf_of"), Some("enp6s0"));
+        let advice = net002.recommendation.as_deref().unwrap();
+        assert!(advice.contains("A VF has no cable or switch port of its own"));
+        assert!(advice.contains("`ip link show <pf-iface>`"));
+        assert!(!advice.contains("duplex negotiation"));
+    }
+
+    #[test]
+    fn a_virtual_function_with_moderate_drops_is_info_but_keeps_the_explanation() {
+        // 0.5% of the packets: a Warning on a physical interface.
+        let net002 = net002_of(vf(10_000, 50));
+        assert_eq!(net002.severity, Severity::Info);
+        assert!(net002
+            .explanation
+            .contains("virtual function (VF) of enp6s0"));
+        assert!(net002.recommendation.is_none());
+    }
+
+    #[test]
+    fn a_virtual_function_without_drops_gets_no_note() {
+        let net002 = net002_of(vf(10_000, 0));
+        assert_eq!(net002.severity, Severity::Info);
+        assert_eq!(
+            net002.explanation,
+            "enp6s0v1: error/drop rates are all comfortably low (worst: 0.00%)."
+        );
+        // It is still said what it is.
+        assert_eq!(evidence(&net002, "sriov_vf_of"), Some("enp6s0"));
+    }
+
+    #[test]
+    fn a_physical_interface_keeps_the_cabling_advice_and_no_vf_note() {
+        let net002 = net002_of(iface("enp6s0", 150_102, 37_175));
+        assert_eq!(net002.severity, Severity::Error);
+        assert!(net002
+            .explanation
+            .contains("commonly point to a cabling, driver, duplex-mismatch"));
+        assert!(!net002.explanation.contains("virtual function"));
+        assert_eq!(evidence(&net002, "sriov_vf_of"), None);
+        assert!(net002
+            .recommendation
+            .as_deref()
+            .unwrap()
+            .contains("duplex negotiation"));
+    }
+
+    #[test]
+    fn a_card_with_a_single_virtual_function_is_treated_like_one_with_several() {
+        let mut pf = iface("enp6s0", 150_102, 37_175);
+        pf.sriov_vfs = Some(1);
+        let net002 = net002_of(pf);
+        assert_eq!(net002.severity, Severity::Warning); // downgraded from Error
+        assert!(
+            net002
+                .explanation
+                .contains("has 1 active SR-IOV VF \u{2014}"),
+            "{}",
+            net002.explanation
+        );
+    }
+
+    #[test]
+    fn the_physical_function_of_vfs_keeps_its_own_note() {
+        let mut pf = iface("enp6s0", 150_102, 37_175);
+        pf.sriov_vfs = Some(2);
+        let net002 = net002_of(pf);
+        assert!(net002.explanation.contains("has 2 active SR-IOV VFs"));
+        assert!(!net002.explanation.contains("virtual function (VF) of"));
+        assert_eq!(evidence(&net002, "sriov_vfs"), Some("2"));
+        assert_eq!(evidence(&net002, "sriov_vf_of"), None);
     }
 
     #[test]

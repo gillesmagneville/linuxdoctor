@@ -26,6 +26,7 @@ fn healthy_iface(name: &str) -> NetworkInterface {
         speed_mbps: Some(1000),
         carrier: Some(true),
         sriov_vfs: None,
+        vf_of: None,
         rx_bytes: 5_000_000,
         rx_packets: 5000,
         rx_errors: 0,
@@ -72,6 +73,7 @@ fn real_sandbox_drop_rate_fixture_produces_error() {
             speed_mbps: None, // this sandbox's eth0 reports speed = -1 (unknown)
             carrier: Some(true),
             sriov_vfs: None,
+            vf_of: None,
             rx_bytes: 29783,
             rx_packets: 99,
             rx_errors: 0,
@@ -131,6 +133,7 @@ fn sriov_interface_with_high_pf_rx_dropped_is_not_a_confident_error() {
             speed_mbps: Some(10000),
             carrier: Some(true),
             sriov_vfs: Some(2),
+            vf_of: None,
             rx_bytes: 200_000_000,
             rx_packets: 150_102,
             rx_errors: 0,
@@ -163,6 +166,71 @@ fn sriov_interface_with_high_pf_rx_dropped_is_not_a_confident_error() {
         .as_ref()
         .unwrap()
         .contains("VF interfaces"));
+}
+
+/// The virtual functions themselves (enp6s0v1, enp6s0v2), found as VFs from
+/// the links the kernel puts in `/sys`, with the drops a VF shows: they get
+/// the same explanation as their physical function, not the advice about
+/// cables and switch ports that a VF has none of.
+#[test]
+fn the_virtual_functions_of_a_card_are_explained_as_such() {
+    use linuxdoctor::modules::network::collect::read_vf_parent;
+    use std::os::unix::fs::symlink;
+
+    let root =
+        std::env::temp_dir().join(format!("linuxdoctor-network-vf-it-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let devices = root.join("devices");
+    std::fs::create_dir_all(devices.join("0000:06:00.0/net/enp6s0")).unwrap();
+    let mut interfaces = Vec::new();
+    for (number, pci) in [(1, "0000:06:10.0"), (2, "0000:06:10.1")] {
+        let name = format!("enp6s0v{number}");
+        std::fs::create_dir_all(devices.join(pci)).unwrap();
+        symlink("../0000:06:00.0", devices.join(pci).join("physfn")).unwrap();
+        let dir = root.join("class/net").join(&name);
+        std::fs::create_dir_all(&dir).unwrap();
+        symlink(devices.join(pci), dir.join("device")).unwrap();
+        let mut vf = healthy_iface(&name);
+        vf.vf_of = read_vf_parent(&dir);
+        vf.rx_packets = 150_102;
+        vf.rx_dropped = 37_175; // ~24.8%, as on the card they belong to
+        interfaces.push(vf);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+
+    let data = NetworkRawData {
+        interfaces,
+        route: RouteInfo {
+            has_default_route: true,
+            default_gateway: Some("192.168.1.1".to_string()),
+            default_route_interface: Some("enp6s0".to_string()),
+        },
+        dns_servers: vec!["8.8.8.8".to_string()],
+        ..Default::default()
+    };
+    let findings = analyze(&data, &test_context());
+
+    for name in ["enp6s0v1", "enp6s0v2"] {
+        let net002 = findings
+            .iter()
+            .find(|f| f.id == "NET002" && f.instance.as_deref() == Some(name))
+            .unwrap();
+        assert_eq!(net002.severity, Severity::Warning, "{name}");
+        assert!(net002.confidence.percent < 76, "{name}");
+        assert!(
+            net002
+                .explanation
+                .contains("SR-IOV virtual function (VF) of enp6s0."),
+            "{name}: {}",
+            net002.explanation
+        );
+        assert!(!net002.explanation.contains("cabling"), "{name}");
+        assert!(net002
+            .recommendation
+            .as_ref()
+            .unwrap()
+            .contains("A VF has no cable or switch port of its own"));
+    }
 }
 
 /// A connection table that is nearly full, from the figures the kernel

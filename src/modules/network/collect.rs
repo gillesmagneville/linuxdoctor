@@ -2,8 +2,10 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 
 use crate::core::error::ModuleError;
+use crate::core::text::clean;
 use crate::modules::saturation::Fill;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +27,14 @@ pub struct NetworkInterface {
     /// queue gets counted in the physical function's `rx_dropped`
     /// without indicating an actual link/cabling problem.
     pub sriov_vfs: Option<u32>,
+    /// When this interface is itself an SR-IOV virtual function (VF): the
+    /// physical function (PF) it belongs to, by the name of the PF's network
+    /// interface, or by its PCI address when it has none. `None` for
+    /// anything that is not a VF. A VF has no cable and no link of its own
+    /// (it shares its PF's), and the NIC steers traffic to it that nothing on
+    /// the host may consume, so its RX drops say less about a problem than
+    /// a physical interface's do. See analyze.rs.
+    pub vf_of: Option<String>,
     pub rx_bytes: u64,
     pub rx_packets: u64,
     pub rx_errors: u64,
@@ -120,6 +130,7 @@ pub fn collect() -> Result<NetworkRawData, ModuleError> {
         let sriov_vfs = fs::read_to_string(format!("{sys_path}/device/sriov_numvfs"))
             .ok()
             .and_then(|s| s.trim().parse().ok());
+        let vf_of = read_vf_parent(Path::new(&sys_path));
 
         let s = stats.get(&name).cloned().unwrap_or_default();
 
@@ -131,6 +142,7 @@ pub fn collect() -> Result<NetworkRawData, ModuleError> {
             speed_mbps,
             carrier,
             sriov_vfs,
+            vf_of,
             rx_bytes: s.rx_bytes,
             rx_packets: s.rx_packets,
             rx_errors: s.rx_errors,
@@ -150,6 +162,30 @@ pub fn collect() -> Result<NetworkRawData, ModuleError> {
         bonds: super::bonding::read(std::path::Path::new("/")),
         links: super::carrier::read(std::path::Path::new("/")),
     })
+}
+
+/// Longest physical-function name kept.
+const MAX_PF_NAME: usize = 64;
+
+/// The physical function an SR-IOV virtual function belongs to, from the
+/// interface's directory under `/sys/class/net`. The PCI device of a VF has a
+/// `physfn` link to its PF's device, which no other device has; the PF's own
+/// interface is listed under that device's `net/`. The name of that interface
+/// when there is one (the first, if there are several), else the PCI address
+/// the link points to. `None` when the interface is not a VF.
+pub fn read_vf_parent(iface_dir: &Path) -> Option<String> {
+    let physfn = iface_dir.join("device/physfn");
+    let target = fs::read_link(&physfn).ok()?;
+    let address = target.file_name()?.to_str()?;
+    let name = fs::read_dir(physfn.join("net"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .min()
+        .unwrap_or_else(|| address.to_string());
+    Some(clean(&name, MAX_PF_NAME))
 }
 
 fn list_interface_names() -> Vec<String> {
@@ -333,5 +369,89 @@ eth0\t000200C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0
     #[test]
     fn empty_resolv_conf_is_empty_list() {
         assert!(parse_resolv_conf("search example.com\n").is_empty());
+    }
+
+    // --- SR-IOV virtual functions -----------------------------------------
+
+    use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+
+    /// What `/sys` looks like for a VF: `class/net/<vf>/device` is a link to
+    /// the VF's PCI device, which has a relative `physfn` link to the PF's
+    /// PCI device, and the PF's interfaces are under that device's `net/`.
+    fn vf_tree(case: &str, pf_interfaces: &[&str]) -> (PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "linuxdoctor-network-vf-{case}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let devices = root.join("devices");
+        fs::create_dir_all(devices.join("0000:06:00.1")).unwrap();
+        fs::create_dir_all(devices.join("0000:06:00.0/net")).unwrap();
+        for name in pf_interfaces {
+            fs::create_dir_all(devices.join("0000:06:00.0/net").join(name)).unwrap();
+        }
+        symlink("../0000:06:00.0", devices.join("0000:06:00.1/physfn")).unwrap();
+        let vf = root.join("class/net/enp6s0v1");
+        fs::create_dir_all(&vf).unwrap();
+        symlink(devices.join("0000:06:00.1"), vf.join("device")).unwrap();
+        (root, vf)
+    }
+
+    #[test]
+    fn a_virtual_function_names_its_physical_function() {
+        let (root, vf) = vf_tree("named", &["enp6s0"]);
+        assert_eq!(read_vf_parent(&vf).as_deref(), Some("enp6s0"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_physical_function_without_an_interface_is_named_by_its_pci_address() {
+        // For example one that is bound to vfio-pci, or whose driver is not loaded.
+        let (root, vf) = vf_tree("address", &[]);
+        assert_eq!(read_vf_parent(&vf).as_deref(), Some("0000:06:00.0"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn with_several_interfaces_the_first_by_name_is_used() {
+        let (root, vf) = vf_tree("several", &["enp6s0f1", "enp6s0f0", "enp6s0f2"]);
+        assert_eq!(read_vf_parent(&vf).as_deref(), Some("enp6s0f0"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_name_from_the_machine_is_cleaned() {
+        let (root, vf) = vf_tree("hostile", &["pf\u{1b}[31m"]);
+        assert_eq!(read_vf_parent(&vf).as_deref(), Some("pf?[31m"));
+        fs::remove_dir_all(root).unwrap();
+
+        // 64 characters are kept whole; more are cut, with a mark.
+        let exact = "p".repeat(64);
+        let (root, vf) = vf_tree("exact", &[exact.as_str()]);
+        assert_eq!(read_vf_parent(&vf), Some(exact));
+        fs::remove_dir_all(root).unwrap();
+
+        let long = "p".repeat(65);
+        let (root, vf) = vf_tree("long", &[long.as_str()]);
+        assert_eq!(read_vf_parent(&vf), Some(format!("{}…", "p".repeat(64))));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_physical_card_and_a_virtual_interface_are_not_virtual_functions() {
+        let (root, _) = vf_tree("plain", &["enp6s0"]);
+        // The PF itself: a PCI device, but with no `physfn`.
+        let pf = root.join("class/net/enp6s0");
+        fs::create_dir_all(&pf).unwrap();
+        symlink(root.join("devices/0000:06:00.0"), pf.join("device")).unwrap();
+        assert_eq!(read_vf_parent(&pf), None);
+        // A bridge or a tunnel: no `device` at all.
+        let bridge = root.join("class/net/br0");
+        fs::create_dir_all(&bridge).unwrap();
+        assert_eq!(read_vf_parent(&bridge), None);
+        // An interface that does not exist.
+        assert_eq!(read_vf_parent(&root.join("class/net/missing")), None);
+        fs::remove_dir_all(root).unwrap();
     }
 }

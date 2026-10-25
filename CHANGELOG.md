@@ -9,6 +9,39 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Corrigé
+
+- **Les interfaces SR-IOV virtuelles (VF) ont maintenant leur propre explication (`NET002`).**
+  Le rapport de `enp6s0v1` et `enp6s0v2` donnait un taux de RX drops sans dire qu'il peut être
+  normal pour une VF, et l'ancien conseil (câble, duplex, port du commutateur) ne veut rien dire
+  pour une VF, qui n'a ni câble ni lien à elle. **Ce n'est pas une régression du code** : la note
+  SR-IOV existe depuis la 1.0.0, et elle n'a jamais été écrite que pour la carte physique
+  (`enp6s0`, qui voit ses VF par `sriov_numvfs`) ; les VF elles-mêmes n'avaient aucun traitement,
+  dans aucune version. Elles en ont un, du même ordre que celui de la carte physique :
+  - une interface est reconnue comme VF par le lien `physfn` de son périphérique PCI (que le noyau
+    ne crée que pour les VF) ; la carte physique dont elle dépend est nommée par son interface
+    (`enp6s0`), ou par son adresse PCI si elle n'en a pas ;
+  - quand les drops ou les erreurs atteignent 0,1 % des paquets, la sévérité baisse d'un palier et
+    la confiance passe à 65 %, comme pour la carte physique ; l'explication dit que l'interface est
+    une VF de `enp6s0`, qu'elle partage le lien de sa carte physique et que le NIC peut lui envoyer
+    du trafic que rien ne consomme (diffusion, multicast) ; la phrase sur le câble et le duplex n'est
+    pas donnée ;
+  - la recommandation dit de regarder d'abord comment la VF est utilisée (son trafic, ses réglages
+    MAC, VLAN et confiance, que `ip link show` liste sur la carte physique), puis seulement le
+    câble et le port de la carte physique ;
+  - une VF sans drops n'a pas de note à porter (rien à expliquer) ; la preuve `sriov_vf_of` nomme sa
+    carte physique dans tous les cas.
+  - Les cartes physiques, avec ou sans VF, ne changent pas d'un mot.
+  - Vérifié sur de faux `/sys` qui reproduisent la forme des liens du noyau (`device`, `physfn`,
+    `net/`), jusqu'aux findings de `enp6s0v1` et `enp6s0v2` ; **pas sur une vraie machine avec
+    des VF** : le conteneur de développement n'en a pas. Que l'explication soit juste pour votre
+    carte (ici, que les drops des VF viennent bien de trafic que rien ne consomme) reste à confirmer
+    chez vous.
+  - Tests : 12 nouveaux (la lecture des liens : carte nommée, adresse PCI, plusieurs interfaces, noms
+    nettoyés et coupés à 64 caractères, carte physique et interface virtuelle qui ne sont pas des
+    VF ; les trois cas de drops d'une VF ; la carte physique inchangée ; une carte à une seule VF ;
+    et un test de bout en bout sur `enp6s0v1` et `enp6s0v2`).
+
 ## [1.11.2] - 2026-10-25
 
 Version de correction : une seule chose change dans le programme, le module de stockage

@@ -30,8 +30,9 @@ const FSTAB: &str = "etc/fstab";
 const MAX_LINES: usize = 4096;
 const MAX_FIELD: usize = 200;
 /// Filesystems that are read-only by nature: it is the medium, not a
-/// reaction to an error.
-const READ_ONLY_BY_NATURE: [&str; 5] = ["iso9660", "udf", "squashfs", "erofs", "cramfs"];
+/// reaction to an error. They are also full by construction, which is why
+/// STOR001/STOR002 leave them out.
+pub(super) const READ_ONLY_BY_NATURE: [&str; 5] = ["iso9660", "udf", "squashfs", "erofs", "cramfs"];
 
 /// A mount that fstab wants writable and the kernel serves read-only.
 #[derive(Debug, Clone, PartialEq)]

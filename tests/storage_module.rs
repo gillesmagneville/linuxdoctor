@@ -83,6 +83,45 @@ Filesystem     Type    Inodes  IUsed    IFree IUse% Mounted on
 }
 
 #[test]
+fn efivarfs_and_a_mounted_iso_are_not_reported_as_full_disks() {
+    // What `df -kPT` prints on a UEFI machine with a DVD image mounted:
+    // efivarfs has a small size that is almost all used, and an ISO is
+    // 100% used by construction. Neither is a disk an administrator fills up.
+    let space = "\
+Filesystem     Type     1024-blocks      Used Available Capacity Mounted on
+/dev/nvme0n1p2 ext4       479079292 190134884 264504092      42% /
+efivarfs       efivarfs         256       244         8      97% /sys/firmware/efi/efivars
+/dev/nvme0n1p1 vfat          523248      6216    517032       2% /boot/efi
+/dev/sr0       iso9660      3651584   3651584         0     100% /media/user/DVD
+";
+    let inodes = "\
+Filesystem     Type      Inodes  IUsed     IFree IUse% Mounted on
+/dev/nvme0n1p2 ext4    30531584 612310  29919274    2% /
+/dev/nvme0n1p1 vfat           0      0         0     - /boot/efi
+/dev/sr0       iso9660        0      0         0     - /media/user/DVD
+";
+    let data = StorageRawData {
+        filesystems: parse_space_usage(space).unwrap(),
+        inodes: parse_inode_usage(inodes).unwrap(),
+        ..Default::default()
+    };
+
+    let findings = analyze(&data, &test_context());
+
+    let mut mounts: Vec<&str> = findings
+        .iter()
+        .filter(|f| f.id == "STOR001")
+        .map(|f| f.instance.as_deref().unwrap())
+        .collect();
+    mounts.sort_unstable();
+    assert_eq!(mounts, ["/", "/boot/efi"]);
+    assert!(findings
+        .iter()
+        .filter(|f| f.id == "STOR001" || f.id == "STOR002")
+        .all(|f| f.severity == Severity::Info));
+}
+
+#[test]
 fn a_degraded_array_fixture_is_an_error_naming_the_array() {
     let data = StorageRawData {
         raid: raid::parse_mdstat(

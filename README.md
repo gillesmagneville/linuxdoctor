@@ -693,7 +693,9 @@ Thirteen modules, shipping end-to-end:
   handles multi-socket machines: `/proc/cpuinfo` is grouped by physical
   socket rather than collapsed into one aggregate.
 * **Storage** — disk space and inode usage per real filesystem (pseudo
-  filesystems like tmpfs/proc/overlay/AppImage FUSE mounts are excluded),
+  filesystems like tmpfs/proc/efivarfs/overlay/AppImage FUSE mounts,
+  anything mounted under `/sys` or `/proc`, and read-only images such as ISO
+  or squashfs are excluded),
   4 severity tiers, plus per-device SMART health (`smartctl` JSON output —
   ATA "big four" attributes and NVMe health log) in its own submenu,
   separate from the filesystem instances. It also reads the state of the
@@ -1072,7 +1074,7 @@ equivalent artifact. Nothing else to add.
 ## Tests
 
 ```bash
-cargo test               # 1519 lib unit tests + 95 CLI unit tests + 223 integration tests
+cargo test               # 1524 lib unit tests + 95 CLI unit tests + 224 integration tests
 cargo run --example demo_severity      # visually check WARNING/ERROR/CRITICAL
                                         # rendering using synthetic low-memory data
 cargo run --example demo_tui_snapshot  # headless "screenshot" of the TUI (no real

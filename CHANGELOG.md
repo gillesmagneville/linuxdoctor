@@ -9,6 +9,12 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.11.3] - 2026-10-25
+
+Version de correction : une seule chose change dans le programme, le module réseau (`NET002`).
+Les interfaces SR-IOV virtuelles (VF) ont leur propre explication, au lieu de recevoir le conseil
+câble-duplex-commutateur qui ne s'applique qu'à une carte physique.
+
 ### Corrigé
 
 - **Les interfaces SR-IOV virtuelles (VF) ont maintenant leur propre explication (`NET002`).**

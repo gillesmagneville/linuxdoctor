@@ -645,7 +645,7 @@ in-memory code and the other renderers never see it.
   the optional top-level `filter` object below was added without a bump.)
 - **Removing**, renaming or re-typing a field, or changing what a value means
   (for example the unit of an evidence value), **bumps** it by one, with a
-  `### Changé` entry in `CHANGELOG.md`.
+  `### Changed` entry in `CHANGELOG.md`.
 - Evidence keys and finding ids are part of the contract in the same way: a finding's
   `id` keeps its meaning forever; a retired id is not reused.
 

@@ -1,2 +1,0 @@
-b5e535b152397916f931f29de0101ec2610fd653dce1ee8e95d92c3e3d01cba2  linuxdoctor_1.7.0_amd64.deb
-3f82c016df75e8c4e27a7b2508faba949be5b2820fb24b8ba34ea8bd1f157db2  linuxdoctor-1.7.0-1.x86_64.rpm

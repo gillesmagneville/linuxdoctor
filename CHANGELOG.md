@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and `CONTRIBUTING.md` were written in French; they are now in English, like `README.md`,
   `ARCHITECTURE.md` and `PROJECT_CONTEXT.md`, because LinuxDoctor is aimed at system engineers
   and advanced support staff. `CONTRIBUTING.md` says so in its "Documentation" section. No
-  change to the program.
+  change to the program. The packaging scripts `build-deb.sh` and `build-rpm.sh` (help text,
+  messages and comments) are in English too; their confirmation prompt is now `Build? [y/N]`
+  and accepts only `y` or `Y` (it used to accept `o` as well).
 
 ## [1.11.3] - 2026-10-25
 

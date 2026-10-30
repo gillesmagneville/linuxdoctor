@@ -123,7 +123,8 @@ output format), update `CHANGELOG.md` in the same pull request, under
 The documentation of this project is in English only: the audience is system
 engineers and advanced support staff, who work in English. Please write
 `README.md`, `ARCHITECTURE.md`, `PROJECT_CONTEXT.md`, `CHANGELOG.md` and this
-file in English.
+file in English. The same goes for the code and its comments, and for the help text,
+messages and comments of the packaging scripts (`build-deb.sh`, `build-rpm.sh`).
 
 ## Questions
 

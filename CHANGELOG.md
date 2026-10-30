@@ -9,21 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- **The documentation is now in English only.** `CHANGELOG.md` (every entry, from 0.1.0 on)
-  and `CONTRIBUTING.md` were written in French; they are now in English, like `README.md`,
-  `ARCHITECTURE.md` and `PROJECT_CONTEXT.md`, because LinuxDoctor is aimed at system engineers
-  and advanced support staff. `CONTRIBUTING.md` says so in its "Documentation" section. No
-  change to the program. The packaging scripts `build-deb.sh` and `build-rpm.sh` (help text,
-  messages and comments) are in English too; their confirmation prompt is now `Build? [y/N]`
-  and accepts only `y` or `Y` (it used to accept `o` as well).
-
-## [1.11.3] - 2026-10-25
+## [1.11.3] - 2026-10-30
 
 Bug-fix release: only one thing changes in the program, the network module (`NET002`).
 SR-IOV virtual interfaces (VFs) get their own explanation, instead of receiving the
 cable-duplex-switch advice that only applies to a physical card.
+The documentation and the packaging scripts are also now in English (see "Changed" below);
+the program itself is not affected by that.
 
 ### Fixed
 
@@ -57,6 +49,16 @@ cable-duplex-switch advice that only applies to a physical card.
     and cut to 64 characters, physical card and virtual interface that are not VFs; the three
     drop cases of a VF; the physical card unchanged; a card with a single VF; and an end-to-end
     test on `enp6s0v1` and `enp6s0v2`).
+
+### Changed
+
+- **The documentation is now in English only.** `CHANGELOG.md` (every entry, from 0.1.0 on)
+  and `CONTRIBUTING.md` were written in French; they are now in English, like `README.md`,
+  `ARCHITECTURE.md` and `PROJECT_CONTEXT.md`, because LinuxDoctor is aimed at system engineers
+  and advanced support staff. `CONTRIBUTING.md` says so in its "Documentation" section. No
+  change to the program. The packaging scripts `build-deb.sh` and `build-rpm.sh` (help text,
+  messages and comments) are in English too; their confirmation prompt is now `Build? [y/N]`
+  and accepts only `y` or `Y` (it used to accept `o` as well).
 
 ## [1.11.2] - 2026-10-25
 

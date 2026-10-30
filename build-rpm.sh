@@ -5,15 +5,15 @@ set -euo pipefail
 # ============================================================
 # LinuxDoctor - build-rpm.sh
 #
-# Construit un paquet .rpm (Fedora, RHEL, Rocky, AlmaLinux, openSUSE, ...)
-# avec fpm. Meme structure et memes principes que build-deb.sh : voir ce
-# fichier pour les commentaires detailles sur chaque etape.
+# Builds a .rpm package (Fedora, RHEL, Rocky, AlmaLinux, openSUSE, ...)
+# with fpm. Same structure and same principles as build-deb.sh: see
+# that file for the detailed comments on each step.
 # ============================================================
 
 PACKAGE_NAME="linuxdoctor"
-MAINTAINER="Your Name <you@example.com>"   # <-- a personnaliser
+MAINTAINER="Your Name <you@example.com>"   # <-- to customize
 DESCRIPTION="Fast, explainable Linux health diagnostics"
-URL="https://github.com/gillesmagneville/linuxdoctor"   # <-- a verifier
+URL="https://github.com/gillesmagneville/linuxdoctor"   # <-- to check
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$HOME/linuxdoctor-build/rpm"
@@ -24,17 +24,17 @@ show_help() {
   cat <<EOF
 Usage: ./build-rpm.sh [options]
 
-Construit un paquet .rpm pour LinuxDoctor.
+Builds a .rpm package for LinuxDoctor.
 
-  --major               Incremente le numero majeur (1.2.3 -> 2.0.0)
-  --minor               Incremente le numero mineur (1.2.3 -> 1.3.0)
-  --patch               Incremente le numero de patch (1.2.3 -> 1.2.4)
-  --no-version-change   Reconstruit sans changer la version
-  --yes, -y             Ne pas demander de confirmation avant de construire
-  --clean               Nettoie le dossier de build et les .rpm generes
-  --help, -h            Affiche cette aide
+  --major               Bump the major number (1.2.3 -> 2.0.0)
+  --minor               Bump the minor number (1.2.3 -> 1.3.0)
+  --patch               Bump the patch number (1.2.3 -> 1.2.4)
+  --no-version-change   Rebuild without changing the version
+  --yes, -y             Do not ask for confirmation before building
+  --clean               Remove the build folder and the generated .rpm files
+  --help, -h            Show this help
 
-Sans argument de version : mode interactif (necessite un terminal).
+Without a version option: interactive mode (needs a terminal).
 EOF
 }
 
@@ -52,71 +52,71 @@ while [[ $# -gt 0 ]]; do
     --yes|-y) ASSUME_YES=true; shift ;;
     --clean) CLEAN=true; shift ;;
     --help|-h) show_help; exit 0 ;;
-    *) echo "Option inconnue : $1"; show_help; exit 1 ;;
+    *) echo "Unknown option: $1"; show_help; exit 1 ;;
   esac
 done
 
 if [ "$CLEAN" = true ]; then
-  echo ">>> Nettoyage du dossier de build et des .rpm generes..."
+  echo ">>> Cleaning the build folder and the generated .rpm files..."
   rm -rf "$BUILD_DIR"
   rm -f "$PROJECT_DIR"/*.rpm
-  echo ">>> Termine."
+  echo ">>> Done."
   exit 0
 fi
 
-# --- Verification des outils requis ---
+# --- Checking the required tools ---
 if ! command -v fpm &> /dev/null; then
-  echo "Erreur : fpm n'est pas installe."
-  echo "Installe-le avec : gem install --user-install fpm"
+  echo "Error: fpm is not installed."
+  echo "Install it with: gem install --user-install fpm"
   exit 1
 fi
 if ! command -v cargo &> /dev/null; then
-  echo "Erreur : cargo (Rust) n'est pas installe. Voir https://rustup.rs"
+  echo "Error: cargo (Rust) is not installed. See https://rustup.rs"
   exit 1
 fi
 if ! command -v rpmbuild &> /dev/null; then
-  echo "Erreur : rpmbuild introuvable (necessaire pour generer un .rpm)."
-  echo "Sur Debian/Ubuntu :               sudo apt install rpm"
-  echo "Sur Fedora/RHEL/Rocky/AlmaLinux : sudo dnf install rpm-build"
-  echo "Sur openSUSE :                    sudo zypper install rpm-build"
+  echo "Error: rpmbuild not found (needed to generate a .rpm)."
+  echo "On Debian/Ubuntu:                sudo apt install rpm"
+  echo "On Fedora/RHEL/Rocky/AlmaLinux:  sudo dnf install rpm-build"
+  echo "On openSUSE:                     sudo zypper install rpm-build"
   exit 1
 fi
 
-# --- Lecture de la version actuelle ---
+# --- Reading the current version ---
 CURRENT_VERSION="0.1.0"
 [ -f "$VERSION_FILE" ] && CURRENT_VERSION=$(tr -d '[:space:]' < "$VERSION_FILE")
 
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 MAJOR=${MAJOR:-0}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
 
-# --- Mode interactif si aucun argument de version fourni ---
-# Sans flag de version ET sans terminal interactif, il n'y a aucune
-# facon de savoir quoi faire : mieux vaut echouer clairement ici que de
-# laisser `read` toucher un EOF silencieux plus loin (ce qui, avec
-# `set -e`, tuait le script sans message avant meme la compilation --
-# VERSION et Cargo.toml restaient donc inchanges sans aucune explication).
+# --- Interactive mode if no version argument was given ---
+# With no version flag AND no interactive terminal, there is no way to
+# know what to do: better to fail clearly here than to let `read` hit a
+# silent EOF further down (which, with `set -e`, killed the script
+# without a message before even compiling -- VERSION and Cargo.toml were
+# therefore left unchanged with no explanation).
 if [ -z "$INCREMENT" ] && [ "$NO_VERSION_CHANGE" = false ]; then
   if [ ! -t 0 ]; then
-    echo "Erreur : aucun flag de version fourni (--major/--minor/--patch/"
-    echo "--no-version-change) et aucun terminal interactif disponible pour"
-    echo "le menu de choix. Relance avec l'un de ces flags."
+    echo "Error: no version flag given (--major/--minor/--patch/"
+    echo "--no-version-change) and no interactive terminal available for"
+    echo "the choice menu. Run again with one of these flags."
     exit 1
   fi
   echo ""
-  echo "Version actuelle : $CURRENT_VERSION"
+  echo "Current version: $CURRENT_VERSION"
   echo ""
   echo "  1) major (-> $((MAJOR + 1)).0.0)"
   echo "  2) minor (-> $MAJOR.$((MINOR + 1)).0)"
   echo "  3) patch (-> $MAJOR.$MINOR.$((PATCH + 1)))"
-  echo "  4) no-version-change (reconstruire en $CURRENT_VERSION)"
+  echo "  4) no-version-change (rebuild as $CURRENT_VERSION)"
   echo ""
-  read -p "Choix [1/2/3/4] : " CHOICE
+  read -p "Choice [1/2/3/4]: " CHOICE
   case $CHOICE in
     1) INCREMENT="major" ;;
     2) INCREMENT="minor" ;;
     3) INCREMENT="patch" ;;
     4) NO_VERSION_CHANGE=true ;;
-    *) echo "Choix invalide. Annulation."; exit 1 ;;
+    *) echo "Invalid choice. Cancelled."; exit 1 ;;
   esac
 fi
 
@@ -133,64 +133,63 @@ fi
 
 echo ""
 echo "========================================"
-echo " Paquet   : $PACKAGE_NAME"
+echo " Package  : $PACKAGE_NAME"
 echo " Version  : $CURRENT_VERSION -> $NEW_VERSION"
 echo " Format   : .rpm"
 echo "========================================"
 echo ""
-# A ce stade, soit un flag de version a ete fourni explicitement (dans
-# ce cas stdin peut etre non-interactif : c'est un usage scripte/CI
-# legitime), soit le menu interactif ci-dessus a deja confirme qu'un
-# terminal est bien disponible. Ne demander confirmation que si on peut
-# reellement lire une reponse -- sinon `read` echoue silencieusement sur
-# EOF et, avec `set -e`, tuait le script sans message avant meme de
-# compiler.
+# At this point, either a version flag was given explicitly (in which
+# case stdin may be non-interactive: that is a legitimate scripted/CI
+# use), or the interactive menu above has already confirmed that a
+# terminal is available. Only ask for confirmation if an answer can
+# actually be read -- otherwise `read` fails silently on EOF and, with
+# `set -e`, killed the script without a message before even compiling.
 if [ "$ASSUME_YES" = true ]; then
-  echo "Confirmation automatique (--yes)."
+  echo "Automatic confirmation (--yes)."
 elif [ -t 0 ]; then
-  read -p "Construire ? [o/N] " CONFIRM
-  if [[ ! "$CONFIRM" =~ ^[oOyY]$ ]]; then
-    echo "Construction annulee. Aucun fichier n'a ete modifie."
+  read -p "Build? [y/N] " CONFIRM
+  if [[ ! "$CONFIRM" =~ ^[yY]$ ]]; then
+    echo "Build cancelled. No file was modified."
     exit 0
   fi
 else
-  echo "Pas de terminal interactif : confirmation automatique (un flag de version a ete fourni explicitement)."
+  echo "No interactive terminal: automatic confirmation (a version flag was given explicitly)."
 fi
 
-# --- Mise a jour temporaire de Cargo.toml AVANT compilation, pour que le
-#     binaire embarque le bon numero via `linuxdoctor --version`. Reverti
-#     si une etape echoue plus loin. ---
+# --- Temporary update of Cargo.toml BEFORE compiling, so that the
+#     binary embeds the right number through `linuxdoctor --version`.
+#     Reverted if a later step fails. ---
 if [ "$NEW_VERSION" != "$CURRENT_VERSION" ]; then
   sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$CARGO_TOML"
 fi
 
 echo ""
-echo ">>> Compilation en mode release (cargo build --release)..."
+echo ">>> Compiling in release mode (cargo build --release)..."
 BUILD_LOG=$(mktemp)
 if (cd "$PROJECT_DIR" && cargo build --release --quiet) > "$BUILD_LOG" 2>&1; then
   rm -f "$BUILD_LOG"
-  echo ">>> Compilation reussie."
+  echo ">>> Compilation succeeded."
 else
   echo ""
-  echo "Erreur : la compilation a echoue."
+  echo "Error: the compilation failed."
   echo ""
   sed 's/^/  /' "$BUILD_LOG"
   rm -f "$BUILD_LOG"
   sed -i "s/^version = \".*\"/version = \"$CURRENT_VERSION\"/" "$CARGO_TOML"
   echo ""
-  echo "Construction annulee : Cargo.toml restaure, aucun paquet genere."
+  echo "Build cancelled: Cargo.toml restored, no package generated."
   exit 1
 fi
 
 BINARY="$PROJECT_DIR/target/release/linuxdoctor"
 if [ ! -f "$BINARY" ]; then
-  echo "Erreur : binaire introuvable apres compilation ($BINARY)."
+  echo "Error: binary not found after compilation ($BINARY)."
   sed -i "s/^version = \".*\"/version = \"$CURRENT_VERSION\"/" "$CARGO_TOML"
   exit 1
 fi
 
 # --- Staging ---
-echo ">>> Creation de l'arborescence de staging..."
+echo ">>> Creating the staging tree..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/usr/bin"
 mkdir -p "$BUILD_DIR/usr/share/doc/$PACKAGE_NAME"
@@ -200,24 +199,23 @@ for doc in README.md CHANGELOG.md PROJECT_CONTEXT.md ARCHITECTURE.md LICENSE; do
   [ -f "$PROJECT_DIR/$doc" ] && cp "$PROJECT_DIR/$doc" "$BUILD_DIR/usr/share/doc/$PACKAGE_NAME/"
 done
 
-# docs/ : les images que le README affiche (liens relatifs docs/...). Elles
-# vont a cote du README, donc les liens restent valables dans le paquet.
+# docs/: the images that the README displays (relative links docs/...).
+# They go next to the README, so the links stay valid in the package.
 if [ -d "$PROJECT_DIR/docs" ]; then
   cp -r "$PROJECT_DIR/docs" "$BUILD_DIR/usr/share/doc/$PACKAGE_NAME/"
 fi
 
-# Page de manuel et completions : generees par le binaire qu'on vient de
-# compiler (sous-commandes `man` et `completions`), donc toujours d'accord
-# avec les options reelles de cette version.
-#   - page de manuel : compressee en gzip -9n (sans date ni nom de fichier
-#     dans l'en-tete gzip, donc reproductible), comme l'exige la charte
-#     Debian ;
-#   - zsh : Fedora/RHEL/openSUSE : site-functions, deja dans le fpath de zsh.
-# Les commandes sont chainees avec && (et non separees par des retours a la
-# ligne) car `set -e` est ignore dans une condition `if` : sans cela, seule
-# la derniere commande compterait. Si une generation echoue, Cargo.toml est
-# restaure comme pour les autres etapes.
-echo ">>> Generation de la page de manuel et des completions..."
+# Manual page and completions: generated by the binary that was just
+# compiled (`man` and `completions` subcommands), so they always match
+# the real options of this version.
+#   - manual page: compressed with gzip -9n (no date or file name in the
+#     gzip header, hence reproducible), as the Debian policy requires;
+#   - zsh: Fedora/RHEL/openSUSE: site-functions, already in zsh's fpath.
+# The commands are chained with && (and not separated by newlines)
+# because `set -e` is ignored inside an `if` condition: without this,
+# only the last command would count. If a generation fails, Cargo.toml
+# is restored as for the other steps.
+echo ">>> Generating the manual page and the completions..."
 MAN_DIR="$BUILD_DIR/usr/share/man/man1"
 BASH_COMP_DIR="$BUILD_DIR/usr/share/bash-completion/completions"
 ZSH_COMP_DIR="$BUILD_DIR/usr/share/zsh/site-functions"
@@ -229,19 +227,19 @@ if ! {
   "$BINARY" completions zsh > "$ZSH_COMP_DIR/_linuxdoctor" &&
   "$BINARY" completions fish > "$FISH_COMP_DIR/linuxdoctor.fish"
 }; then
-  echo "Erreur : impossible de generer la page de manuel ou les completions."
+  echo "Error: could not generate the manual page or the completions."
   sed -i "s/^version = \".*\"/version = \"$CURRENT_VERSION\"/" "$CARGO_TOML"
   exit 1
 fi
 
-echo ">>> Normalisation des permissions..."
+echo ">>> Normalizing permissions..."
 find "$BUILD_DIR" -type d -exec chmod 755 {} +
 find "$BUILD_DIR" -type f -exec chmod 644 {} +
 chmod +x "$BUILD_DIR/usr/bin/linuxdoctor"
 
-# --- Construction du paquet ---
+# --- Building the package ---
 echo ""
-echo ">>> Construction du paquet .rpm (fpm)..."
+echo ">>> Building the .rpm package (fpm)..."
 rm -f "$PROJECT_DIR"/*.rpm
 
 if (cd "$PROJECT_DIR" && fpm -s dir -t rpm \
@@ -254,26 +252,25 @@ if (cd "$PROJECT_DIR" && fpm -s dir -t rpm \
   -C "$BUILD_DIR" \
   usr/); then
 
-  # --- Version enregistree seulement apres un build complet reussi ---
+  # --- Version recorded only after a fully successful build ---
   echo "$NEW_VERSION" > "$VERSION_FILE"
   echo ""
-  echo "Paquet genere :"
+  echo "Package generated:"
   ls -1 "$PROJECT_DIR"/*.rpm | sed 's/^/   /'
-  echo "Version enregistree : $NEW_VERSION (VERSION + Cargo.toml)"
+  echo "Version recorded: $NEW_VERSION (VERSION + Cargo.toml)"
   echo ""
-  echo "Note : le nom du fichier .rpm contient un '-1' apres le numero de"
-  echo "version (ex. ${PACKAGE_NAME}-${NEW_VERSION}-1.x86_64.rpm). C'est le"
-  echo "champ \"Release\" du format RPM (distinct de \"Version\" dans la"
-  echo "convention NEVRA : Nom-Epoch:Version-Release.Architecture), fixe a 1"
-  echo "par defaut par fpm. Ce n'est pas une modification du numero de"
-  echo "version -- VERSION et Cargo.toml ci-dessus restent exacts, sans"
-  echo "aucun suffixe. Le format .deb n'a pas cette notion, d'ou l'absence"
-  echo "de ce suffixe cote build-deb.sh."
+  echo "Note: the .rpm file name contains a '-1' after the version number"
+  echo "(e.g. ${PACKAGE_NAME}-${NEW_VERSION}-1.x86_64.rpm). It is the RPM"
+  echo "\"Release\" field (distinct from \"Version\" in the NEVRA convention:"
+  echo "Name-Epoch:Version-Release.Architecture), set to 1 by default by"
+  echo "fpm. It is not a change to the version number -- VERSION and"
+  echo "Cargo.toml above remain exact, with no suffix. The .deb format has"
+  echo "no such notion, hence the absence of this suffix in build-deb.sh."
 else
   echo ""
-  echo "Erreur : fpm a echoue."
+  echo "Error: fpm failed."
   sed -i "s/^version = \".*\"/version = \"$CURRENT_VERSION\"/" "$CARGO_TOML"
   rm -rf "$BUILD_DIR"
-  echo "Construction annulee : Cargo.toml restaure."
+  echo "Build cancelled: Cargo.toml restored."
   exit 1
 fi

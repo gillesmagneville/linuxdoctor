@@ -1,29 +1,29 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# Contribuer à LinuxDoctor
+# Contributing to LinuxDoctor
 
-Merci de l'intérêt porté à ce projet ! Ce document explique comment
-signaler un problème, proposer une amélioration, ou contribuer du code.
+Thank you for your interest in this project! This document explains how to
+report a problem, suggest an improvement, or contribute code.
 
-## Signaler un bug
+## Reporting a bug
 
-Ouvrez une issue en précisant :
+Open an issue stating:
 
-- la distribution et la version du noyau (`uname -r`, `/etc/os-release`)
-- la commande exacte utilisée (`linuxdoctor audit`, `linuxdoctor tui`, ...)
-- le comportement observé vs attendu
-- si possible, la sortie de `linuxdoctor audit --output json`
+- the distribution and the kernel version (`uname -r`, `/etc/os-release`)
+- the exact command used (`linuxdoctor audit`, `linuxdoctor tui`, ...)
+- the observed behavior vs the expected one
+- if possible, the output of `linuxdoctor audit --output json`
 
-## Proposer une amélioration
+## Suggesting an improvement
 
-Ouvrez une issue décrivant le besoin avant d'écrire du code, en particulier
-pour un nouveau module de diagnostic — c'est plus facile de discuter des
-seuils et de la sévérité avant qu'après.
+Open an issue describing the need before writing any code, especially for a
+new diagnostic module — it is easier to discuss thresholds and severity
+before than after.
 
-## Contribuer du code
+## Contributing code
 
-1. Forkez le dépôt et créez une branche depuis `main`.
-2. Vérifiez que tout passe avant de proposer une pull request :
+1. Fork the repository and create a branch from `main`.
+2. Check that everything passes before opening a pull request:
 
    ```bash
    cargo build --locked
@@ -32,102 +32,104 @@ seuils et de la sévérité avant qu'après.
    cargo clippy --locked --all-targets -- -D warnings
    ```
 
-   Ces quatre commandes sont exactement celles de l'intégration continue
-   (`.github/workflows/ci.yml`), qui les exécute aussi avec Rust 1.75, la
-   version minimale supportée. N'utilisez donc pas d'API plus récente que
-   1.75 (par exemple `Option::is_none_or`, stabilisée en 1.82).
+   These four commands are exactly those of the continuous integration
+   (`.github/workflows/ci.yml`), which also runs them with Rust 1.75, the
+   minimum supported version. So do not use an API newer than 1.75 (for
+   example `Option::is_none_or`, stabilized in 1.82).
 
-3. Un test qui lance le vrai binaire doit l'isoler du fichier de configuration de
-   celui qui exécute les tests, sinon un `fail_on = "never"` dans son
-   `~/.config/linuxdoctor/config.toml` ferait changer d'avis la suite :
-   `.env("XDG_CONFIG_HOME", "/nonexistent")` (ou `--no-config`) sur chaque
-   `Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))`. Un test
-   (`tests/config_file.rs`) échoue si un fichier de `tests/` l'oublie.
+3. A test that launches the real binary must isolate it from the
+   configuration file of whoever runs the tests, otherwise a
+   `fail_on = "never"` in their `~/.config/linuxdoctor/config.toml` would
+   change the suite's mind: `.env("XDG_CONFIG_HOME", "/nonexistent")` (or
+   `--no-config`) on every `Command::new(env!("CARGO_BIN_EXE_linuxdoctor"))`.
+   A test (`tests/config_file.rs`) fails if a file in `tests/` forgets it.
 
-4. Décrivez dans la pull request ce qui change et pourquoi.
+4. Describe in the pull request what changes and why.
 
-## Ajouter un nouveau module de diagnostic
+## Adding a new diagnostic module
 
-C'est le type de contribution le plus courant, et l'architecture est conçue
-pour que ça n'implique de toucher qu'un seul dossier. Pour un module
-`<name>` :
+This is the most common kind of contribution, and the architecture is
+designed so that it only involves touching a single folder. For a module
+`<name>`:
 
-1. Créez `src/modules/<name>/{mod.rs, collect.rs, analyze.rs}` en suivant
-   exactement le patron de `src/modules/memory/` ou `src/modules/cpu/` :
-   - `collect.rs` — uniquement de la lecture (E/S). Aucune interprétation.
-   - `analyze.rs` — fonctions pures `RawData -> Vec<Finding>`, testables
-     sans toucher au système de fichiers.
-2. Ajoutez une ligne dans `all_modules()` (`src/modules/mod.rs`).
-3. Ajoutez une ligne de description du module dans `module_summary()`
-   (`src/manpage.rs`) : c'est ce qui apparaît dans la section MODULES de
-   `man linuxdoctor`, et un test échoue tant qu'elle manque.
-4. Rien d'autre ne doit changer — ni le moteur, ni `Context`, ni les sorties
-   terminal/JSON/TUI ; `--modules`, la complétion du shell et la page de
-   manuel connaissent le nouveau module automatiquement.
+1. Create `src/modules/<name>/{mod.rs, collect.rs, analyze.rs}`, following
+   exactly the pattern of `src/modules/memory/` or `src/modules/cpu/`:
+   - `collect.rs` — reading only (I/O). No interpretation.
+   - `analyze.rs` — pure functions `RawData -> Vec<Finding>`, testable
+     without touching the filesystem.
+2. Add a line in `all_modules()` (`src/modules/mod.rs`).
+3. Add a module description line in `module_summary()`
+   (`src/manpage.rs`): it is what appears in the MODULES section of
+   `man linuxdoctor`, and a test fails as long as it is missing.
+4. Nothing else should change — neither the engine, nor `Context`, nor the
+   terminal/JSON/TUI outputs; `--modules`, the shell completion and the
+   manual page know the new module automatically.
 
-Voir `ARCHITECTURE.md` pour le contrat exact (types, sévérité, confiance).
+See `ARCHITECTURE.md` for the exact contract (types, severity, confidence).
 
-Attention au format JSON : `linuxdoctor diff` relit les rapports que
-`audit --output json` écrit. Ajouter un champ ne casse rien ; renommer ou
-supprimer un champ d'un constat, d'un module ou du contexte (`id`, `title`,
+Mind the JSON format: `linuxdoctor diff` reads back the reports that
+`audit --output json` writes. Adding a field breaks nothing; renaming or
+removing a field of a finding, a module or the context (`id`, `title`,
 `severity`, `evidence`, `instance`, `module_id`, `error`, `skipped`, `notes`,
-`hostname`…) change `schema_version` et doit s'accompagner de la mise à jour de
-`src/diff/report.rs` (un test d'intégration relit un vrai rapport pour vous le
-rappeler).
+`hostname`…) changes `schema_version` and must come with an update of
+`src/diff/report.rs` (an integration test reads back a real report to remind
+you of it).
 
-### Lancer des commandes externes
+### Running external commands
 
-Passez toujours par `core::command::command()`, jamais par
-`std::process::Command` : cela force la locale `C` **et** applique une
-limite de temps (10 s par défaut, réglable par `--timeout`).
+Always go through `core::command::command()`, never through
+`std::process::Command`: it forces the `C` locale **and** applies a time
+limit (10 s by default, adjustable with `--timeout`).
 
-- Outil susceptible d'être lent même en bonne santé (réveil d'un disque,
-  initialisation d'un pilote) : ajoutez `.slow()` (double délai).
-- Plusieurs appels au même outil (par exemple une commande par VM) :
-  utilisez un `ToolSession` — au premier délai dépassé, les appels suivants
-  sont ignorés au lieu d'attendre chacun leur propre limite.
-- Une commande par élément indépendant (un disque, une carte) :
-  `core::parallel::parallel_map` les lance en parallèle, résultats dans
-  l'ordre.
-- Une commande arrêtée pour délai dépassé est consignée automatiquement
-  dans les `notes` du module (« données incomplètes ») ; rien à faire de
-  plus côté module. Traitez simplement l'erreur comme n'importe quel
-  « l'outil n'a pas donné de données ».
+- A tool that may be slow even when healthy (waking up a disk,
+  initializing a driver): add `.slow()` (double the timeout).
+- Several calls to the same tool (for example one command per VM): use a
+  `ToolSession` — at the first timeout, the following calls are skipped
+  instead of each waiting for its own limit.
+- One command per independent item (a disk, a card):
+  `core::parallel::parallel_map` runs them in parallel, results in order.
+- A command stopped because of a timeout is automatically recorded in the
+  module's `notes` ("incomplete data"); there is nothing more to do on the
+  module side. Simply treat the error like any other "the tool gave no
+  data".
 
-### Règles pour chaque `Finding`
+### Rules for every `Finding`
 
-- Chaque diagnostic doit être appuyé par une preuve observable (`evidence`),
-  pas une supposition.
-- La confiance ne doit jamais dépasser ce que l'évidence justifie
-  réellement (voir l'échelle dans `ARCHITECTURE.md`).
-- Le texte d'explication doit enseigner quelque chose, pas juste répéter la
-  donnée brute — voir « Explain instead of dumping data » dans
-  `PROJECT_CONTEXT.md`.
-- Évitez le ton alarmiste. « Ce n'est pas nécessairement un problème » est
-  souvent la phrase juste.
+- Every diagnosis must be backed by observable evidence (`evidence`), not a
+  guess.
+- Confidence must never exceed what the evidence really justifies (see the
+  scale in `ARCHITECTURE.md`).
+- The explanation text must teach something, not just repeat the raw
+  data — see "Explain instead of dumping data" in `PROJECT_CONTEXT.md`.
+- Avoid an alarmist tone. "This is not necessarily a problem" is often the
+  right sentence.
 
-## Style de code
+## Code style
 
-- `cargo fmt` avant de proposer une pull request.
-- Rust stable uniquement, pas de fonctionnalités nightly.
-- Un module ne doit jamais appeler un autre module directement — uniquement
-  via le `Context` partagé en lecture seule.
-- Toute nouvelle dépendance doit se justifier (voir « Dependency
-  Philosophy » dans `ARCHITECTURE.md`) — la bibliothèque standard est
-  toujours préférée quand c'est raisonnable.
+- `cargo fmt` before opening a pull request.
+- Stable Rust only, no nightly features.
+- A module must never call another module directly — only through the shared
+  read-only `Context`.
+- Any new dependency must be justified (see "Dependency Philosophy" in
+  `ARCHITECTURE.md`) — the standard library is always preferred when
+  reasonable.
 
 ## Documentation
 
-Si votre changement modifie le comportement observable (nouveau module,
-nouvelle option CLI, nouveau format de sortie), mettez à jour
-`CHANGELOG.md` dans la même pull request, sous `[Non publié]`.
+If your change alters observable behavior (new module, new CLI option, new
+output format), update `CHANGELOG.md` in the same pull request, under
+`[Unreleased]`.
+
+The documentation of this project is in English only: the audience is system
+engineers and advanced support staff, who work in English. Please write
+`README.md`, `ARCHITECTURE.md`, `PROJECT_CONTEXT.md`, `CHANGELOG.md` and this
+file in English.
 
 ## Questions
 
-Pour toute question qui ne rentre pas dans les cas ci-dessus, ouvrez
-simplement une issue.
+For any question that does not fit the cases above, simply open an issue.
 
-## Licence
+## License
 
-En contribuant, vous acceptez que vos contributions soient publiées sous la
-même licence que le projet (GPL-3.0-only).
+By contributing, you agree that your contributions will be released under the
+same license as the project (GPL-3.0-only).

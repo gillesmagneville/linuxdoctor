@@ -1,0 +1,4996 @@
+{
+  "schema_version": 1,
+  "context": {
+    "hostname": "gilles-desktop",
+    "kernel_version": "7.0.0-34-generic",
+    "distro": "Ubuntu 26.04.1 LTS",
+    "architecture": "x86_64",
+    "cpu_count": 32,
+    "mem_total_kb": 259546464,
+    "boot_time_unix": 1790361506
+  },
+  "results": [
+    {
+      "module_id": "memory",
+      "findings": [
+        {
+          "id": "MEM009",
+          "title": "Memory Pressure and OOM History",
+          "category": "memory",
+          "severity": "warning",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "psi_some_avg10",
+              "0.00"
+            ],
+            [
+              "psi_some_avg60",
+              "0.00"
+            ],
+            [
+              "psi_some_avg300",
+              "0.00"
+            ],
+            [
+              "psi_full_avg10",
+              "0.00"
+            ],
+            [
+              "psi_full_avg60",
+              "0.00"
+            ],
+            [
+              "psi_full_avg300",
+              "0.00"
+            ],
+            [
+              "oom_kills",
+              "1"
+            ],
+            [
+              "allocation_stalls",
+              "7"
+            ],
+            [
+              "direct_reclaim_percent",
+              "0.0"
+            ],
+            [
+              "file_cache_refaults_kb",
+              "4677704"
+            ]
+          ],
+          "explanation": "Over the last 10 / 60 / 300 seconds, at least one program was stalled waiting for memory 0.0% / 0.0% / 0.0% of the time, and all programs were stalled at once 0.0% / 0.0% / 0.0% of the time.\n\nNo meaningful stalls at the moment: programs are getting the memory they ask for without waiting.\n\nThe kernel has killed 1 process since boot because memory ran out. This counts both a whole machine out of RAM and a program or service exceeding its own memory limit (a container or systemd MemoryMax).",
+          "recommendation": "1. Confirm what is happening now (the pressure file should be near zero on a healthy machine; in vmstat, non-zero si/so columns mean active swapping):\n    cat /proc/pressure/memory\n    vmstat 1 5\n2. Find out who was killed and why (the log says whether the whole machine or a single memory limit was the cause):\n    sudo dmesg -T | grep -i -E 'out of memory|oom-kill|killed process'\n3. Reduce the demand: qemu-system-x86 holds the most private memory (96.6 GB). The Used memory page lists the consumers and what to do about each.\n4. There is no swap, so the kernel has nothing to relieve the pressure with. The Swap configuration finding has the zram and swap file commands.\n5. Stop one runaway service from taking the whole machine down by giving it a ceiling (MemoryHigh slows it first, MemoryMax is the hard limit), and shield the services that must survive with a negative OOM score:\n    sudo systemctl set-property <service> MemoryHigh=<N>G MemoryMax=<M>G\n    sudo systemctl edit <critical-service>     # add: [Service] OOMScoreAdjust=-900\n6. Let a userspace daemon act early, while the machine is still responsive, instead of waiting for the kernel's OOM killer. systemd-oomd needs systemd 248+ and cgroup v2; earlyoom is the alternative that works anywhere:\n    sudo systemctl enable --now systemd-oomd\n    sudo apt install earlyoom && sudo systemctl enable --now earlyoom",
+          "instance": null
+        },
+        {
+          "id": "MEM004",
+          "title": "Memory Usage Overview",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "total_kb",
+              "259546464"
+            ],
+            [
+              "used_kb",
+              "167174300"
+            ],
+            [
+              "used_percent",
+              "64.4"
+            ],
+            [
+              "free_kb",
+              "18955472"
+            ],
+            [
+              "shared_kb",
+              "443036"
+            ],
+            [
+              "buff_cache_kb",
+              "75631580"
+            ],
+            [
+              "reclaimable_cache_kb",
+              "75188544"
+            ],
+            [
+              "available_kb",
+              "92372164"
+            ],
+            [
+              "available_percent",
+              "35.6"
+            ],
+            [
+              "cached_kb",
+              "72330544"
+            ]
+          ],
+          "explanation": "Of 247.5 GB of RAM, 159.4 GB (64.4%) is in use by programs and the kernel, and 88.1 GB (35.6%) is available for new allocations without swapping — comfortable. These are the 'used' and 'available' columns of free(1).\n\nOnly 18.1 GB is completely unused, and that is normal: Linux fills spare RAM with cache and hands it back the moment a program asks. free(1) shows 72.1 GB as 'buff/cache', but that figure includes 433 MB of shared memory (tmpfs, /dev/shm, graphics buffers) which stays in RAM; the part the kernel can genuinely give back is 71.7 GB.\n\nWhat matters is 'available', not 'free'. The Used memory, Page cache, Shared memory, Swap, Pressure and Kernel tuning pages break this number down.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "MEM007",
+          "title": "Used Memory and Top Consumers",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "used_kb",
+              "167174300"
+            ],
+            [
+              "used_percent",
+              "64.4"
+            ],
+            [
+              "available_percent",
+              "35.6"
+            ],
+            [
+              "anon_kb",
+              "116732960"
+            ],
+            [
+              "page_cache_kb",
+              "70404280"
+            ],
+            [
+              "shmem_kb",
+              "443036"
+            ],
+            [
+              "buffers_kb",
+              "1483228"
+            ],
+            [
+              "slab_reclaimable_kb",
+              "3301036"
+            ],
+            [
+              "slab_unreclaimable_kb",
+              "2454704"
+            ],
+            [
+              "kernel_stack_and_page_tables_kb",
+              "551816"
+            ],
+            [
+              "hugetlb_kb",
+              "0"
+            ],
+            [
+              "zfs_arc_kb",
+              "42953415"
+            ],
+            [
+              "unattributed_kb",
+              "2266517"
+            ],
+            [
+              "non_reclaimable_kb",
+              "120182516"
+            ],
+            [
+              "non_reclaimable_percent",
+              "46.3"
+            ],
+            [
+              "unevictable_kb",
+              "101330628"
+            ],
+            [
+              "top_consumer_1",
+              "qemu-system-x86 — 96.6 GB private, 49 MB file-backed, 4 kB shared (largest process: PID 80650)"
+            ],
+            [
+              "top_consumer_2",
+              "Isolated Web Co (19 processes) — 4.2 GB private (largest process: PID 2663238)"
+            ],
+            [
+              "top_consumer_3",
+              "AppRun.wrapped — 3.4 GB private, 43 MB file-backed, 4 kB shared (largest process: PID 1002297)"
+            ],
+            [
+              "top_consumer_4",
+              "firefox-esr — 826 MB private, 407 MB file-backed, 53 MB shared (largest process: PID 2438007)"
+            ],
+            [
+              "top_consumer_5",
+              "fwupd — 824 MB private, 33 MB file-backed (largest process: PID 28619)"
+            ],
+            [
+              "processes_scanned",
+              "267"
+            ]
+          ],
+          "explanation": "159.4 GB of RAM (64.4%) is in use and 88.1 GB (35.6%) is available — comfortable.\n\nWhere the 247.5 GB of RAM goes right now:\n  Programs (private memory)         111.3 GB   45.0%\n  Page cache (files)                 67.1 GB   27.1%\n  Buffers                             1.4 GB    0.6%\n  Reclaimable kernel caches           3.1 GB    1.3%\n  Kernel memory (not reclaimable)     2.3 GB    0.9%\n  Free                               18.1 GB    7.3%\n  ZFS ARC cache                      41.0 GB   16.5%\n  Not attributed                      2.2 GB    0.9%\n  Smaller items (each under 0.5%)     972 MB    0.4%\n\nAbout 114.6 GB (46.3%) of RAM is memory that cannot simply be dropped: programs' private memory (it can only be swapped out), shared memory, non-reclaimable kernel memory and reserved huge pages. The rest is cache the kernel can take back on demand.\n\nLargest consumers by private memory (each page is counted once, so programs that share libraries are not inflated):\n  1. qemu-system-x86 — 96.6 GB private, 49 MB file-backed, 4 kB shared (39.0% of RAM)\n  2. Isolated Web Co (19 processes) — 4.2 GB private (1.7% of RAM)\n  3. AppRun.wrapped — 3.4 GB private, 43 MB file-backed, 4 kB shared (1.4% of RAM)\n  4. firefox-esr — 826 MB private, 407 MB file-backed, 53 MB shared (0.3% of RAM)\n  5. fwupd — 824 MB private, 33 MB file-backed (0.3% of RAM)",
+          "recommendation": null,
+          "instance": "Used memory"
+        },
+        {
+          "id": "MEM008",
+          "title": "Page Cache",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "page_cache_kb",
+              "70404280"
+            ],
+            [
+              "page_cache_percent",
+              "27.1"
+            ],
+            [
+              "buffers_kb",
+              "1483228"
+            ],
+            [
+              "slab_reclaimable_kb",
+              "3301036"
+            ],
+            [
+              "active_file_kb",
+              "5744440"
+            ],
+            [
+              "inactive_file_kb",
+              "66097696"
+            ],
+            [
+              "mapped_kb",
+              "2296760"
+            ],
+            [
+              "vm.vfs_cache_pressure",
+              "100"
+            ]
+          ],
+          "explanation": "The page cache holds 67.1 GB (27.1% of RAM): copies of files recently read or written, kept so the next access is served from memory instead of the disk. Disk-block buffers add 1.4 GB.\n\n63.0 GB of the file cache has not been touched recently (the kernel drops that first) and 5.5 GB is in active use. Running programs map 2.2 GB of it.\n\nReclaimable kernel caches (the dentry and inode caches that remember file names and metadata) add 3.1 GB.\n\nThis memory is not wasted: it makes file access fast and is handed back to programs the moment they ask for it.\n\nA large cache is therefore a sign of a healthy machine, not a leak. Emptying it (echo 3 > /proc/sys/vm/drop_caches) frees nothing of lasting value: it only forces files to be read from the disk again and slows everything down until the cache is rebuilt. It is a benchmarking tool, not an optimisation.\n\nZFS keeps its own cache (the ARC) outside the page cache; it is described under Kernel memory.",
+          "recommendation": null,
+          "instance": "Page cache"
+        },
+        {
+          "id": "MEM005",
+          "title": "Dirty Page / Writeback Pressure",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "dirty_kb",
+              "1668"
+            ],
+            [
+              "dirty_percent",
+              "0.00"
+            ],
+            [
+              "writeback_kb",
+              "0"
+            ],
+            [
+              "dirty_background_ratio",
+              "10"
+            ],
+            [
+              "dirty_ratio",
+              "20"
+            ],
+            [
+              "dirtyable_kb",
+              "90797608"
+            ],
+            [
+              "background_threshold_kb",
+              "9079760"
+            ],
+            [
+              "hard_limit_kb",
+              "18159521"
+            ],
+            [
+              "vm.dirty_expire_centisecs",
+              "3000"
+            ],
+            [
+              "vm.dirty_writeback_centisecs",
+              "500"
+            ]
+          ],
+          "explanation": "2 MB is waiting to be written to disk (0.0% of what can be dirtied), comfortably below the background threshold of 8.7 GB.\n\nBackground writeback starts at 8.7 GB and writers are slowed from 13.0 GB; the hard limit is 17.3 GB. These are measured against 86.6 GB (free memory plus file cache).\n\nOn this machine the ratio settings allow up to 17.3 GB of dirty data to pile up before writers are blocked. Flushing that much at once can freeze programs for many seconds on a slow disk; many administrators cap it with fixed byte limits instead.",
+          "recommendation": "1. Optional: cap the amount of dirty data with fixed limits (256 MB to start background writeback, 1 GB before writers block). Setting the byte values replaces the ratios:\n    sudo sysctl vm.dirty_background_bytes=268435456 vm.dirty_bytes=1073741824\n    printf 'vm.dirty_background_bytes = 268435456\\nvm.dirty_bytes = 1073741824\\n' | sudo tee /etc/sysctl.d/99-dirty.conf",
+          "instance": "Page cache"
+        },
+        {
+          "id": "MEM006",
+          "title": "Shared Memory Usage",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "shmem_kb",
+              "443036"
+            ],
+            [
+              "shmem_percent",
+              "0.2"
+            ],
+            [
+              "tmpfs_used_kb",
+              "47876"
+            ],
+            [
+              "tmpfs_1",
+              "/run: 18 MB used"
+            ],
+            [
+              "tmpfs_2",
+              "/run/user/1000: 16 MB used"
+            ],
+            [
+              "tmpfs_3",
+              "/dev/shm: 8 MB used"
+            ],
+            [
+              "sysv_segments",
+              "17"
+            ],
+            [
+              "sysv_resident_kb",
+              "41016"
+            ],
+            [
+              "sysv_attached_resident_kb",
+              "38100"
+            ],
+            [
+              "sysv_orphan_segments",
+              "1"
+            ],
+            [
+              "sysv_orphan_resident_kb",
+              "2916"
+            ],
+            [
+              "shared_user_1",
+              "nautilus (PID 1881039): 97 MB"
+            ],
+            [
+              "shared_user_2",
+              "firefox-esr (PID 2438007): 53 MB"
+            ],
+            [
+              "shared_user_3",
+              "Xwayland (PID 11849): 41 MB"
+            ]
+          ],
+          "explanation": "Shared memory takes 433 MB of RAM (0.2%), a normal level. It is the part of the 'buff/cache' figure of free(1) that is not really cache: it stays in RAM until deleted.\n\nWhere it lives — tmpfs mounts (files that exist only in RAM):\n  1. /run — 18 MB of 49.5 GB (0.0% full)\n  2. /run/user/1000 — 16 MB of 24.8 GB (0.1% full)\n  3. /dev/shm — 8 MB of 80.0 GB (0.0% full)\n\nSysV shared memory: 17 segments using 40 MB of RAM. 37 MB of it belongs to segments that running programs are attached to — memory in legitimate use, such as a database's buffer pool.\n\n1 SysV segment (3 MB resident) has no program attached. The program that created it has exited or crashed without removing it, so the memory stays allocated until the segment is deleted:\n  - id 3309607 — 4 MB (3 MB resident), owner uid 1000\n\nLargest shared mappings per program (programs that share the same memory each count it, so do not add these up):\n  1. nautilus (PID 1881039) — 97 MB\n  2. firefox-esr (PID 2438007) — 53 MB\n  3. Xwayland (PID 11849) — 41 MB",
+          "recommendation": null,
+          "instance": "Shared memory"
+        },
+        {
+          "id": "MEM001",
+          "title": "Kernel Swappiness Setting",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "vm.swappiness",
+              "10"
+            ],
+            [
+              "kernel_default",
+              "60"
+            ],
+            [
+              "swap_type",
+              "none"
+            ],
+            [
+              "vm.page-cluster",
+              "3"
+            ]
+          ],
+          "explanation": "vm.swappiness is 10 (kernel default 60). It decides how eagerly the kernel moves idle program memory to swap instead of dropping file cache: low values protect programs' memory, high values protect the file cache. The scale runs from 0 to 200.\n\nNo swap is configured, so there is nowhere to move program memory and this setting has no effect on it. See Swap configuration.",
+          "recommendation": null,
+          "instance": "Swap"
+        },
+        {
+          "id": "MEM010",
+          "title": "Swap Configuration",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "swap_type",
+              "none"
+            ],
+            [
+              "swap_total_kb",
+              "0"
+            ],
+            [
+              "swap_devices",
+              "0"
+            ],
+            [
+              "zswap_enabled",
+              "false"
+            ]
+          ],
+          "explanation": "Swap: none configured.\n\nNo swap is configured. Without it the kernel can only reclaim file cache; once that is gone, the only option left is the OOM killer. Even a small swap lets idle program memory move out of the way and gives a memory spike somewhere to go. (Exceptions: Kubernetes nodes, where the kubelet expects swap off by default, and appliances that deliberately prefer an OOM kill to slowness.)",
+          "recommendation": "1. Preferred: compressed RAM swap (zram). It needs no disk space, causes no disk wear and is much faster than swap on a disk. This sets it to half of RAM, kept after reboot:\n    sudo apt install systemd-zram-generator     # Fedora, Arch, openSUSE: zram-generator\n    printf '[zram0]\\nzram-size = ram / 2\\ncompression-algorithm = zstd\\n' | sudo tee /etc/systemd/zram-generator.conf\n    sudo systemctl daemon-reload\n    sudo systemctl start systemd-zram-setup@zram0.service\n2. Or a swap file of 8 GB on disk (ext4 or xfs; on Btrfs use 'btrfs filesystem mkswapfile' instead of fallocate):\n    sudo fallocate -l 8G /swapfile\n    sudo chmod 600 /swapfile\n    sudo mkswap /swapfile\n    sudo swapon /swapfile\n    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab   # keep it after reboot",
+          "instance": "Swap"
+        },
+        {
+          "id": "MEM013",
+          "title": "Kernel Memory",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "kernel_memory_kb",
+              "6307556"
+            ],
+            [
+              "kernel_memory_percent",
+              "2.4"
+            ],
+            [
+              "slab_kb",
+              "5755740"
+            ],
+            [
+              "slab_reclaimable_kb",
+              "3301036"
+            ],
+            [
+              "slab_unreclaimable_kb",
+              "2454704"
+            ],
+            [
+              "page_tables_kb",
+              "356616"
+            ],
+            [
+              "kernel_stack_kb",
+              "49824"
+            ],
+            [
+              "percpu_kb",
+              "145376"
+            ],
+            [
+              "vm.min_free_kbytes",
+              "90112"
+            ],
+            [
+              "zfs_arc_kb",
+              "42953415"
+            ],
+            [
+              "zfs_arc_max_kb",
+              "258497888"
+            ],
+            [
+              "unevictable_kb",
+              "101330628"
+            ]
+          ],
+          "explanation": "The kernel itself holds 6.0 GB of RAM (2.4%): 5.5 GB of slab caches (3.1 GB reclaimable, 2.3 GB not), 348 MB of page tables, 49 MB of kernel stacks and 142 MB of per-CPU data. This memory belongs to no program; it is the cost of running the system.\n\nZFS is loaded. Its cache (the ARC) holds 41.0 GB (16.5% of RAM, limit 246.5 GB). ZFS allocates it itself, outside the page cache, and /proc/meminfo's 'available' figure does not count it — so a ZFS machine always looks fuller than it is. ZFS does give the memory back when programs ask, but more slowly than the page cache does.\n\nvm.min_free_kbytes is 88 MB: the reserve the kernel keeps free so it can always satisfy urgent allocations.\n\n96.6 GB of RAM (39.0%) is locked and can never be swapped or reclaimed (mlock, ramfs, memory held by some drivers). 96.6 GB of it is locked by programs with mlock.",
+          "recommendation": null,
+          "instance": "Kernel tuning"
+        },
+        {
+          "id": "MEM011",
+          "title": "Memory Overcommit Policy",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "vm.overcommit_memory",
+              "0"
+            ],
+            [
+              "committed_as_kb",
+              "132197648"
+            ],
+            [
+              "commit_limit_kb",
+              "129773232"
+            ],
+            [
+              "committed_percent_of_ram",
+              "50.9"
+            ],
+            [
+              "vm.overcommit_ratio",
+              "50"
+            ],
+            [
+              "committed_percent_of_limit",
+              "101.9"
+            ]
+          ],
+          "explanation": "Overcommit is in heuristic mode (the default): the kernel lets programs reserve more memory than exists and refuses only absurd single requests. Programs have reserved 126.1 GB of address space (50.9% of RAM). A reservation is a promise, not use: big runtimes (Java, Go, browsers) and fork() reserve far more than they touch.",
+          "recommendation": null,
+          "instance": "Kernel tuning"
+        },
+        {
+          "id": "MEM012",
+          "title": "Huge Pages",
+          "category": "memory",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "transparent_hugepage",
+              "madvise"
+            ],
+            [
+              "anon_huge_pages_kb",
+              "100667392"
+            ],
+            [
+              "transparent_hugepage_defrag",
+              "madvise"
+            ]
+          ],
+          "explanation": "Transparent huge pages are set to 'madvise': only programs that explicitly ask for huge pages get them. This is the safe middle ground and what most distributions recommend for servers. Right now 96.0 GB of program memory sits on huge pages.",
+          "recommendation": null,
+          "instance": "Kernel tuning"
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "cpu",
+      "findings": [
+        {
+          "id": "CPU001",
+          "title": "CPU Overview",
+          "category": "cpu",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "sockets",
+              "2"
+            ],
+            [
+              "total_cores",
+              "28"
+            ],
+            [
+              "total_logical_cpus",
+              "56"
+            ]
+          ],
+          "explanation": "This machine has 2 sockets, totaling 28 physical cores and 56 logical CPUs. Hyper-Threading/SMT appears active (more logical CPUs than physical cores).",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "CPU004",
+          "title": "Socket Detail — socket 0",
+          "category": "cpu",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "physical_id",
+              "0"
+            ],
+            [
+              "model",
+              "Intel(R) Xeon(R) CPU E5-2695 v3 @ 2.30GHz"
+            ],
+            [
+              "cores",
+              "14"
+            ],
+            [
+              "threads",
+              "28"
+            ],
+            [
+              "available_threads",
+              "4"
+            ],
+            [
+              "isolated_threads",
+              "24"
+            ]
+          ],
+          "explanation": "Socket 0: Intel(R) Xeon(R) CPU E5-2695 v3 @ 2.30GHz, 14 physical cores, 28 logical CPUs (SMT/Hyper-Threading active on this socket). 24 of these are isolated from the general scheduler (1-12,29-40), leaving 4 available.",
+          "recommendation": null,
+          "instance": "socket 0"
+        },
+        {
+          "id": "CPU004",
+          "title": "Socket Detail — socket 1",
+          "category": "cpu",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "physical_id",
+              "1"
+            ],
+            [
+              "model",
+              "Intel(R) Xeon(R) CPU E5-2695 v3 @ 2.30GHz"
+            ],
+            [
+              "cores",
+              "14"
+            ],
+            [
+              "threads",
+              "28"
+            ],
+            [
+              "available_threads",
+              "28"
+            ],
+            [
+              "isolated_threads",
+              "0"
+            ]
+          ],
+          "explanation": "Socket 1: Intel(R) Xeon(R) CPU E5-2695 v3 @ 2.30GHz, 14 physical cores, 28 logical CPUs (SMT/Hyper-Threading active on this socket).",
+          "recommendation": null,
+          "instance": "socket 1"
+        },
+        {
+          "id": "CPU002",
+          "title": "Load Average Pressure",
+          "category": "cpu",
+          "severity": "info",
+          "confidence": {
+            "percent": 70,
+            "reason": "weak indication"
+          },
+          "evidence": [
+            [
+              "load_1m",
+              "2.60"
+            ],
+            [
+              "cpu_count",
+              "56"
+            ],
+            [
+              "ratio",
+              "0.05"
+            ]
+          ],
+          "explanation": "The 1-minute load average is within the number of available CPUs. This is not necessarily worth investigating.",
+          "recommendation": "Identify high-CPU processes (top, htop, pidstat) and consider whether more cores or lower CPU usage is needed.",
+          "instance": null
+        },
+        {
+          "id": "CPU005",
+          "title": "Isolated CPUs",
+          "category": "cpu",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "isolcpus",
+              "none"
+            ],
+            [
+              "nohz_full",
+              "none"
+            ],
+            [
+              "cgroup_isolated_partitions",
+              "none"
+            ],
+            [
+              "system_slice_excluded",
+              "1-12,29-40"
+            ],
+            [
+              "total_isolated",
+              "24"
+            ]
+          ],
+          "explanation": "24 logical CPUs excluded from the general scheduler (1-12,29-40) — excluded from system.slice (AllowedCPUs=): 1-12,29-40. This is commonly used for real-time or dedicated workloads. In virtualized environments it's often paired with host-level vCPU pinning, which — unlike these kernel-level mechanisms — isn't visible from inside the guest at all.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "numa",
+      "findings": [
+        {
+          "id": "NUMA001",
+          "title": "NUMA Node — node0",
+          "category": "numa",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "node_id",
+              "0"
+            ],
+            [
+              "cpus",
+              "0,1,2,3,4,5,6,7,8,9,10,11,12,13,28,29,30,31,32,33,34,35,36,37,38,39,40,41"
+            ],
+            [
+              "mem_total_kb",
+              "131633960"
+            ],
+            [
+              "mem_free_kb",
+              "7552132"
+            ],
+            [
+              "mem_used_percent",
+              "94.3"
+            ]
+          ],
+          "explanation": "Node 0 owns 28 logical CPUs and 125.5 GB of memory (94.3% in use). Processes and their memory should ideally stay on the same node — cross-node memory access carries a latency penalty.",
+          "recommendation": null,
+          "instance": "node0"
+        },
+        {
+          "id": "NUMA001",
+          "title": "NUMA Node — node1",
+          "category": "numa",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "node_id",
+              "1"
+            ],
+            [
+              "cpus",
+              "14,15,16,17,18,19,20,21,22,23,24,25,26,27,42,43,44,45,46,47,48,49,50,51,52,53,54,55"
+            ],
+            [
+              "mem_total_kb",
+              "127912504"
+            ],
+            [
+              "mem_free_kb",
+              "11403340"
+            ],
+            [
+              "mem_used_percent",
+              "91.1"
+            ]
+          ],
+          "explanation": "Node 1 owns 28 logical CPUs and 122.0 GB of memory (91.1% in use). Processes and their memory should ideally stay on the same node — cross-node memory access carries a latency penalty.",
+          "recommendation": null,
+          "instance": "node1"
+        },
+        {
+          "id": "NUMA002",
+          "title": "Memory Balance Across Nodes",
+          "category": "numa",
+          "severity": "info",
+          "confidence": {
+            "percent": 90,
+            "reason": "multiple correlated observations"
+          },
+          "evidence": [
+            [
+              "busiest_node",
+              "0"
+            ],
+            [
+              "busiest_used_percent",
+              "94.3"
+            ],
+            [
+              "idlest_node",
+              "1"
+            ],
+            [
+              "idlest_used_percent",
+              "91.1"
+            ]
+          ],
+          "explanation": "Memory usage is reasonably balanced across the 2 nodes (busiest: node 0 at 94.3%, idlest: node 1 at 91.1%).",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "NUMA003",
+          "title": "Topology Comparison",
+          "category": "numa",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "nodes",
+              "2"
+            ],
+            [
+              "min_cpus_per_node",
+              "28"
+            ],
+            [
+              "max_cpus_per_node",
+              "28"
+            ],
+            [
+              "min_mem_kb_per_node",
+              "127912504"
+            ],
+            [
+              "max_mem_kb_per_node",
+              "131633960"
+            ]
+          ],
+          "explanation": "All 2 nodes have comparable CPU counts and memory capacity — a roughly symmetric topology. Evenly spreading a workload across nodes is a reasonable default here.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "gpu",
+      "findings": [
+        {
+          "id": "GPU001",
+          "title": "GPU Inventory Summary",
+          "category": "gpu",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "gpu_count",
+              "1"
+            ],
+            [
+              "nvidia_max_cuda_version",
+              "13.0"
+            ]
+          ],
+          "explanation": "1 GPU detected: 1 NVIDIA. Maximum CUDA version supported by the installed NVIDIA driver: 13.0 — this is the driver's own capability ceiling, *not* the CUDA Toolkit version an application actually uses (check `nvcc --version` for that, if a toolkit is installed at all); the two commonly differ and are easy to conflate.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "GPU002",
+          "title": "GPU — card1 (VGA compatible controller: NVIDIA Corporation GP107 [GeForce GTX 1050 Ti] (rev a1))",
+          "category": "gpu",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "vendor",
+              "NVIDIA"
+            ],
+            [
+              "pci_address",
+              "0000:02:00.0"
+            ],
+            [
+              "driver",
+              "nvidia"
+            ],
+            [
+              "driver_version",
+              "580.178.04"
+            ],
+            [
+              "temperature_c",
+              "47.0"
+            ],
+            [
+              "utilization_percent",
+              "0.0"
+            ],
+            [
+              "memory_utilization_percent",
+              "1.0"
+            ],
+            [
+              "vram_total_mb",
+              "4096"
+            ],
+            [
+              "vram_used_mb",
+              "1384"
+            ],
+            [
+              "power_limit_w",
+              "75.0"
+            ],
+            [
+              "fan_percent",
+              "45.0"
+            ],
+            [
+              "clock_core_mhz",
+              "1290"
+            ],
+            [
+              "clock_memory_mhz",
+              "3504"
+            ],
+            [
+              "pcie_link_speed_current",
+              "8.0 GT/s PCIe"
+            ],
+            [
+              "pcie_link_speed_max",
+              "8.0 GT/s PCIe"
+            ],
+            [
+              "pcie_link_width_current",
+              "8"
+            ],
+            [
+              "pcie_link_width_max",
+              "16"
+            ],
+            [
+              "process_count",
+              "1"
+            ]
+          ],
+          "explanation": "NVIDIA VGA compatible controller: NVIDIA Corporation GP107 [GeForce GTX 1050 Ti] (rev a1), driver nvidia (driver version 580.178.04). Temperature: 47°C (no card-specific critical threshold available for this vendor — 95°C+ is a generic caution point, not this card's own limit). Utilization: 0% GPU, 1% memory controller. VRAM: 1384 MB used of 4096 MB (33.8%). Fan: 45%. Clocks: 1290 MHz core, 3504 MHz memory. PCIe: currently 8.0 GT/s PCIe x8, below this card's maximum of 8.0 GT/s PCIe x16 — worth checking the physical slot/cable if unexpected (could also just be a normal idle power-saving state). Processes using this GPU: /usr/bin/ptyxis (pid 14314, 15 MB).",
+          "recommendation": null,
+          "instance": "card1"
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "storage",
+      "findings": [
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "42828648"
+            ],
+            [
+              "total_kb",
+              "97844508"
+            ],
+            [
+              "use_percent",
+              "47.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /sys/firmware/efi/efivars",
+          "category": "storage",
+          "severity": "warning",
+          "confidence": {
+            "percent": 78,
+            "reason": "strong indication"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/sys/firmware/efi/efivars"
+            ],
+            [
+              "fstype",
+              "efivarfs"
+            ],
+            [
+              "used_kb",
+              "210"
+            ],
+            [
+              "total_kb",
+              "256"
+            ],
+            [
+              "use_percent",
+              "84.0"
+            ]
+          ],
+          "explanation": "This filesystem is filling up. Not necessarily urgent, but worth monitoring — especially if usage has been trending upward.",
+          "recommendation": "Identify large files or directories (du, ncdu) and consider removing unneeded data, rotating logs, or expanding the filesystem.",
+          "instance": "/sys/firmware/efi/efivars"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /tmp",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/tmp"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "5120"
+            ],
+            [
+              "total_kb",
+              "1263597568"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/tmp"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /home",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "143941036"
+            ],
+            [
+              "total_kb",
+              "242575796"
+            ],
+            [
+              "use_percent",
+              "63.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/home"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /boot",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/boot"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "151660"
+            ],
+            [
+              "total_kb",
+              "964900"
+            ],
+            [
+              "use_percent",
+              "17.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/boot"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /var",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/var"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "18021976"
+            ],
+            [
+              "total_kb",
+              "96482508"
+            ],
+            [
+              "use_percent",
+              "20.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/var"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /boot/efi",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/boot/efi"
+            ],
+            [
+              "fstype",
+              "vfat"
+            ],
+            [
+              "used_kb",
+              "11016"
+            ],
+            [
+              "total_kb",
+              "487460"
+            ],
+            [
+              "use_percent",
+              "3.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/boot/efi"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /home/gilles/Theatre",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Theatre"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "2801832"
+            ],
+            [
+              "total_kb",
+              "1372841700"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/home/gilles/Theatre"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /home/gilles/Spectacles",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Spectacles"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "8773152"
+            ],
+            [
+              "total_kb",
+              "1389637332"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/home/gilles/Spectacles"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /home/gilles/Documentaires",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Documentaires"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "4340084"
+            ],
+            [
+              "total_kb",
+              "1372841700"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/home/gilles/Documentaires"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /home/gilles/Films/Films-1",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Films/Films-1"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "4901260544"
+            ],
+            [
+              "total_kb",
+              "7455874984"
+            ],
+            [
+              "use_percent",
+              "69.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/home/gilles/Films/Films-1"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "2307072"
+            ],
+            [
+              "total_kb",
+              "1265899520"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/zfsmgr",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/zfsmgr"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "128"
+            ],
+            [
+              "total_kb",
+              "1263593216"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/zfsmgr"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/dwhelper",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/dwhelper"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "303104"
+            ],
+            [
+              "total_kb",
+              "1263895552"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/dwhelper"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Vidéos",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Vidéos"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "23910400"
+            ],
+            [
+              "total_kb",
+              "1287502848"
+            ],
+            [
+              "use_percent",
+              "2.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Vidéos"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Jeux",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Jeux"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "1024"
+            ],
+            [
+              "total_kb",
+              "1263593472"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Jeux"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/KDrive",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/KDrive"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "3072"
+            ],
+            [
+              "total_kb",
+              "1263595520"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/KDrive"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Web",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Web"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "109824"
+            ],
+            [
+              "total_kb",
+              "1263702912"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Web"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Téléchargements",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Téléchargements"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "30904576"
+            ],
+            [
+              "total_kb",
+              "1294497664"
+            ],
+            [
+              "use_percent",
+              "3.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Téléchargements"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Dedibox",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Dedibox"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "90112"
+            ],
+            [
+              "total_kb",
+              "1263682560"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Dedibox"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Developpement",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Developpement"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "6148096"
+            ],
+            [
+              "total_kb",
+              "1269741056"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Developpement"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Musique",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Musique"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "134538240"
+            ],
+            [
+              "total_kb",
+              "1398130688"
+            ],
+            [
+              "use_percent",
+              "10.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Musique"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Nextcloud",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Nextcloud"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "17732608"
+            ],
+            [
+              "total_kb",
+              "1281325696"
+            ],
+            [
+              "use_percent",
+              "2.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Nextcloud"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/3D",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/3D"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "1787904"
+            ],
+            [
+              "total_kb",
+              "1265380352"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/3D"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Shared",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Shared"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "34942976"
+            ],
+            [
+              "total_kb",
+              "1298535424"
+            ],
+            [
+              "use_percent",
+              "3.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Shared"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Documents",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Documents"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "795515776"
+            ],
+            [
+              "total_kb",
+              "2059108864"
+            ],
+            [
+              "use_percent",
+              "39.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Documents"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Dropbox",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Dropbox"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "1024"
+            ],
+            [
+              "total_kb",
+              "1263593472"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Dropbox"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/vm-shares",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/vm-shares"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "246325408"
+            ],
+            [
+              "total_kb",
+              "1509918528"
+            ],
+            [
+              "use_percent",
+              "17.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/vm-shares"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Archives",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Archives"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "148265984"
+            ],
+            [
+              "total_kb",
+              "1411858432"
+            ],
+            [
+              "use_percent",
+              "11.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Archives"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Photos",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Photos"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "1040196608"
+            ],
+            [
+              "total_kb",
+              "2303789056"
+            ],
+            [
+              "use_percent",
+              "46.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Photos"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/virtual-machines",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/virtual-machines"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "46340052"
+            ],
+            [
+              "total_kb",
+              "1309933196"
+            ],
+            [
+              "use_percent",
+              "4.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/virtual-machines"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /data/Images",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Images"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "used_kb",
+              "54187008"
+            ],
+            [
+              "total_kb",
+              "1317779456"
+            ],
+            [
+              "use_percent",
+              "5.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/data/Images"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /home/gilles/Films/Films-2",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Films/Films-2"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "3530706576"
+            ],
+            [
+              "total_kb",
+              "7749758456"
+            ],
+            [
+              "use_percent",
+              "48.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/home/gilles/Films/Films-2"
+        },
+        {
+          "id": "STOR001",
+          "title": "Filesystem Usage — /home/gilles/Series",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Series"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "used_kb",
+              "2080"
+            ],
+            [
+              "total_kb",
+              "3845863328"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "This filesystem has comfortable headroom.",
+          "recommendation": null,
+          "instance": "/home/gilles/Series"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "461023"
+            ],
+            [
+              "inodes_total",
+              "6250496"
+            ],
+            [
+              "use_percent",
+              "8.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /tmp",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/tmp"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "103"
+            ],
+            [
+              "inodes_total",
+              "2527186391"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/tmp"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /home",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "673277"
+            ],
+            [
+              "inodes_total",
+              "15474688"
+            ],
+            [
+              "use_percent",
+              "5.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/home"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /boot",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/boot"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "340"
+            ],
+            [
+              "inodes_total",
+              "62464"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/boot"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /var",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/var"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "47984"
+            ],
+            [
+              "inodes_total",
+              "6168576"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/var"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /home/gilles/Theatre",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Theatre"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "17"
+            ],
+            [
+              "inodes_total",
+              "87244800"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/home/gilles/Theatre"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /home/gilles/Spectacles",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Spectacles"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "47"
+            ],
+            [
+              "inodes_total",
+              "88309760"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/home/gilles/Spectacles"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /home/gilles/Documentaires",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Documentaires"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "16"
+            ],
+            [
+              "inodes_total",
+              "87244800"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/home/gilles/Documentaires"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /home/gilles/Films/Films-1",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Films/Films-1"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "543"
+            ],
+            [
+              "inodes_total",
+              "234881024"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/home/gilles/Films/Films-1"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "15767"
+            ],
+            [
+              "inodes_total",
+              "2527202055"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/zfsmgr",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/zfsmgr"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "6"
+            ],
+            [
+              "inodes_total",
+              "2527186294"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/zfsmgr"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/dwhelper",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/dwhelper"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "14"
+            ],
+            [
+              "inodes_total",
+              "2527186302"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/dwhelper"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Vidéos",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Vidéos"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "67"
+            ],
+            [
+              "inodes_total",
+              "2527186355"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Vidéos"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Jeux",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Jeux"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "6"
+            ],
+            [
+              "inodes_total",
+              "2527186294"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Jeux"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/KDrive",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/KDrive"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "15"
+            ],
+            [
+              "inodes_total",
+              "2527186303"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/KDrive"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Web",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Web"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "662"
+            ],
+            [
+              "inodes_total",
+              "2527186950"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Web"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Téléchargements",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Téléchargements"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "10552"
+            ],
+            [
+              "inodes_total",
+              "2527196840"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Téléchargements"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Dedibox",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Dedibox"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "11083"
+            ],
+            [
+              "inodes_total",
+              "2527197371"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Dedibox"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Developpement",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Developpement"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "7987"
+            ],
+            [
+              "inodes_total",
+              "2527194275"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Developpement"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Musique",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Musique"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "42625"
+            ],
+            [
+              "inodes_total",
+              "2527228913"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Musique"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Nextcloud",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Nextcloud"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "6683"
+            ],
+            [
+              "inodes_total",
+              "2527192971"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Nextcloud"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/3D",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/3D"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "950"
+            ],
+            [
+              "inodes_total",
+              "2527187238"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/3D"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Shared",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Shared"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "6169"
+            ],
+            [
+              "inodes_total",
+              "2527192457"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Shared"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Documents",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Documents"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "418799"
+            ],
+            [
+              "inodes_total",
+              "2527605087"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Documents"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Dropbox",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Dropbox"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "6"
+            ],
+            [
+              "inodes_total",
+              "2527186294"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Dropbox"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/vm-shares",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/vm-shares"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "17435"
+            ],
+            [
+              "inodes_total",
+              "2527203723"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/vm-shares"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Archives",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Archives"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "4650"
+            ],
+            [
+              "inodes_total",
+              "2527190938"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Archives"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Photos",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Photos"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "152889"
+            ],
+            [
+              "inodes_total",
+              "2527339177"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Photos"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/virtual-machines",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/virtual-machines"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "27"
+            ],
+            [
+              "inodes_total",
+              "2527186315"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/virtual-machines"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /data/Images",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/data/Images"
+            ],
+            [
+              "fstype",
+              "zfs"
+            ],
+            [
+              "inodes_used",
+              "10656"
+            ],
+            [
+              "inodes_total",
+              "2527196944"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/data/Images"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /home/gilles/Films/Films-2",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Films/Films-2"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "3359"
+            ],
+            [
+              "inodes_total",
+              "244142080"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/home/gilles/Films/Films-2"
+        },
+        {
+          "id": "STOR002",
+          "title": "Inode Usage — /home/gilles/Series",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "mount_point",
+              "/home/gilles/Series"
+            ],
+            [
+              "fstype",
+              "ext4"
+            ],
+            [
+              "inodes_used",
+              "13"
+            ],
+            [
+              "inodes_total",
+              "244277248"
+            ],
+            [
+              "use_percent",
+              "1.0"
+            ]
+          ],
+          "explanation": "Plenty of inodes available on this filesystem.",
+          "recommendation": null,
+          "instance": "/home/gilles/Series"
+        },
+        {
+          "id": "STOR003",
+          "title": "SMART Summary",
+          "category": "storage",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "smartctl_available",
+              "true"
+            ],
+            [
+              "devices_checked",
+              "14"
+            ],
+            [
+              "smart_capable_devices",
+              "0"
+            ]
+          ],
+          "explanation": "Checked 14 devices; none support SMART or reported usable health data (common for virtual/paravirtualized disks). This may also be a permissions issue — SMART queries typically require root; try re-running as root or with sudo.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "systemd",
+      "findings": [
+        {
+          "id": "SYSD001",
+          "title": "System State",
+          "category": "systemd",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "state",
+              "running"
+            ],
+            [
+              "failed_units_count",
+              "0"
+            ]
+          ],
+          "explanation": "The system reports a healthy overall state.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "ntp",
+      "findings": [
+        {
+          "id": "NTP001",
+          "title": "Clock Synchronization Status",
+          "category": "ntp",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "ntp_synchronized",
+              "true"
+            ],
+            [
+              "ntp_enabled",
+              "true"
+            ],
+            [
+              "can_ntp",
+              "true"
+            ]
+          ],
+          "explanation": "The kernel reports the system clock as synchronized.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "NTP002",
+          "title": "RTC Time Mode",
+          "category": "ntp",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "local_rtc",
+              "false"
+            ],
+            [
+              "timezone",
+              "Europe/Paris"
+            ]
+          ],
+          "explanation": "The hardware clock (RTC) is kept in UTC, the recommended default — avoids daylight-saving-time-related clock jumps.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "network",
+      "findings": [
+        {
+          "id": "NET001",
+          "title": "Interface Overview — enp6s0",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "operstate",
+              "up"
+            ],
+            [
+              "mac_address",
+              "64:9d:99:b1:35:72"
+            ],
+            [
+              "mtu",
+              "1500"
+            ],
+            [
+              "speed_mbps",
+              "10000"
+            ]
+          ],
+          "explanation": "enp6s0: state up, link speed 10000 Mbps. Physical link detected.",
+          "recommendation": null,
+          "instance": "enp6s0"
+        },
+        {
+          "id": "NET002",
+          "title": "Interface Errors/Drops — enp6s0",
+          "category": "network",
+          "severity": "warning",
+          "confidence": {
+            "percent": 65,
+            "reason": "weak indication"
+          },
+          "evidence": [
+            [
+              "rx_packets",
+              "14072046"
+            ],
+            [
+              "rx_errors",
+              "82"
+            ],
+            [
+              "rx_dropped",
+              "870785"
+            ],
+            [
+              "tx_packets",
+              "2588035"
+            ],
+            [
+              "tx_errors",
+              "0"
+            ],
+            [
+              "tx_dropped",
+              "0"
+            ],
+            [
+              "worst_rate_percent",
+              "6.19"
+            ],
+            [
+              "sriov_vfs",
+              "3"
+            ]
+          ],
+          "explanation": "enp6s0: RX errors 0.00%, RX drops 6.19%, TX errors 0.00%, TX drops 0.00% of packets. Sustained rates like this commonly point to a cabling, driver, duplex-mismatch, or switch-port problem rather than normal network conditions. This interface has 3 active SR-IOV VFs — on some NIC/driver combinations, traffic steered to a VF's own queue is counted in the physical function's rx_dropped without indicating a real link problem, so this number is less conclusive here than it would be without VFs. Check the VF interfaces' own stats (`ip -s link show <vf-iface>`) to see whether their traffic volume lines up with the drops.",
+          "recommendation": "Compare against the VF interfaces' own traffic (`ip -s link show <vf-iface>`) before assuming a cabling/driver problem — with SR-IOV active, elevated PF rx_dropped is often explained by VF-steered traffic rather than a real link issue. If the VF traffic doesn't account for it, then check `ethtool <iface>` and the cable/switch port as usual.",
+          "instance": "enp6s0"
+        },
+        {
+          "id": "NET001",
+          "title": "Interface Overview — enp6s0v1",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "operstate",
+              "up"
+            ],
+            [
+              "mac_address",
+              "66:5a:e5:91:92:e2"
+            ],
+            [
+              "mtu",
+              "1500"
+            ],
+            [
+              "speed_mbps",
+              "10000"
+            ]
+          ],
+          "explanation": "enp6s0v1: state up, link speed 10000 Mbps. Physical link detected.",
+          "recommendation": null,
+          "instance": "enp6s0v1"
+        },
+        {
+          "id": "NET002",
+          "title": "Interface Errors/Drops — enp6s0v1",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "rx_packets",
+              "1001679613"
+            ],
+            [
+              "rx_errors",
+              "0"
+            ],
+            [
+              "rx_dropped",
+              "870785"
+            ],
+            [
+              "tx_packets",
+              "233078145"
+            ],
+            [
+              "tx_errors",
+              "0"
+            ],
+            [
+              "tx_dropped",
+              "0"
+            ],
+            [
+              "worst_rate_percent",
+              "0.09"
+            ]
+          ],
+          "explanation": "enp6s0v1: error/drop rates are all comfortably low (worst: 0.09%).",
+          "recommendation": null,
+          "instance": "enp6s0v1"
+        },
+        {
+          "id": "NET001",
+          "title": "Interface Overview — enp6s0v2",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "operstate",
+              "up"
+            ],
+            [
+              "mac_address",
+              "9e:78:30:2d:a1:fd"
+            ],
+            [
+              "mtu",
+              "1500"
+            ],
+            [
+              "speed_mbps",
+              "10000"
+            ]
+          ],
+          "explanation": "enp6s0v2: state up, link speed 10000 Mbps. Physical link detected.",
+          "recommendation": null,
+          "instance": "enp6s0v2"
+        },
+        {
+          "id": "NET002",
+          "title": "Interface Errors/Drops — enp6s0v2",
+          "category": "network",
+          "severity": "error",
+          "confidence": {
+            "percent": 85,
+            "reason": "strong indication"
+          },
+          "evidence": [
+            [
+              "rx_packets",
+              "5108753"
+            ],
+            [
+              "rx_errors",
+              "0"
+            ],
+            [
+              "rx_dropped",
+              "870785"
+            ],
+            [
+              "tx_packets",
+              "485749"
+            ],
+            [
+              "tx_errors",
+              "0"
+            ],
+            [
+              "tx_dropped",
+              "0"
+            ],
+            [
+              "worst_rate_percent",
+              "17.04"
+            ]
+          ],
+          "explanation": "enp6s0v2: RX errors 0.00%, RX drops 17.04%, TX errors 0.00%, TX drops 0.00% of packets. Sustained rates like this commonly point to a cabling, driver, duplex-mismatch, or switch-port problem rather than normal network conditions.",
+          "recommendation": "Check `ethtool <iface>` for link/duplex negotiation issues, inspect the cable/switch port, and watch `ip -s link show <iface>` over time to see whether the rate is still climbing or was a one-off.",
+          "instance": "enp6s0v2"
+        },
+        {
+          "id": "NET001",
+          "title": "Interface Overview — enp8s0",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "operstate",
+              "down"
+            ],
+            [
+              "mac_address",
+              "34:97:f6:5b:c6:bd"
+            ],
+            [
+              "mtu",
+              "1500"
+            ]
+          ],
+          "explanation": "enp8s0: state down. No physical link detected (cable unplugged or peer down).",
+          "recommendation": null,
+          "instance": "enp8s0"
+        },
+        {
+          "id": "NET002",
+          "title": "Interface Errors/Drops — enp8s0",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "rx_packets",
+              "0"
+            ],
+            [
+              "tx_packets",
+              "0"
+            ]
+          ],
+          "explanation": "Only 0 packets observed on enp8s0 so far — not enough traffic yet to evaluate error/drop rates meaningfully.",
+          "recommendation": null,
+          "instance": "enp8s0"
+        },
+        {
+          "id": "NET001",
+          "title": "Interface Overview — enp9s0",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "operstate",
+              "down"
+            ],
+            [
+              "mac_address",
+              "34:97:f6:5b:c6:be"
+            ],
+            [
+              "mtu",
+              "1500"
+            ]
+          ],
+          "explanation": "enp9s0: state down. No physical link detected (cable unplugged or peer down).",
+          "recommendation": null,
+          "instance": "enp9s0"
+        },
+        {
+          "id": "NET002",
+          "title": "Interface Errors/Drops — enp9s0",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "rx_packets",
+              "0"
+            ],
+            [
+              "tx_packets",
+              "0"
+            ]
+          ],
+          "explanation": "Only 0 packets observed on enp9s0 so far — not enough traffic yet to evaluate error/drop rates meaningfully.",
+          "recommendation": null,
+          "instance": "enp9s0"
+        },
+        {
+          "id": "NET001",
+          "title": "Interface Overview — virbr0",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "operstate",
+              "down"
+            ],
+            [
+              "mac_address",
+              "52:54:00:d5:bb:4a"
+            ],
+            [
+              "mtu",
+              "1500"
+            ]
+          ],
+          "explanation": "virbr0: state down. No physical link detected (cable unplugged or peer down).",
+          "recommendation": null,
+          "instance": "virbr0"
+        },
+        {
+          "id": "NET002",
+          "title": "Interface Errors/Drops — virbr0",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "rx_packets",
+              "0"
+            ],
+            [
+              "tx_packets",
+              "0"
+            ]
+          ],
+          "explanation": "Only 0 packets observed on virbr0 so far — not enough traffic yet to evaluate error/drop rates meaningfully.",
+          "recommendation": null,
+          "instance": "virbr0"
+        },
+        {
+          "id": "NET003",
+          "title": "Default Gateway",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "has_default_route",
+              "true"
+            ],
+            [
+              "gateway",
+              "192.168.17.1"
+            ],
+            [
+              "interface",
+              "enp6s0v1"
+            ]
+          ],
+          "explanation": "Default route via 192.168.17.1 on enp6s0v1.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "NET004",
+          "title": "DNS Configuration",
+          "category": "network",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "nameserver_count",
+              "1"
+            ],
+            [
+              "nameservers",
+              "127.0.0.53"
+            ]
+          ],
+          "explanation": "1 nameserver configured: 127.0.0.53.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "security",
+      "findings": [
+        {
+          "id": "SEC001",
+          "title": "Security Overview",
+          "category": "security",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "running_as",
+              "unprivileged user"
+            ],
+            [
+              "network",
+              "33 reachable from the network, 8 local only"
+            ],
+            [
+              "firewall",
+              "none detected (rules not readable without root)"
+            ],
+            [
+              "ssh_server",
+              "no SSH server"
+            ],
+            [
+              "access_control",
+              "AppArmor active"
+            ],
+            [
+              "hardening",
+              "0 weakness(es), 0 optional hardening"
+            ],
+            [
+              "accounts",
+              "no problem found"
+            ],
+            [
+              "sensitive_files",
+              "all as expected"
+            ]
+          ],
+          "explanation": "1 finding(s) need attention, worst first:\n\n  [WARNING] No Firewall Detected\n\nEvery check is read-only. A security audit shows what is configured and what is reachable from here; it cannot see the router, the cloud security group or the network policy in front of the machine.\n\nLinuxDoctor is running without root, so some things were out of sight: which program owns other users' sockets, the firewall rules themselves, password hashes in /etc/shadow and AppArmor's profile list. Run it with sudo for the complete picture; the checks that could not run say so in their own finding.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "SEC004",
+          "title": "No Firewall Detected",
+          "category": "security",
+          "severity": "warning",
+          "confidence": {
+            "percent": 70,
+            "reason": "weak indication"
+          },
+          "evidence": [
+            [
+              "status",
+              "not detected"
+            ],
+            [
+              "rules_inspected",
+              "no (not root)"
+            ],
+            [
+              "services_reachable",
+              "19"
+            ],
+            [
+              "reachable_tcp_ports",
+              "53, 80, 111, 139, 445, 2049, 10000, 20000, 32400, 33741, 34191, 36533, 43753, 44575, 45339, 47129, 54095, 54751, 60243"
+            ]
+          ],
+          "explanation": "No firewall service (firewalld, ufw) is running. The rules themselves cannot be read without root, so a rule set loaded by hand would not be seen; run LinuxDoctor with sudo to be certain.\n\n19 TCP service(s) other than SSH accept connections from the network (port(s) 53, 80, 111, 139, 445, 2049, 10000, 20000, 32400, 33741, 34191, 36533, 43753, 44575, 45339, 47129, 54095, 54751, 60243) with nothing in front of them on this machine. If the machine sits behind a router or a cloud provider's security group that already filters traffic, the risk is lower; a firewall on the machine itself is still the protection that follows it from one network to another, and that stops a program installed tomorrow from being exposed by surprise.",
+          "recommendation": "1. Install ufw if it is not installed:\n    sudo apt install ufw\n2. Allow what must stay reachable before turning it on. These other TCP ports are open now: 53, 80, 111, 139; allow one only if it must stay reachable.\n    sudo ufw allow 53/tcp   # only if this must stay reachable\n    sudo ufw allow 80/tcp   # only if this must stay reachable\n    sudo ufw allow 111/tcp   # only if this must stay reachable\n    sudo ufw allow 139/tcp   # only if this must stay reachable\n3. Refuse everything else coming in, and allow everything going out:\n    sudo ufw default deny incoming\n    sudo ufw default allow outgoing\n4. Turn it on and check the result:\n    sudo ufw enable\n    sudo ufw status verbose",
+          "instance": null
+        },
+        {
+          "id": "SEC002",
+          "title": "Listening Network Services",
+          "category": "security",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "tcp_services",
+              "25"
+            ],
+            [
+              "udp_services",
+              "16"
+            ],
+            [
+              "reachable_from_network",
+              "33"
+            ],
+            [
+              "loopback_only",
+              "8"
+            ],
+            [
+              "programs",
+              "32 not identified (run as root to see other users' programs)"
+            ]
+          ],
+          "explanation": "33 of 41 listening services accept connections from outside this machine (any address other than loopback); the rest can only be reached by programs running here. Whether an outside machine can really connect also depends on the firewall, see the firewall check.\n\n  PROTO PORT   REACHABLE BOUND TO                     PROGRAM\n  udp   67     yes       all interfaces               -\n  tcp   80     yes       all interfaces               -\n  tcp   111    yes       all interfaces               -\n  udp   111    yes       all interfaces               -\n  udp   137    yes       all interfaces               -\n  udp   138    yes       all interfaces               -\n  udp   1901   yes       all interfaces               -\n  tcp   2049   yes       all interfaces               -\n  udp   5353   yes       all interfaces               -\n  tcp   10000  yes       all interfaces               -\n  udp   10000  yes       all interfaces               -\n  tcp   20000  yes       all interfaces               -\n  udp   20000  yes       all interfaces               -\n  tcp   32400  yes       all interfaces               -\n  udp   32410  yes       all interfaces               -\n  udp   32412  yes       all interfaces               -\n  udp   32413  yes       all interfaces               -\n  udp   32414  yes       all interfaces               -\n  tcp   33741  yes       all interfaces               -\n  tcp   34191  yes       all interfaces               -\n  tcp   36533  yes       all interfaces               -\n  tcp   43753  yes       all interfaces               -\n  tcp   44575  yes       all interfaces               -\n  tcp   45339  yes       all interfaces               -\n  tcp   47129  yes       all interfaces               -\n  tcp   54095  yes       all interfaces               -\n  tcp   54751  yes       all interfaces               -\n  tcp   60243  yes       all interfaces               -\n  tcp   53     yes       127.0.0.53, 127.0.0.54 (+1)  -\n  udp   53     yes       127.0.0.53, 127.0.0.54 (+1)  -\n  tcp   139    yes       127.0.0.1, 192.168.17.7 (+1) -\n  tcp   445    yes       127.0.0.1, 192.168.17.7 (+1) -\n  udp   3702   yes       192.168.17.7, 192.168.17.50 (+7) python3 (pid 190064)\n  udp   323    local     127.0.0.1, ::1               -\n  tcp   631    local     127.0.0.1, ::1               -\n  udp   814    local     127.0.0.1                    -\n  tcp   3306   local     127.0.0.1                    -\n  tcp   32401  local     127.0.0.1                    -\n  tcp   32600  local     127.0.0.1                    -\n  tcp   34935  local     127.0.0.1                    -\n  ... and 1 more\n\nLinux only lets root see which program owns another user's socket, so some rows show no program. Run LinuxDoctor with sudo to fill them in.",
+          "recommendation": null,
+          "instance": "Listening services"
+        },
+        {
+          "id": "SEC006",
+          "title": "Mandatory Access Control — AppArmor Active",
+          "category": "security",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "active_modules",
+              "lockdown,capability,landlock,yama,apparmor,ima,evm"
+            ],
+            [
+              "apparmor_profiles",
+              "not readable without root"
+            ]
+          ],
+          "explanation": "AppArmor is on. Profile counts are readable by root only.",
+          "recommendation": null,
+          "instance": "Access control"
+        },
+        {
+          "id": "SEC007",
+          "title": "Kernel & Network Hardening",
+          "category": "security",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "settings_read",
+              "16"
+            ],
+            [
+              "important_weaknesses",
+              "0"
+            ],
+            [
+              "optional_hardening",
+              "0"
+            ],
+            [
+              "ip_forward",
+              "1"
+            ]
+          ],
+          "explanation": "All 16 hardening settings that could be read have safe values.\n\nThis machine forwards packets between networks (net.ipv4.ip_forward = 1), a router, container host or VPN gateway. The redirect settings do not apply to it and were not checked.",
+          "recommendation": null,
+          "instance": "Hardening"
+        },
+        {
+          "id": "SEC008",
+          "title": "User Accounts",
+          "category": "security",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "accounts",
+              "59"
+            ],
+            [
+              "interactive_accounts",
+              "1"
+            ],
+            [
+              "uid_0_accounts",
+              "root"
+            ],
+            [
+              "administrators",
+              "1"
+            ],
+            [
+              "password_hashes",
+              "not readable without root"
+            ]
+          ],
+          "explanation": "No account problem found: root is the only UID 0 account, no account has an empty password field, and no UID is shared.\n\n/etc/shadow can only be read by root, so empty and outdated password hashes were not checked. Run LinuxDoctor with sudo for that part.\n\nAccounts that can log in interactively: gilles.\n\nMembers of the administrator groups (sudo, wheel, admin): gilles.",
+          "recommendation": null,
+          "instance": "Accounts & files"
+        },
+        {
+          "id": "SEC009",
+          "title": "Sensitive File Permissions",
+          "category": "security",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "files_checked",
+              "16"
+            ],
+            [
+              "problems",
+              "0"
+            ]
+          ],
+          "explanation": "All 16 sensitive files and directories that exist here have the expected permissions.\n\n  PATH                             MODE  OWNER     STATUS\n  /etc/passwd                      0644  0:0       ok\n  /etc/group                       0644  0:0       ok\n  /etc/shadow                      0640  0:42      ok\n  /etc/gshadow                     0640  0:42      ok\n  /etc/sudoers                     0440  0:0       ok\n  /etc/sudoers.d                   0755  0:0       ok\n  /etc/ssh/ssh_host_rsa_key        0600  0:0       ok\n  /etc/ssh/ssh_host_ecdsa_key      0600  0:0       ok\n  /etc/ssh/ssh_host_ed25519_key    0600  0:0       ok\n  /etc/crontab                     0644  0:0       ok\n  /etc/cron.d                      0755  0:0       ok\n  /etc/fstab                       0644  0:0       ok\n  /root                            0700  0:0       ok\n  /tmp                             1777  0:0       ok\n  /var/tmp                         1777  0:0       ok\n  /dev/shm                         1777  0:0       ok",
+          "recommendation": null,
+          "instance": "Accounts & files"
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "logs",
+      "findings": [
+        {
+          "id": "LOG001",
+          "title": "Logs Overview",
+          "category": "logs",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "running_as",
+              "unprivileged user"
+            ],
+            [
+              "sources",
+              "authentication: systemd journal; errors: systemd journal; kernel: systemd journal"
+            ],
+            [
+              "authentication",
+              "0 failed SSH attempt(s) from 0 address(es), 0 successful login(s), no suspicious login"
+            ],
+            [
+              "system_errors",
+              "5000 error(s) from 2 source(s)"
+            ],
+            [
+              "kernel_messages",
+              "no storage, hardware or crash message"
+            ],
+            [
+              "journal",
+              "kept across reboots, 4.5 GiB"
+            ],
+            [
+              "log_files",
+              "3.2 GiB in /var/log, largest file 918 MiB"
+            ]
+          ],
+          "explanation": "2 finding(s) need attention, worst first:\n\n  [ERROR] System Errors Since Boot\n  [WARNING] Journal\n\nLogins are examined over the last 24 hours; errors and kernel messages over the time since the last boot. Older history is not looked at. Every check is read-only: LinuxDoctor reads logs, it never rotates, cleans or changes them.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "LOG005",
+          "title": "System Errors Since Boot",
+          "category": "logs",
+          "severity": "error",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "source",
+              "systemd journal"
+            ],
+            [
+              "errors",
+              "5000"
+            ],
+            [
+              "sources",
+              "2"
+            ],
+            [
+              "critical_or_worse",
+              "1"
+            ],
+            [
+              "noisiest_source",
+              "kernel (4999)"
+            ]
+          ],
+          "explanation": "5000 error message(s) since the last boot, from 2 source(s). 1 of them are at the alert or emergency level, the most serious the system uses. A source that logs this many errors is failing, restarting in a loop or stuck on something; the table shows what it keeps saying.\n\nThe journal holds more error messages than were read; the oldest were left out, so the counts are a minimum.\n\nNoisiest sources:\n  Count  Source             Message it repeats most\n  4999   kernel             ACPI Error: AE_NOT_FOUND, while evaluating GPE method [_L24] (20251212/evgpe-511)\n  1      user@1000.service  hp-systray(qt5)[13273]: error: Unable to find hp-upgrade --notify on PATH.",
+          "recommendation": "1. Read the most serious messages first:\n    sudo journalctl -b -p crit --no-pager\n2. See everything kernel reported, newest last:\n    sudo journalctl -b -p err -t kernel --no-pager | tail -40\n3. Once the cause is fixed, check that the errors stopped (the count should no longer grow):\n    sudo journalctl -b -p err --no-pager | wc -l",
+          "instance": null
+        },
+        {
+          "id": "LOG008",
+          "title": "Journal",
+          "category": "logs",
+          "severity": "warning",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "storage",
+              "persistent"
+            ],
+            [
+              "size",
+              "4.5 GiB"
+            ],
+            [
+              "size_limit",
+              "default"
+            ]
+          ],
+          "explanation": "The journal is stored on disk (/var/log/journal): logs survive a reboot.\n\nThe journal takes 4.5 GiB, more than the 4.0 GiB journald allows itself when nothing is configured. A limit was probably removed or raised by hand, so it will keep growing.",
+          "recommendation": "1. Shrink the journal now:\n    journalctl --disk-usage\n    sudo journalctl --vacuum-size=1G\n2. Cap it for good, in a drop-in file so the distribution's own file stays untouched:\n    sudo mkdir -p /etc/systemd/journald.conf.d\n    printf '[Journal]\\nSystemMaxUse=1G\\n' | sudo tee /etc/systemd/journald.conf.d/50-size.conf\n    sudo systemctl restart systemd-journald",
+          "instance": null
+        },
+        {
+          "id": "LOG002",
+          "title": "SSH Login Activity",
+          "category": "logs",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "source",
+              "systemd journal"
+            ],
+            [
+              "window_hours",
+              "24"
+            ],
+            [
+              "failed_attempts",
+              "0"
+            ],
+            [
+              "sources",
+              "0"
+            ],
+            [
+              "account_names_tried",
+              "0"
+            ],
+            [
+              "root_attempts",
+              "0"
+            ],
+            [
+              "successful_logins",
+              "0"
+            ]
+          ],
+          "explanation": "No failed SSH login was logged in the last 24 hours.",
+          "recommendation": null,
+          "instance": "Authentication"
+        },
+        {
+          "id": "LOG004",
+          "title": "Local Authentication Failures",
+          "category": "logs",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "window_hours",
+              "24"
+            ],
+            [
+              "failed_authentications",
+              "0"
+            ],
+            [
+              "sudo_refused",
+              "0"
+            ]
+          ],
+          "explanation": "No failed sudo, su or console login was logged in the last 24 hours.",
+          "recommendation": null,
+          "instance": "Authentication"
+        },
+        {
+          "id": "LOG006",
+          "title": "Storage & Hardware Errors",
+          "category": "logs",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "source",
+              "systemd journal"
+            ],
+            [
+              "kernel_messages_examined",
+              "20000"
+            ]
+          ],
+          "explanation": "No disk, filesystem, memory, bus or cooling error appears in the 20000 kernel messages since boot. Out-of-memory kills are reported by the Kernel module.",
+          "recommendation": null,
+          "instance": "Kernel messages"
+        },
+        {
+          "id": "LOG007",
+          "title": "Crashes & Lockups",
+          "category": "logs",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "source",
+              "systemd journal"
+            ],
+            [
+              "kernel_messages_examined",
+              "20000"
+            ]
+          ],
+          "explanation": "No program crash, kernel fault or CPU lockup appears in the 20000 kernel messages since boot.",
+          "recommendation": null,
+          "instance": "Kernel messages"
+        },
+        {
+          "id": "LOG009",
+          "title": "Log Files",
+          "category": "logs",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "scanned",
+              "yes"
+            ],
+            [
+              "size",
+              "3.2 GiB"
+            ],
+            [
+              "logrotate",
+              "installed"
+            ],
+            [
+              "largest_file",
+              "/var/log/syslog.1 (918 MiB)"
+            ]
+          ],
+          "explanation": "The log files in /var/log (the journal aside) take 3.2 GiB. Nothing is unusually large.\n\nLargest files:\n  Size      File\n  918 MiB   /var/log/syslog.1\n  911 MiB   /var/log/kern.log.1\n  608 MiB   /var/log/syslog\n  606 MiB   /var/log/kern.log\n  47.4 MiB  /var/log/syslog.2.gz\n  46.8 MiB  /var/log/syslog.4.gz\n\n7 directories could not be listed (run with sudo to include them).",
+          "recommendation": null,
+          "instance": "Journal & log files"
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "kernel",
+      "findings": [
+        {
+          "id": "KERN001",
+          "title": "Kernel Taint Status",
+          "category": "kernel",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "tainted_raw",
+              "4097"
+            ],
+            [
+              "active_flags",
+              "P,O"
+            ]
+          ],
+          "explanation": "The kernel is tainted: a proprietary module was loaded; an externally-built (\"out-of-tree\") module was loaded. Note the kernel stays tainted even after the underlying cause is resolved (e.g. a module is unloaded) — it's a historical record, not a live status.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "KERN002",
+          "title": "OOM Kill History",
+          "category": "kernel",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [],
+          "explanation": "Could not check the kernel log for OOM killer activity: dmesg: read kernel buffer failed: Operation not permitted. This commonly requires root (kernel.dmesg_restrict often limits dmesg to root) — re-run as root/sudo for this check.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "KERN003",
+          "title": "Kernel Build Info",
+          "category": "kernel",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "build_user_host",
+              "buildd@lcy02-amd64-082"
+            ],
+            [
+              "compiler",
+              "x86_64-linux-gnu-gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, GNU ld (GNU Binutils for Ubuntu) 2.46"
+            ],
+            [
+              "build_tag",
+              "#34-Ubuntu SMP PREEMPT_DYNAMIC Wed Sep  2 14:29:37 UTC 2026"
+            ]
+          ],
+          "explanation": "Built by buildd@lcy02-amd64-082 using x86_64-linux-gnu-gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, GNU ld (GNU Binutils for Ubuntu) 2.46. Useful context when comparing against a distro's official kernel build, or confirming this is a custom-built kernel.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "KERN004",
+          "title": "Reboot Required",
+          "category": "kernel",
+          "severity": "warning",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "marker_present",
+              "true"
+            ],
+            [
+              "packages",
+              "gnome-shell,linux-image-7.0.0-38-generic,linux-base,linux-base"
+            ]
+          ],
+          "explanation": "/var/run/reboot-required is present — a package update (commonly a kernel or glibc update) needs a reboot to take effect. Until then, this system keeps running the old kernel/libraries, so any security fixes in the update aren't active yet. Packages that triggered it: gnome-shell, linux-image-7.0.0-38-generic, linux-base, linux-base.",
+          "recommendation": "Reboot at the next convenient maintenance window to apply the pending update(s). `cat /var/run/reboot-required.pkgs` lists what triggered it, if you need to confirm before scheduling downtime.",
+          "instance": null
+        },
+        {
+          "id": "KERN005",
+          "title": "ASLR Status",
+          "category": "kernel",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "randomize_va_space",
+              "2"
+            ]
+          ],
+          "explanation": "ASLR is fully enabled (kernel.randomize_va_space=2), including heap randomization — the default and recommended setting on modern kernels.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "KERN006",
+          "title": "Notable Boot Parameters",
+          "category": "kernel",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "flags",
+              "nomodeset"
+            ]
+          ],
+          "explanation": "Notable boot parameter present: nomodeset.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "firmware",
+      "findings": [
+        {
+          "id": "FIRM001",
+          "title": "Firmware Identity & Boot Mode",
+          "category": "firmware",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "bios_vendor",
+              "American Megatrends Inc."
+            ],
+            [
+              "bios_version",
+              "3801"
+            ],
+            [
+              "bios_date",
+              "08/23/2019"
+            ],
+            [
+              "bios_release",
+              "5.6"
+            ],
+            [
+              "board_vendor",
+              "ASUSTeK COMPUTER INC."
+            ],
+            [
+              "board_name",
+              "Z10PA-D8 Series"
+            ],
+            [
+              "boot_mode",
+              "UEFI"
+            ],
+            [
+              "secure_boot_enabled",
+              "false"
+            ]
+          ],
+          "explanation": "American Megatrends Inc., version 3801, dated 08/23/2019 (SMBIOS BIOS Revision 5.6). Motherboard: ASUSTeK COMPUTER INC. Z10PA-D8 Series. Boot mode: UEFI. Secure Boot is disabled — a legitimate choice for many setups (e.g. some out-of-tree drivers, dual-boot configurations), not inherently a problem.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "FIRM002",
+          "title": "Virtualization Extensions (VT-x/AMD-V)",
+          "category": "firmware",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "virt_flag_present",
+              "true"
+            ],
+            [
+              "kvm_module_loaded",
+              "true"
+            ]
+          ],
+          "explanation": "Hardware virtualization (Intel VT-x / AMD-V) is supported and currently active — the kvm_intel/kvm_amd kernel module is loaded.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "FIRM003",
+          "title": "IOMMU (VT-d/AMD-Vi)",
+          "category": "firmware",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "iommu_kernel_param_requested",
+              "true"
+            ],
+            [
+              "iommu_active",
+              "true"
+            ]
+          ],
+          "explanation": "IOMMU (Intel VT-d / AMD-Vi) was requested on the kernel command line and is active — /sys/class/iommu/ shows real IOMMU devices. PCI passthrough (SR-IOV, VFIO) is usable on this system.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "FIRM004",
+          "title": "TPM Presence",
+          "category": "firmware",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "tpm_present",
+              "false"
+            ]
+          ],
+          "explanation": "No TPM detected under /sys/class/tpm/. Not inherently a problem — relevant mainly if you want hardware-backed disk encryption key sealing or measured boot.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    },
+    {
+      "module_id": "virtualization",
+      "findings": [
+        {
+          "id": "VIRT001",
+          "title": "Virtualization Detection",
+          "category": "virtualization",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "tool_available",
+              "true"
+            ],
+            [
+              "vm_type",
+              "none"
+            ],
+            [
+              "container_type",
+              "none"
+            ],
+            [
+              "cpuinfo_hypervisor_flag",
+              "false"
+            ]
+          ],
+          "explanation": "No virtualization detected — this appears to be running directly on physical hardware (bare metal).",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "VIRT002",
+          "title": "VM Inventory Summary",
+          "category": "virtualization",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "available",
+              "true"
+            ],
+            [
+              "vm_count",
+              "3"
+            ]
+          ],
+          "explanation": "3 VMs defined via libvirt, 1 currently running.",
+          "recommendation": null,
+          "instance": null
+        },
+        {
+          "id": "VIRT003",
+          "title": "Virtual Machine — win11-pro-gmv",
+          "category": "virtualization",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "state",
+              "running"
+            ],
+            [
+              "vcpus",
+              "24"
+            ],
+            [
+              "max_memory_kb",
+              "100663296"
+            ],
+            [
+              "used_memory_kb",
+              "100663296"
+            ],
+            [
+              "cpu_time_seconds",
+              "1262276.3"
+            ],
+            [
+              "cpu_percent_approx",
+              "2.2"
+            ],
+            [
+              "autostart",
+              "false"
+            ],
+            [
+              "numa_policy_mode",
+              "strict"
+            ],
+            [
+              "numa_policy_nodeset",
+              "0"
+            ],
+            [
+              "qemu_rss_kb",
+              "101332000"
+            ],
+            [
+              "hostdev:0:pci_address",
+              "0000:07:10.0"
+            ],
+            [
+              "hostdev:0:kind",
+              "sriov_network_interface"
+            ],
+            [
+              "hostdev:0:mac_address",
+              "52:54:00:f8:d2:b2"
+            ],
+            [
+              "hostdev:0:description",
+              "Ethernet controller: Intel Corporation 82599 Ethernet Controller Virtual Function (rev 01)"
+            ],
+            [
+              "hostdev:1:pci_address",
+              "0000:04:00.0"
+            ],
+            [
+              "hostdev:1:kind",
+              "pci_passthrough"
+            ],
+            [
+              "hostdev:1:description",
+              "VGA compatible controller: NVIDIA Corporation GP102 [TITAN X Pascal] (rev a1)"
+            ],
+            [
+              "hostdev:2:pci_address",
+              "0000:04:00.1"
+            ],
+            [
+              "hostdev:2:kind",
+              "pci_passthrough"
+            ],
+            [
+              "hostdev:2:description",
+              "Audio device: NVIDIA Corporation GP102 HDMI Audio Controller (rev a1)"
+            ],
+            [
+              "hostdev:3:pci_address",
+              "0000:05:00.0"
+            ],
+            [
+              "hostdev:3:kind",
+              "pci_passthrough"
+            ],
+            [
+              "hostdev:3:description",
+              "Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD Controller PM9A1/PM9A3/980PRO"
+            ],
+            [
+              "netif:0:type",
+              "hostdev"
+            ],
+            [
+              "netif:0:mac_address",
+              "52:54:00:f8:d2:b2"
+            ]
+          ],
+          "explanation": "win11-pro-gmv: running, 24 vCPUs, up to 96.0 GB memory. Currently using 96.0 GB on the host. Approximate host-observed CPU usage: 2.2% (brief sample taken during this scan, not a precise reading). NUMA policy: strict on node(s) 0. Guest-internal memory stats unavailable (needs the guest's balloon driver stats collection enabled). Passthrough devices: 0000:07:10.0 (SR-IOV network interface, MAC 52:54:00:f8:d2:b2 — Ethernet controller: Intel Corporation 82599 Ethernet Controller Virtual Function (rev 01)), 0000:04:00.0 (PCI passthrough — VGA compatible controller: NVIDIA Corporation GP102 [TITAN X Pascal] (rev a1)), 0000:04:00.1 (PCI passthrough — Audio device: NVIDIA Corporation GP102 HDMI Audio Controller (rev a1)), 0000:05:00.0 (PCI passthrough — Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD Controller PM9A1/PM9A3/980PRO). Network interfaces: hostdev, MAC 52:54:00:f8:d2:b2.",
+          "recommendation": null,
+          "instance": "win11-pro-gmv"
+        },
+        {
+          "id": "VIRT003",
+          "title": "Virtual Machine — Seedbox",
+          "category": "virtualization",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "state",
+              "shut off"
+            ],
+            [
+              "vcpus",
+              "8"
+            ],
+            [
+              "max_memory_kb",
+              "16777216"
+            ],
+            [
+              "autostart",
+              "false"
+            ],
+            [
+              "disk:vda",
+              "/dev/zvol/storage-1/seedbox"
+            ],
+            [
+              "disk:vda:capacity_bytes",
+              "118111600640"
+            ],
+            [
+              "disk:vda:allocation_bytes",
+              "118111600640"
+            ],
+            [
+              "disk:vdb",
+              "/dev/zvol/storage-1/seedbox-storage"
+            ],
+            [
+              "disk:vdb:capacity_bytes",
+              "1320702443520"
+            ],
+            [
+              "disk:vdb:allocation_bytes",
+              "1320702443520"
+            ],
+            [
+              "disk:vdc",
+              "/dev/zvol/storage-1/seedbox-storage-2"
+            ],
+            [
+              "disk:vdc:capacity_bytes",
+              "214748364800"
+            ],
+            [
+              "disk:vdc:allocation_bytes",
+              "214748364800"
+            ],
+            [
+              "hostdev:0:pci_address",
+              "0000:07:10.2"
+            ],
+            [
+              "hostdev:0:kind",
+              "sriov_network_interface"
+            ],
+            [
+              "hostdev:0:mac_address",
+              "a6:dd:24:04:08:9e"
+            ],
+            [
+              "hostdev:0:description",
+              "Ethernet controller: Intel Corporation 82599 Ethernet Controller Virtual Function (rev 01)"
+            ],
+            [
+              "netif:0:type",
+              "hostdev"
+            ],
+            [
+              "netif:0:mac_address",
+              "a6:dd:24:04:08:9e"
+            ]
+          ],
+          "explanation": "Seedbox: shut off, 8 vCPUs, up to 16.0 GB memory. Storage: vda (110.0 GB allocated of 110.0 GB capacity), vdb (1230.0 GB allocated of 1230.0 GB capacity), vdc (200.0 GB allocated of 200.0 GB capacity). Passthrough devices: 0000:07:10.2 (SR-IOV network interface, MAC a6:dd:24:04:08:9e — Ethernet controller: Intel Corporation 82599 Ethernet Controller Virtual Function (rev 01)). Network interfaces: hostdev, MAC a6:dd:24:04:08:9e.",
+          "recommendation": null,
+          "instance": "Seedbox"
+        },
+        {
+          "id": "VIRT003",
+          "title": "Virtual Machine — web",
+          "category": "virtualization",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "state",
+              "shut off"
+            ],
+            [
+              "vcpus",
+              "4"
+            ],
+            [
+              "max_memory_kb",
+              "8388608"
+            ],
+            [
+              "autostart",
+              "false"
+            ],
+            [
+              "disk:vda",
+              "/var/lib/libvirt/images/web.img"
+            ],
+            [
+              "disk:vda:capacity_bytes",
+              "214748364800"
+            ],
+            [
+              "disk:vda:allocation_bytes",
+              "7239655936"
+            ],
+            [
+              "hostdev:0:pci_address",
+              "0000:07:10.4"
+            ],
+            [
+              "hostdev:0:kind",
+              "pci_passthrough"
+            ],
+            [
+              "hostdev:0:description",
+              "Ethernet controller: Intel Corporation 82599 Ethernet Controller Virtual Function (rev 01)"
+            ]
+          ],
+          "explanation": "web: shut off, 4 vCPUs, up to 8.0 GB memory. Storage: vda (6.7 GB allocated of 200.0 GB capacity). Passthrough devices: 0000:07:10.4 (PCI passthrough — Ethernet controller: Intel Corporation 82599 Ethernet Controller Virtual Function (rev 01)).",
+          "recommendation": null,
+          "instance": "web"
+        },
+        {
+          "id": "VIRT004",
+          "title": "Container Inventory Summary",
+          "category": "virtualization",
+          "severity": "info",
+          "confidence": {
+            "percent": 100,
+            "reason": "direct observation"
+          },
+          "evidence": [
+            [
+              "available",
+              "false"
+            ],
+            [
+              "container_count",
+              "0"
+            ]
+          ],
+          "explanation": "No container inventory available: neither docker nor podman is installed.",
+          "recommendation": null,
+          "instance": null
+        }
+      ],
+      "error": null,
+      "skipped": false,
+      "notes": []
+    }
+  ]
+}

@@ -1093,7 +1093,7 @@ linuxdoctor/
 ├── .github/workflows/ci.yml   # CI: fmt, clippy, tests on Rust 1.75 + stable
 ├── LICENSE                    # GPL-3.0 full text
 ├── VERSION                  # single source of truth for the version number
-├── CHANGELOG.md              # Keep a Changelog format (in French)
+├── CHANGELOG.md              # Keep a Changelog format
 ├── CONTRIBUTING.md            # how to report bugs, add a module, code style
 ├── build-deb.sh                 # .deb packaging (fpm)
 ├── build-rpm.sh                  # .rpm packaging (fpm)

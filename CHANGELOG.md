@@ -2,2190 +2,2119 @@
 
 # Changelog
 
-Toutes les modifications notables de ce projet sont documentées dans ce fichier.
+All notable changes to this project are documented in this file.
 
-Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
-et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Non publié]
+## [Unreleased]
+
+### Changed
+
+- **The documentation is now in English only.** `CHANGELOG.md` (every entry, from 0.1.0 on)
+  and `CONTRIBUTING.md` were written in French; they are now in English, like `README.md`,
+  `ARCHITECTURE.md` and `PROJECT_CONTEXT.md`, because LinuxDoctor is aimed at system engineers
+  and advanced support staff. `CONTRIBUTING.md` says so in its "Documentation" section. No
+  change to the program.
 
 ## [1.11.3] - 2026-10-25
 
-Version de correction : une seule chose change dans le programme, le module réseau (`NET002`).
-Les interfaces SR-IOV virtuelles (VF) ont leur propre explication, au lieu de recevoir le conseil
-câble-duplex-commutateur qui ne s'applique qu'à une carte physique.
+Bug-fix release: only one thing changes in the program, the network module (`NET002`).
+SR-IOV virtual interfaces (VFs) get their own explanation, instead of receiving the
+cable-duplex-switch advice that only applies to a physical card.
 
-### Corrigé
+### Fixed
 
-- **Les interfaces SR-IOV virtuelles (VF) ont maintenant leur propre explication (`NET002`).**
-  Le rapport de `enp6s0v1` et `enp6s0v2` donnait un taux de RX drops sans dire qu'il peut être
-  normal pour une VF, et l'ancien conseil (câble, duplex, port du commutateur) ne veut rien dire
-  pour une VF, qui n'a ni câble ni lien à elle. **Ce n'est pas une régression du code** : la note
-  SR-IOV existe depuis la 1.0.0, et elle n'a jamais été écrite que pour la carte physique
-  (`enp6s0`, qui voit ses VF par `sriov_numvfs`) ; les VF elles-mêmes n'avaient aucun traitement,
-  dans aucune version. Elles en ont un, du même ordre que celui de la carte physique :
-  - une interface est reconnue comme VF par le lien `physfn` de son périphérique PCI (que le noyau
-    ne crée que pour les VF) ; la carte physique dont elle dépend est nommée par son interface
-    (`enp6s0`), ou par son adresse PCI si elle n'en a pas ;
-  - quand les drops ou les erreurs atteignent 0,1 % des paquets, la sévérité baisse d'un palier et
-    la confiance passe à 65 %, comme pour la carte physique ; l'explication dit que l'interface est
-    une VF de `enp6s0`, qu'elle partage le lien de sa carte physique et que le NIC peut lui envoyer
-    du trafic que rien ne consomme (diffusion, multicast) ; la phrase sur le câble et le duplex n'est
-    pas donnée ;
-  - la recommandation dit de regarder d'abord comment la VF est utilisée (son trafic, ses réglages
-    MAC, VLAN et confiance, que `ip link show` liste sur la carte physique), puis seulement le
-    câble et le port de la carte physique ;
-  - une VF sans drops n'a pas de note à porter (rien à expliquer) ; la preuve `sriov_vf_of` nomme sa
-    carte physique dans tous les cas.
-  - Les cartes physiques, avec ou sans VF, ne changent pas d'un mot.
-  - Vérifié sur de faux `/sys` qui reproduisent la forme des liens du noyau (`device`, `physfn`,
-    `net/`), jusqu'aux findings de `enp6s0v1` et `enp6s0v2` ; **pas sur une vraie machine avec
-    des VF** : le conteneur de développement n'en a pas. Que l'explication soit juste pour votre
-    carte (ici, que les drops des VF viennent bien de trafic que rien ne consomme) reste à confirmer
-    chez vous.
-  - Tests : 12 nouveaux (la lecture des liens : carte nommée, adresse PCI, plusieurs interfaces, noms
-    nettoyés et coupés à 64 caractères, carte physique et interface virtuelle qui ne sont pas des
-    VF ; les trois cas de drops d'une VF ; la carte physique inchangée ; une carte à une seule VF ;
-    et un test de bout en bout sur `enp6s0v1` et `enp6s0v2`).
+- **SR-IOV virtual interfaces (VFs) now have their own explanation (`NET002`).**
+  The report for `enp6s0v1` and `enp6s0v2` gave an RX drop rate without saying that it can be
+  normal for a VF, and the old advice (cable, duplex, switch port) means nothing for a VF, which
+  has no cable or link of its own. **This is not a code regression**: the SR-IOV note has existed
+  since 1.0.0, and it was only ever written for the physical card (`enp6s0`, which sees its VFs
+  through `sriov_numvfs`); the VFs themselves had no handling at all, in any version. They now
+  have one, of the same kind as the physical card's:
+  - an interface is recognized as a VF by the `physfn` link of its PCI device (which the kernel
+    only creates for VFs); the physical card it depends on is named by its interface
+    (`enp6s0`), or by its PCI address if it has none;
+  - when drops or errors reach 0.1% of packets, the severity drops by one level and the
+    confidence goes to 65%, as for the physical card; the explanation says that the interface is
+    a VF of `enp6s0`, that it shares the link of its physical card and that the NIC may send it
+    traffic that nothing consumes (broadcast, multicast); the sentence about the cable and the
+    duplex is not given;
+  - the recommendation says to look first at how the VF is used (its traffic, its MAC, VLAN and
+    trust settings, which `ip link show` lists on the physical card), and only then at the cable
+    and the port of the physical card;
+  - a VF without drops has no note to carry (nothing to explain); the `sriov_vf_of` evidence
+    names its physical card in every case.
+  - Physical cards, with or without VFs, do not change by a single word.
+  - Verified on fake `/sys` trees that reproduce the shape of the kernel's links (`device`,
+    `physfn`, `net/`), up to the findings for `enp6s0v1` and `enp6s0v2`; **not on a real machine
+    with VFs**: the development container has none. Whether the explanation is right for your
+    card (here, that the VFs' drops really come from traffic that nothing consumes) remains to be
+    confirmed on your side.
+  - Tests: 12 new (reading the links: card named, PCI address, several interfaces, names cleaned
+    and cut to 64 characters, physical card and virtual interface that are not VFs; the three
+    drop cases of a VF; the physical card unchanged; a card with a single VF; and an end-to-end
+    test on `enp6s0v1` and `enp6s0v2`).
 
 ## [1.11.2] - 2026-10-25
 
-Version de correction : une seule chose change dans le programme, le module de stockage
-(`STOR001`, `STOR002`). Il ne prend plus `efivarfs`, un DVD monté ou les systèmes de fichiers
-du noyau pour des disques pleins.
+Bug-fix release: only one thing changes in the program, the storage module
+(`STOR001`, `STOR002`). It no longer takes `efivarfs`, a mounted DVD or the kernel's
+filesystems for full disks.
 
-### Corrigé
+### Fixed
 
-- **Les systèmes de fichiers du noyau ne sont plus pris pour des disques pleins (`STOR001`,
-  `STOR002`).** `efivarfs`, qui contient les variables UEFI, ressortait en Critical (confiance
-  89 %) sous « Filesystem Usage — /sys/firmware/efi/efivars », avec la recommandation de
-  supprimer des fichiers : `df` le liste parce qu'il a une petite taille, presque entièrement
-  utilisée, alors que `proc`, `sysfs` ou `cgroup2`, de taille nulle, sont déjà masqués par
-  `df`. Ce n'est pas un disque qu'un administrateur remplit ni qu'il peut agrandir. Trois
-  changements, dans `is_real_filesystem` :
-  - `efivarfs`, `selinuxfs`, `resctrl` et `nfsd` rejoignent la liste des types ignorés (les
-    autres types du signalement — `sysfs`, `proc`, `tmpfs`, `devtmpfs`, `cgroup2`,
-    `securityfs` — y étaient déjà) ;
-  - tout ce qui est monté sous `/sys` ou `/proc` est ignoré, quel que soit son type, pour que le
-    prochain système de fichiers du noyau ne refasse pas la même erreur. Le chemin est comparé
-    composant par composant : `/sysroot` ou `/proc-backup` restent des disques ;
-  - les supports pleins par construction (`iso9660`, `udf`, `erofs`, `cramfs`, et `squashfs`
-    qui l'était déjà) sont ignorés par la même liste que celle de `STOR006`. Un DVD monté
-    ressortait à 100 %, en Critical, avec « les écritures échouent peut-être déjà ».
-  - La liste reste une liste d'exclusion, pas d'inclusion : une liste d'inclusion ferait
-    disparaître sans bruit `lustre`, `gpfs`, `virtiofs` ou le prochain vrai système de fichiers.
-  - Vérifié sur du texte `df` réaliste (une ligne `efivarfs` à 97 % et un DVD à 100 %, jusqu'aux
-    findings produits) ; **pas sur une vraie machine UEFI** : le conteneur de développement n'en
-    est pas une. Le texte exact que `df` imprime pour `efivarfs` n'a donc pas été relevé sur une
-    vraie machine, seulement sa forme.
-  - Tests : 6 nouveaux (les 26 types du noyau un par un, les 5 supports en lecture seule,
-    les montages sous `/sys` et `/proc`, `/sysroot` et ses semblables qui restent des disques,
-    15 types de vrais systèmes de fichiers qui restent signalés, et un test de bout en bout sur
-    du texte `df`).
+- **Kernel filesystems are no longer mistaken for full disks (`STOR001`,
+  `STOR002`).** `efivarfs`, which holds the UEFI variables, came out as Critical (confidence
+  89%) under "Filesystem Usage — /sys/firmware/efi/efivars", with the recommendation to
+  delete files: `df` lists it because it has a small size, almost entirely used, whereas `proc`,
+  `sysfs` or `cgroup2`, of zero size, are already hidden by `df`. It is not a disk that an
+  administrator fills or can enlarge. Three changes, in `is_real_filesystem`:
+  - `efivarfs`, `selinuxfs`, `resctrl` and `nfsd` join the list of ignored types (the other
+    types in the report — `sysfs`, `proc`, `tmpfs`, `devtmpfs`, `cgroup2`,
+    `securityfs` — were already there);
+  - everything mounted under `/sys` or `/proc` is ignored, whatever its type, so that the next
+    kernel filesystem does not repeat the same mistake. The path is compared component by
+    component: `/sysroot` or `/proc-backup` remain disks;
+  - media that are full by construction (`iso9660`, `udf`, `erofs`, `cramfs`, and `squashfs`
+    which already was) are ignored by the same list as the one used by `STOR006`. A mounted DVD
+    came out at 100%, as Critical, with "writes may already be failing".
+  - The list remains an exclusion list, not an inclusion list: an inclusion list would silently
+    make `lustre`, `gpfs`, `virtiofs` or the next real filesystem disappear.
+  - Verified on realistic `df` text (an `efivarfs` line at 97% and a DVD at 100%, up to the
+    findings produced); **not on a real UEFI machine**: the development container is not one.
+    The exact text that `df` prints for `efivarfs` was therefore not captured on a real machine,
+    only its shape.
+  - Tests: 6 new (the 26 kernel types one by one, the 5 read-only media,
+    the mounts under `/sys` and `/proc`, `/sysroot` and its like that remain disks,
+    15 types of real filesystems that remain reported, and an end-to-end test on
+    `df` text).
 
 ## [1.11.1] - 2026-10-18
 
-Version de documentation : le programme est le même que celui de la 1.11.0 (aucune ligne de code
-livrée ne change). Ce qui change, c'est le README embarqué dans les paquets : écrit pour qui
-découvre LinuxDoctor, et complet, car toutes les sections utiles de l'ancien README y sont
-revenues ; et la capture de l'interface qu'il montre est maintenant dans les paquets aussi.
+Documentation release: the program is the same as 1.11.0 (not a single line of shipped code
+changes). What changes is the README embedded in the packages: written for someone discovering
+LinuxDoctor, and complete, because all the useful sections of the old README have come back into
+it; and the screenshot of the interface that it shows is now in the packages too.
 
-### Modifié
+### Changed
 
-- **Les paquets installent le dossier `docs/`.** `build-deb.sh` et `build-rpm.sh` ne copiaient
-  dans `/usr/share/doc/linuxdoctor/` que cinq fichiers de la racine (`README.md`, `CHANGELOG.md`,
-  `PROJECT_CONTEXT.md`, `ARCHITECTURE.md`, `LICENSE`) ; le lien relatif du README vers
-  `docs/linuxdoctor-tui.png` était donc cassé une fois le paquet installé. Les deux scripts copient
-  maintenant `docs/` à côté du README (les permissions sont normalisées ensuite comme le reste).
-  Vérifié sur une copie des lignes de mise en place des scripts ; **pas encore vu dans un vrai
-  paquet** : `fpm` n'est pas installé dans le conteneur de développement, la première
-  construction le montrera (`dpkg -c linuxdoctor_1.11.1_amd64.deb | grep docs`).
-- **Le README est plus court au début et s'adresse à qui découvre LinuxDoctor** : environnements
-  visés, distributions et paquets, principes, ce que l'outil diagnostique, installation, commandes
-  courantes, capture de l'interface (`docs/linuxdoctor-tui.png`). Ce texte est resté tel qu'il a
-  été écrit ; les sections de l'ancien README qui n'y figuraient plus sont ajoutées à la suite,
-  sans rien retirer : **Quickstart from a source build**, **Reports, filtering and exit codes**,
-  **Profiles**, **Comparing two reports**, **The configuration file** (avec l'exemple exact),
-  **Manual page and shell completions**, **Speed and slow tools**, **Modules in detail** (le
-  détail de chacun des treize modules), **Runtime dependencies in detail**, **Toolchain note**
-  (les cinq dépendances épinglées pour Rust 1.75, que `ci.yml` et `ARCHITECTURE.md` citent),
-  **Packaging**, **Tests** et **Layout**.
-  - **Texte repris tel quel, sauf là où il était devenu faux** : « Status » devient « Modules in
-    detail » (et « v1 scaffold » devient « Thirteen modules ») ; « Quickstart » et « Runtime
-    dependencies » prennent un titre qui ne se heurte pas aux sections courtes du nouveau texte ;
-    le paragraphe de « Packaging » qui disait que `VERSION` ne fait pas partie des sources était
-    faux depuis la 1.9.0 et dit maintenant comment une version se prépare (`VERSION`,
-    `Cargo.toml` et `Cargo.lock` ensemble, paquets construits avec `--no-version-change`) ;
-    « Layout » connaît `docs/`, les contrôles ajoutés aux profils `hpc` et `server`, le RAID et
-    les montages en lecture seule de `storage`, et deux fichiers de tests de plus ; la fin de la
-    « Toolchain note » disait « les deux » alors qu'il y a cinq épingles ; un renvoi « see below »
-    devient « see above ».
-  - **« Getting set up » n'est pas reprise** : elle décrivait une archive à décompresser et un
-    premier `git commit`, et « Option 2: Build from source » la remplace.
-  - Le test qui exige que le README contienne l'exemple de `config::EXAMPLE` est rétabli (la
-    PR #34 l'avait retiré tant que la section manquait).
+- **The packages install the `docs/` folder.** `build-deb.sh` and `build-rpm.sh` only copied
+  five files from the root into `/usr/share/doc/linuxdoctor/` (`README.md`, `CHANGELOG.md`,
+  `PROJECT_CONTEXT.md`, `ARCHITECTURE.md`, `LICENSE`); the README's relative link to
+  `docs/linuxdoctor-tui.png` was therefore broken once the package was installed. Both scripts now
+  copy `docs/` next to the README (permissions are normalized afterwards like the rest).
+  Verified on a copy of the scripts' set-up lines; **not yet seen in a real
+  package**: `fpm` is not installed in the development container, the first
+  build will show it (`dpkg -c linuxdoctor_1.11.1_amd64.deb | grep docs`).
+- **The README is shorter at the start and addresses someone discovering LinuxDoctor**: target
+  environments, distributions and packages, principles, what the tool diagnoses, installation,
+  common commands, screenshot of the interface (`docs/linuxdoctor-tui.png`). This text has been
+  kept as it was written; the sections of the old README that no longer appeared in it are added
+  after it, removing nothing: **Quickstart from a source build**, **Reports, filtering and exit codes**,
+  **Profiles**, **Comparing two reports**, **The configuration file** (with the exact example),
+  **Manual page and shell completions**, **Speed and slow tools**, **Modules in detail** (the
+  detail of each of the thirteen modules), **Runtime dependencies in detail**, **Toolchain note**
+  (the five dependencies pinned for Rust 1.75, which `ci.yml` and `ARCHITECTURE.md` cite),
+  **Packaging**, **Tests** and **Layout**.
+  - **Text carried over as is, except where it had become wrong**: "Status" becomes "Modules in
+    detail" (and "v1 scaffold" becomes "Thirteen modules"); "Quickstart" and "Runtime
+    dependencies" get a title that does not clash with the short sections of the new text;
+    the paragraph of "Packaging" that said `VERSION` is not part of the sources
+    had been wrong since 1.9.0 and now says how a version is prepared (`VERSION`,
+    `Cargo.toml` and `Cargo.lock` together, packages built with `--no-version-change`);
+    "Layout" knows about `docs/`, the checks added to the `hpc` and `server` profiles, the RAID and
+    the read-only mounts of `storage`, and two more test files; the end of the
+    "Toolchain note" said "both" when there are five pins; a "see below" cross-reference
+    becomes "see above".
+  - **"Getting set up" is not carried over**: it described an archive to unpack and a
+    first `git commit`, and "Option 2: Build from source" replaces it.
+  - The test that requires the README to contain the example from `config::EXAMPLE` is
+    restored (PR #34 had removed it while the section was missing).
 
 ## [1.11.0] - 2026-10-17
 
-Onze nouvelles vérifications, toutes en lecture seule. Le profil `--profile server` passe
-d'une vérification à cinq : `SRV002` (les journaux survivent-ils à un redémarrage ?), `SRV003`
-(un redémarrage attend-il depuis des jours ?), `SRV004` (des mises à jour attendent-elles ?) et
-`SRV005` (un noyau plus récent que celui qui tourne est-il installé ?). Le module `storage`
-voit les tableaux RAID logiciels et les systèmes de fichiers passés en lecture seule
-(`STOR005`, `STOR006`) ; les modules `kernel` et `network` jugent les tables du noyau qui se
-remplissent (`KERN007`, `KERN008`, `NET005`) ; le module `network` voit un agrégat de liens qui
-a perdu une carte et un lien qui saute (`NET006`, `NET007`). Un profil se choisit, il ne se
-devine pas : sans `--profile`, seules les vérifications de `storage`, `kernel` et `network`
-s'ajoutent au rapport, et aucune sévérité existante ne change. La disposition du rapport JSON
-ne change pas (`schema_version` reste 1).
-Ce qui n'a pas été vu sur une vraie machine : le format de `/proc/net/bonding` (`NET006`) vient du
-code du noyau et d'exemples, pas d'un vrai noyau ; `/proc/mdstat` (`STOR005`) n'a été vu que sur
-des exemples réels, pas sur un tableau qui tourne ; `SRV004` et `SRV005` n'ont pas encore passé
-une vraie machine de production ; la table de suivi des connexions (`NET005`) n'a été vue qu'à 0 %.
+Eleven new checks, all read-only. The `--profile server` profile goes from one check to five:
+`SRV002` (do the logs survive a reboot?), `SRV003` (has a reboot been waiting for days?),
+`SRV004` (are updates waiting?) and `SRV005` (is a kernel newer than the running one
+installed?). The `storage` module sees software RAID arrays and filesystems that have gone
+read-only (`STOR005`, `STOR006`); the `kernel` and `network` modules judge the kernel tables
+that are filling up (`KERN007`, `KERN008`, `NET005`); the `network` module sees a link
+aggregate that has lost a card and a link that flaps (`NET006`, `NET007`). A profile is chosen,
+it is not guessed: without `--profile`, only the `storage`, `kernel` and `network` checks are
+added to the report, and no existing severity changes. The layout of the JSON report does not
+change (`schema_version` stays 1).
+What has not been seen on a real machine: the format of `/proc/net/bonding` (`NET006`) comes
+from the kernel code and from examples, not from a real kernel; `/proc/mdstat` (`STOR005`) has
+only been seen on real examples, not on a running array; `SRV004` and `SRV005` have not yet
+been through a real production machine; the connection-tracking table (`NET005`) has only been
+seen at 0%.
 
-### Ajouté
+### Added
 
-- **`--profile server` : deux vérifications de plus, `SRV002` (les journaux survivent-ils
-  à un redémarrage ?) et `SRV003` (un redémarrage attend-il depuis des jours ?).** Le module
-  `server` en a maintenant trois, dans cet ordre ; `SRV003` n'apparaît que s'il y a quelque
-  chose à dire. Comme `SRV001`, elles n'existent qu'avec le profil, et ne baissent aucune
-  sévérité.
-  - **`SRV002` — journaux conservés après un redémarrage.** Après un plantage, une coupure de
-    courant ou un redémarrage que personne n'a demandé, les journaux sont le seul témoin de ce
-    qui s'est passé, et sur un serveur que personne ne regardait c'est le seul. Le journal de
-    systemd n'est sur disque que si `Storage=` le veut : `persistent`, ou `auto` (le défaut)
-    **avec** un dossier `/var/log/journal` ; sinon il est en mémoire et part avec le
-    redémarrage. La vérification lit `Storage=` comme journald le lit : `journald.conf`
-    (le premier qui existe de `/etc`, `/run`, `/usr/local/lib`, `/usr/lib`), puis les fichiers
-    de `journald.conf.d` des mêmes dossiers, triés par nom quel que soit le dossier, un nom
-    dans un dossier plus prioritaire cachant le même nom plus bas (un lien vers `/dev/null`
-    aussi), la dernière valeur **valide** gagnant (les quatre mots sont exacts ; une valeur
-    invalide est ignorée, donc ce qui précédait reste). Elle regarde aussi le dossier, et si
-    les journaux classiques (`/var/log/syslog`, `/var/log/messages`) ont été écrits dans les
-    7 derniers jours.
-    - Journal sur disque, ou journaux classiques écrits : **Info** (90 %). Journal en mémoire
-      et aucun journal classique : **Avertissement à 80 %**, avec les commandes pour le
-      garder (changer `Storage=` dans le fichier qui dit `volatile` ou `none`, créer
-      `/var/log/journal` avec `systemd-tmpfiles`, relancer journald, vérifier avec
-      `--list-boots`). Pas plus de 80 % : la machine peut envoyer ses journaux ailleurs
-      (collecteur syslog ou journal-remote, Promtail, Filebeat), ce que rien ici ne voit, et
-      le texte le dit. Sans journal systemd : une Info qui dit que rien n'a été vérifié.
-    - **Ce que `LOG008` ne fait pas** : il juge le journal d'après son seul dossier et ignore
-      `Storage=`, donc il ne voit pas `Storage=volatile` par-dessus un dossier qui existe.
-  - **`SRV003` — redémarrage laissé en attente.** Sur Debian et dérivées, une mise à jour qui
-    ne prend effet qu'après un redémarrage écrit `/var/run/reboot-required` (`KERN004` dit
-    qu'il est là). `SRV003` ajoute depuis combien de temps : rien pendant la première
-    semaine (une fenêtre de maintenance à venir) ; ensuite un **Avertissement à 90 %**, avec
-    l'âge en jours et les paquets de `/var/run/reboot-required.pkgs` (chacun une fois, dix
-    nommés au plus, les autres comptés). La date est celle de la *dernière* mise à jour qui a
-    demandé le redémarrage (chacune réécrit le fichier) : il attend **au moins** autant, et le
-    texte le dit, ainsi qu'un noyau patché à chaud a déjà ses correctifs. Rien sans le
-    marqueur (les autres familles n'en ont pas, `KERN004` le dit déjà), ni quand sa date est
-    inconnue ou dans le futur.
-  - Tout se lit dans des fichiers (aucun outil lancé), sous une racine que les tests
-    remplacent par un arbre factice, et l'âge vient d'une horloge passée avec les données :
-    `analyze` reste une fonction pure.
-  - **Vérifié** avec le vrai binaire dans le conteneur de développement : journal présent
-    (Info) ; dossier retiré et aucun journal classique (Avertissement avec les commandes) ;
-    marqueur vieux de 12 jours avec trois paquets dont un en double (`SRV003` avec l'âge et
-    deux paquets, `KERN004` inchangé), puis tout remis. Les tests de bout en bout ne peuvent
-    pas déplacer la racine : ils comparent les constatations à ce que la machine dit
-    elle-même. **Pas encore vu sur une machine réelle avec un journal en mémoire ni avec un
-    redémarrage en attente depuis des semaines** : à regarder dans ton premier rapport.
-  - Tests : 44 nouveaux (la lecture de `Storage=` et des fichiers sur de faux arbres :
-    ordre, masquage, liens vers `/dev/null`, fichier énorme, noms hostiles, dates aux
-    limites ; chaque verdict et chaque phrase ; les paquets ; l'ordre des constatations dans
-    le module ; et deux tests de bout en bout). Ils échouent quand on casse le code : 146
-    casseurs essayés, 146 détectés ; cinq avaient survécu à la première série (un chemin trop
-    long pas coupé, les paquets au-delà de dix, l'horloge de lecture, une racine fausse) et
-    les tests ont été resserrés. Un contrôle de type de fichier inutile a été retiré en route.
+- **`--profile server`: two more checks, `SRV002` (do the logs survive a reboot?) and
+  `SRV003` (has a reboot been waiting for days?).** The `server` module now has three, in that
+  order; `SRV003` only appears if there is something to say. Like `SRV001`, they only exist
+  with the profile, and lower no severity.
+  - **`SRV002` — logs kept after a reboot.** After a crash, a power cut or a reboot that nobody
+    asked for, the logs are the only witness of what happened, and on a server that nobody was
+    watching they are the only one. The systemd journal is only on disk if `Storage=` wants it:
+    `persistent`, or `auto` (the default) **with** a `/var/log/journal` directory; otherwise it
+    is in memory and goes away with the reboot. The check reads `Storage=` the way journald
+    reads it: `journald.conf` (the first one that exists among `/etc`, `/run`, `/usr/local/lib`,
+    `/usr/lib`), then the files of `journald.conf.d` in the same directories, sorted by name
+    whatever the directory, a name in a higher-priority directory hiding the same name lower
+    down (a link to `/dev/null` too), the last **valid** value winning (the four words are exact;
+    an invalid value is ignored, so what came before stays). It also looks at the directory, and
+    at whether the classic logs (`/var/log/syslog`, `/var/log/messages`) have been written in
+    the last 7 days.
+    - Journal on disk, or classic logs written: **Info** (90%). Journal in memory and no classic
+      log: **Warning at 80%**, with the commands to keep it (change `Storage=` in the file that
+      says `volatile` or `none`, create `/var/log/journal` with `systemd-tmpfiles`, restart
+      journald, check with `--list-boots`). No more than 80%: the machine may send its logs
+      elsewhere (syslog or journal-remote collector, Promtail, Filebeat), which nothing here
+      can see, and the text says so. Without a systemd journal: an Info that says nothing was
+      checked.
+    - **What `LOG008` does not do**: it judges the journal from its directory alone and ignores
+      `Storage=`, so it does not see `Storage=volatile` on top of a directory that exists.
+  - **`SRV003` — reboot left pending.** On Debian and derivatives, an update that only takes
+    effect after a reboot writes `/var/run/reboot-required` (`KERN004` says it is there).
+    `SRV003` adds for how long: nothing during the first week (a maintenance window to come);
+    then a **Warning at 90%**, with the age in days and the packages from
+    `/var/run/reboot-required.pkgs` (each one once, ten named at most, the others counted). The
+    date is that of the *last* update that asked for the reboot (each one rewrites the file): it
+    has been waiting **at least** that long, and the text says so, as well as that a live-patched
+    kernel already has its fixes. Nothing without the marker (the other families do not have
+    one, `KERN004` already says so), nor when its date is unknown or in the future.
+  - Everything is read from files (no tool is run), under a root that the tests replace with a
+    fake tree, and the age comes from a clock passed along with the data: `analyze` remains a
+    pure function.
+  - **Verified** with the real binary in the development container: journal present (Info);
+    directory removed and no classic log (Warning with the commands); marker 12 days old with
+    three packages, one of them duplicated (`SRV003` with the age and two packages, `KERN004`
+    unchanged), then everything put back. The end-to-end tests cannot move the root: they
+    compare the findings with what the machine itself says. **Not yet seen on a real machine
+    with an in-memory journal or with a reboot pending for weeks**: to look at in your first
+    report.
+  - Tests: 44 new (the reading of `Storage=` and of the files on fake trees: order, hiding,
+    links to `/dev/null`, huge file, hostile names, dates at the limits; every verdict and every
+    sentence; the packages; the order of the findings in the module; and two end-to-end tests).
+    They fail when the code is broken: 146 mutants tried, 146 caught; five had survived the
+    first round (a path that was too long and not cut, the packages beyond ten, the reading
+    clock, a wrong root) and the tests were tightened. A useless file-type check was removed
+    along the way.
 
-- **`--profile server` : deux vérifications de plus, `SRV004` (des mises à jour attendent-elles ?)
-  et `SRV005` (un noyau plus récent est-il installé que celui qui tourne ?).** Le module `server`
-  en a maintenant cinq, dans cet ordre ; `SRV003` et `SRV005` n'apparaissent que s'il y a quelque
-  chose à dire, `SRV004` seulement sur Debian et dérivées.
-  - **`SRV004` — mises à jour en attente (Debian et dérivées).** `apt list --upgradable` liste
-    ce qui attend, sans être root et sans réseau (il lit les listes que apt a déjà) ; `SRV004`
-    compte les paquets, et ceux qui viennent d'un dépôt dont le nom finit par `-security`. Le
-    nombre seul ne juge rien : sur une machine qui se met à jour chaque nuit, une mise à jour
-    sortie ce matin est normale. **Avertissement à 80 %** dans deux cas seulement : les listes de
-    paquets n'ont pas été rafraîchies depuis 7 jours (`update-success-stamp`) — le vrai nombre
-    peut être plus grand et le rafraîchissement quotidien ne marche pas — ou des mises à jour de
-    sécurité attendent alors que rien n'a été installé ni mis à jour depuis 3 jours (le plus
-    récent de `unattended-upgrades-stamp` et de la date de `/var/log/dpkg.log`). Sinon une
-    **Info** avec les nombres. Si `apt` ne répond pas, le nombre est dit inconnu, jamais zéro.
-    Les commandes (rafraîchir, voir, installer, comprendre pourquoi la tâche automatique ne l'a
-    pas fait) ne sont données que pour l'avertissement. Rien sur Red Hat et dérivées : `dnf`
-    devrait rafraîchir ses métadonnées par le réseau pour répondre.
-  - **`SRV005` — noyau plus récent installé que celui qui tourne.** Un noyau n'est remplacé qu'au
-    redémarrage suivant. Debian le dit avec `/var/run/reboot-required` (`SRV003`, `KERN004`) ;
-    les autres familles n'ont pas de marqueur, donc `SRV005` compare le noyau qui tourne
-    (`/proc/sys/kernel/osrelease`) aux noyaux installés (`/boot/vmlinuz-*` et
-    `/usr/lib/modules/*/vmlinuz`). Les versions se comparent comme des nombres (`6.8.0-9` est
-    plus ancien que `6.8.0-45`) et seulement entre noyaux de même variante (`generic` avec
-    `generic` ; l'étiquette `el9_4` ou `fc40` de Red Hat est ignorée) : une machine qui a un
-    noyau « lowlatency » à côté de celui qu'elle utilise n'a rien oublié. Rien avant 7 jours
-    depuis l'installation (la date de l'initrd) ; ensuite un **Avertissement à 90 %**, avec l'âge
-    et les trois étapes (voir, redémarrer dans une fenêtre de maintenance, vérifier) ; une
-    **Info** quand un correctif à chaud est chargé (`/sys/kernel/livepatch`), et une Info à 80 %
-    quand la date d'installation est introuvable. Rien quand le système a déjà un marqueur de
-    redémarrage : c'est lui qui l'a dit.
-  - Les outils sont derrière le trait `Tools` comme avant (un `apt` de plus, `slow()` : lire le
-    cache de paquets peut prendre quelques secondes) ; les lectures de fichiers se font sous la
-    racine que les tests remplacent par un arbre factice, l'âge vient de l'horloge passée avec
-    les données, `analyze` reste une fonction pure.
-  - **Vérifié** avec le vrai binaire dans le conteneur de développement : le vrai `apt` compte
-    63 mises à jour dont 59 de sécurité (Info, car `dpkg.log` date d'un jour) ; avec un faux
-    noyau plus récent dans `/boot` : rien à 2 jours, Avertissement à 10 jours avec ses étapes,
-    noyau d'une autre variante ignoré, noyau plus ancien ignoré, puis `/boot` remis comme avant.
-    Les tests de bout en bout mettent un faux `apt` en tête du `PATH` (les deux tests du module
-    qui s'en servent s'arrêtent d'eux-mêmes sur une machine qui n'est pas Debian) ; ils ne
-    peuvent pas déplacer la racine, donc pour `SRV005` ils comparent seulement le noyau nommé à
-    celui que la machine dit.
-  - Tests : 50 nouveaux (le comptage de la liste d'`apt` et les dépôts de sécurité, les dates
-    des deux marques, chaque verdict et chaque phrase aux limites de 3 et 7 jours, les versions
-    et leurs variantes, les noyaux installés sur de faux arbres, l'ordre des constatations du
-    module, quatre tests de bout en bout). Ils échouent quand on casse le code : 73 casseurs
-    essayés, 73 détectés (un avait survécu : le seuil « au moins une mise à jour de sécurité »
-    n'était testé qu'avec deux, un test a été ajouté).
-  - **Limites connues** : `dpkg.log` change à la moindre installation, pas seulement à une mise
-    à jour de sécurité, d'où le texte « installé ou mis à jour » ; une distribution dont la
-    variante change à chaque version (Arch : `arch1-1`, `arch1-2`) n'est pas comparée à travers
-    ce changement. **Pas encore vu sur une vraie machine de production** : à regarder dans ton
-    premier rapport.
+- **`--profile server`: two more checks, `SRV004` (are updates waiting?) and `SRV005` (is a
+  kernel newer than the running one installed?).** The `server` module now has five, in that
+  order; `SRV003` and `SRV005` only appear if there is something to say, `SRV004` only on Debian
+  and derivatives.
+  - **`SRV004` — pending updates (Debian and derivatives).** `apt list --upgradable` lists what
+    is waiting, without being root and without the network (it reads the lists that apt already
+    has); `SRV004` counts the packages, and those that come from a repository whose name ends
+    in `-security`. The number alone judges nothing: on a machine that updates itself every
+    night, an update released this morning is normal. **Warning at 80%** in two cases only: the
+    package lists have not been refreshed for 7 days (`update-success-stamp`) — the real number
+    may be larger and the daily refresh does not work — or security updates are waiting while
+    nothing has been installed or updated for 3 days (the most recent of
+    `unattended-upgrades-stamp` and the date of `/var/log/dpkg.log`). Otherwise an **Info** with
+    the numbers. If `apt` does not answer, the number is said to be unknown, never zero. The
+    commands (refresh, look, install, understand why the automatic task did not do it) are only
+    given for the warning. Nothing on Red Hat and derivatives: `dnf` would have to refresh its
+    metadata over the network to answer.
+  - **`SRV005` — kernel newer than the running one installed.** A kernel is only replaced at the
+    next reboot. Debian says so with `/var/run/reboot-required` (`SRV003`, `KERN004`); the other
+    families have no marker, so `SRV005` compares the running kernel
+    (`/proc/sys/kernel/osrelease`) with the installed kernels (`/boot/vmlinuz-*` and
+    `/usr/lib/modules/*/vmlinuz`). Versions are compared as numbers (`6.8.0-9` is older than
+    `6.8.0-45`) and only between kernels of the same variant (`generic` with `generic`; Red
+    Hat's `el9_4` or `fc40` label is ignored): a machine that has a "lowlatency" kernel next to
+    the one it uses has forgotten nothing. Nothing before 7 days since the installation (the
+    date of the initrd); then a **Warning at 90%**, with the age and the three steps (look,
+    reboot in a maintenance window, check); an **Info** when a live patch is loaded
+    (`/sys/kernel/livepatch`), and an Info at 80% when the installation date cannot be found.
+    Nothing when the system already has a reboot marker: it is the one that said so.
+  - The tools are behind the `Tools` trait as before (one more `apt`, `slow()`: reading the
+    package cache can take a few seconds); the file reads are done under the root that the tests
+    replace with a fake tree, the age comes from the clock passed along with the data, `analyze`
+    remains a pure function.
+  - **Verified** with the real binary in the development container: the real `apt` counts 63
+    updates, 59 of them security (Info, because `dpkg.log` is a day old); with a fake newer
+    kernel in `/boot`: nothing at 2 days, Warning at 10 days with its steps, kernel of another
+    variant ignored, older kernel ignored, then `/boot` put back as before. The end-to-end tests
+    put a fake `apt` at the head of the `PATH` (the two tests of the module that use it stop by
+    themselves on a machine that is not Debian); they cannot move the root, so for `SRV005`
+    they only compare the named kernel with the one the machine says.
+  - Tests: 50 new (counting the `apt` list and the security repositories, the dates of the two
+    marks, every verdict and every sentence at the limits of 3 and 7 days, the versions and
+    their variants, the installed kernels on fake trees, the order of the module's findings,
+    four end-to-end tests). They fail when the code is broken: 73 mutants tried, 73 caught (one
+    had survived: the "at least one security update" threshold was only tested with two, and a
+    test was added).
+  - **Known limits**: `dpkg.log` changes at the slightest installation, not only a security
+    update, hence the text "installed or updated"; a distribution whose variant changes with
+    every version (Arch: `arch1-1`, `arch1-2`) is not compared across that change. **Not yet
+    seen on a real production machine**: to look at in your first report.
 
-- **Storage : l'état actuel des tableaux RAID et des systèmes de fichiers passés en
-  lecture seule.** `smartctl` juge un disque à la fois et le journal du noyau ne dit les
-  choses qu'une fois ; ces deux constats lisent ce qui reste vrai.
-  - **`STOR005` — un constat par tableau RAID logiciel (md)**, lu dans `/proc/mdstat`.
-    Info quand le tableau est entier (un `check` ou un `resync` en cours n'est qu'une
-    information, avec son avancement). Avertissement pendant qu'un disque de rechange se
-    remplit (« recovery 12,6 %, environ 60 min restantes »), ou quand le tableau est
-    complet mais qu'un disque en échec y figure encore. Erreur quand il n'a plus de
-    redondance et que rien ne se reconstruit, ou qu'il n'a pas démarré (`inactive`). Les
-    commandes proposées vont de `mdadm --detail` à `mdadm … --remove failed` et `--add`,
-    avec `smartctl -a` sur le disque entier derrière chaque partition en échec. Un
-    conteneur de RAID firmware (`imsm`, `ddf`) n'est jamais « démarré » et n'a pas de santé
-    propre : il n'est pas signalé, les tableaux qu'il contient le sont.
-  - **`STOR006` — un constat par système de fichiers que `/etc/fstab` veut en
-    lecture-écriture et que le noyau sert en lecture seule.** C'est ce que laisse un
-    remontage après erreur disque (`errors=remount-ro`). Erreur, Critique pour `/` (le
-    système ne peut plus écrire ses journaux ni son état). Confiance 90 % et non 100 :
-    quelqu'un a pu le remonter exprès (une sauvegarde, une maintenance), et le texte le
-    dit. Seuls les montages que fstab liste sont regardés, ni ceux qu'il écrit `ro`,
-    `noauto` ou `bind`, ni ceux dont le support est en lecture seule par nature
-    (`iso9660`, `squashfs`…), ni ceux qui ne sont pas sur un disque local (`tmpfs`, NFS).
-    Il complète `LOG006`, qui lit le message du noyau mais seulement tant que le journal de
-    ce démarrage existe et se lit.
-  - `STOR005` n'a pas encore été vu sur un vrai tableau md : le format de `/proc/mdstat` a
-    été vérifié sur le code du noyau et sur des exemples réels (RAID 1, 5, conteneur
-    Intel), `STOR006` l'a été sur un vrai montage en lecture seule.
+- **Storage: the current state of RAID arrays and of filesystems that have gone read-only.**
+  `smartctl` judges one disk at a time and the kernel log says things only once; these two
+  findings read what remains true.
+  - **`STOR005` — one finding per software RAID (md) array**, read from `/proc/mdstat`. Info
+    when the array is whole (a `check` or a `resync` in progress is only information, with its
+    progress). Warning while a spare disk is filling up ("recovery 12.6%, about 60 min
+    left"), or when the array is complete but a failed disk still appears in it. Error when it
+    no longer has redundancy and nothing is rebuilding, or when it has not started (`inactive`).
+    The proposed commands go from `mdadm --detail` to `mdadm … --remove failed` and `--add`,
+    with `smartctl -a` on the whole disk behind each failed partition. A firmware RAID container
+    (`imsm`, `ddf`) is never "started" and has no health of its own: it is not reported, the
+    arrays it contains are.
+  - **`STOR006` — one finding per filesystem that `/etc/fstab` wants read-write and that the
+    kernel serves read-only.** This is what a remount after a disk error (`errors=remount-ro`)
+    leaves behind. Error, Critical for `/` (the system can no longer write its logs or its
+    state). Confidence 90% and not 100: someone may have remounted it on purpose (a backup,
+    maintenance), and the text says so. Only the mounts that fstab lists are looked at, not
+    those it writes as `ro`, `noauto` or `bind`, nor those whose medium is read-only by nature
+    (`iso9660`, `squashfs`…), nor those that are not on a local disk (`tmpfs`, NFS). It
+    complements `LOG006`, which reads the kernel message but only as long as the journal of that
+    boot exists and can be read.
+  - `STOR005` has not yet been seen on a real md array: the format of `/proc/mdstat` was
+    verified against the kernel code and real examples (RAID 1, 5, Intel container), `STOR006`
+    was verified on a real read-only mount.
 
-- **Trois tables du noyau qui se remplissent : `KERN007`, `KERN008` et `NET005`.** Le noyau a
-  quelques tables de taille fixe. Tant qu'elles ont de la place, rien ne se voit ; quand l'une
-  est pleine, le prochain programme qui demande une entrée est refusé (`Too many open files in
-  system`, `fork` qui échoue avec `Resource temporarily unavailable`, un paquet jeté), et ce qui
-  tombe en panne (une connexion, un service qui se relance, une base de données) ne remonte
-  presque jamais jusqu'à la table. Aucun outil lancé : tout se lit dans `/proc`, sous une racine
-  que les tests remplacent par un arbre factice.
-  - **`KERN007` — table des fichiers ouverts** (module `kernel`) : `/proc/sys/fs/file-nr`
-    contre `fs.file-max`.
-  - **`KERN008` — table des processus et des threads** (module `kernel`) : le total de
-    `/proc/loadavg` (chaque thread a son identifiant) contre le plus bas de `kernel.pid_max` et
-    `kernel.threads-max`, avec lequel des deux est en cause. Un seuil à zéro est ignoré.
-  - **`NET005` — table de suivi des connexions** (module `network`) : `nf_conntrack_count`
-    contre `nf_conntrack_max`. Pleine, elle jette les paquets qui ouvriraient une connexion
-    (`nf_conntrack: table full, dropping packet`) : les connexions existantes continuent, les
-    nouvelles expirent, ce qui ressemble à un réseau instable. Pas de constatation quand
-    `nf_conntrack` n'est pas chargé (pas de table).
-  - **Une seule règle pour les trois** (`src/modules/saturation.rs`) : **Info** (100 %) avec les
-    chiffres tant qu'il y a de la place ; **Avertissement** dès 80 % ; **Erreur** dès 95 %, tous
-    deux à 85 % de confiance (le chiffre est exact, mais un compteur lu une fois peut être un
-    pic : « c'est un problème » reste une forte indication). La comparaison est exacte, sur des
-    entiers de 128 bits (pas sur le pourcentage arrondi, et sans débordement : `fs.file-max` vaut
-    `i64::MAX` sur certains systèmes). Les trois constatations existent toujours quand la table
-    existe, même à 0 %, pour que `linuxdoctor diff` ne signale pas une constatation qui
-    n'apparaît que sous pression.
-  - **Les étapes** (Avertissement et Erreur seulement) regardent avant de toucher : qui tient le
-    plus de fichiers (un compte de `/proc/[0-9]*/fd`) ou de threads (`ps -eo nlwp`), quels
-    protocoles et quelles adresses remplissent la table de suivi, le délai d'une connexion TCP
-    établie (5 jours par défaut) ; puis la limite relevée au double (appliquée tout de suite et
-    gardée dans `/etc/sysctl.d`, jamais au-delà de `i64::MAX`). `kernel.pid_max` monte au plus que
-    le noyau accepte (4194304) et, s'il y est déjà, l'étape le dit sans proposer de commande.
-  - **Limites connues** : un programme seul qui atteint sa propre limite (`ulimit -n`, le
-    `TasksMax` d'un service systemd) n'est pas vu, il faudrait parcourir `/proc/*/limits` ; dans
-    un conteneur, `/proc/loadavg` donne le nombre de tâches de la machine hôte alors que
-    `pid_max` peut être celui du conteneur. Le texte de l'avertissement dit la première.
-  - **Vérifié** avec le vrai binaire dans le conteneur de développement : tout à ~0 % (Info),
-    puis `fs.file-max` ramené à 140 et `kernel.threads-max` à 112 pour une seconde : `KERN007`
-    (93 %) et `KERN008` (84 %, limite en cause `kernel.threads-max`) passent en Avertissement
-    avec leurs étapes, valeurs remises ensuite. Les commandes proposées ont été lancées sur la
-    machine et répondent. La table de suivi était vide (0 entrée sur 262144) : son Avertissement
-    n'a été vu que sur des chiffres de test, pas sur une vraie table qui se remplit.
-  - Tests : 46 nouveaux (la règle et ses bornes exactes, y compris les limites énormes ; la
-    lecture des trois fichiers sur de faux arbres, morceaux manquants ou illisibles ; chaque
-    verdict et chaque phrase ; le choix de la limite en cause ; les étapes et le doublement
-    plafonné ; l'ordre des constatations dans les deux modules ; quatre tests de bout en bout dont
-    deux avec le vrai binaire, qui comparent ce qu'il dit à `/proc`). Ils échouent quand on casse
-    le code : 39 casseurs essayés, 39 détectés (deux avaient survécu : une limite de 1 n'était
-    testée nulle part, des cas ont été ajoutés). Un test existant
-    (`the_profile_lowers_no_finding_of_the_other_modules`) comparait toutes les constatations du
-    module `kernel` d'un lancement à l'autre : les compteurs de `KERN007` et `KERN008` bougent,
-    donc il compare maintenant leur sévérité seulement.
+- **Three kernel tables that fill up: `KERN007`, `KERN008` and `NET005`.** The kernel has a few
+  fixed-size tables. As long as they have room, nothing shows; when one is full, the next
+  program that asks for an entry is refused (`Too many open files in system`, `fork` failing
+  with `Resource temporarily unavailable`, a dropped packet), and what breaks (a connection, a
+  service restarting, a database) almost never traces back to the table. No tool is run:
+  everything is read from `/proc`, under a root that the tests replace with a fake tree.
+  - **`KERN007` — open files table** (`kernel` module): `/proc/sys/fs/file-nr` against
+    `fs.file-max`.
+  - **`KERN008` — table of processes and threads** (`kernel` module): the total from
+    `/proc/loadavg` (each thread has its identifier) against the lower of `kernel.pid_max` and
+    `kernel.threads-max`, with which of the two is responsible. A threshold of zero is ignored.
+  - **`NET005` — connection-tracking table** (`network` module): `nf_conntrack_count` against
+    `nf_conntrack_max`. When full, it drops the packets that would open a connection
+    (`nf_conntrack: table full, dropping packet`): existing connections continue, new ones time
+    out, which looks like an unstable network. No finding when `nf_conntrack` is not loaded (no
+    table).
+  - **One single rule for the three** (`src/modules/saturation.rs`): **Info** (100%) with the
+    figures as long as there is room; **Warning** from 80%; **Error** from 95%, both at 85%
+    confidence (the figure is exact, but a counter read once may be a peak: that it is a
+    problem remains a strong indication). The comparison is exact, on 128-bit integers (not on
+    the rounded percentage, and without overflow: `fs.file-max` is `i64::MAX` on some systems).
+    The three findings always exist when the table exists, even at 0%, so that
+    `linuxdoctor diff` does not report a finding that only appears under pressure.
+  - **The steps** (Warning and Error only) look before touching: who holds the most files (a
+    count of `/proc/[0-9]*/fd`) or threads (`ps -eo nlwp`), which protocols and addresses fill
+    the tracking table, the timeout of an established TCP connection (5 days by default); then
+    the limit raised to double (applied right away and kept in `/etc/sysctl.d`, never beyond
+    `i64::MAX`). `kernel.pid_max` goes up at most to what the kernel accepts (4194304) and, if
+    it is already there, the step says so without proposing a command.
+  - **Known limits**: a single program reaching its own limit (`ulimit -n`, the `TasksMax` of a
+    systemd service) is not seen, it would take walking `/proc/*/limits`; in a container,
+    `/proc/loadavg` gives the number of tasks of the host machine while `pid_max` may be the
+    container's. The warning text states the first.
+  - **Verified** with the real binary in the development container: everything at ~0% (Info),
+    then `fs.file-max` brought down to 140 and `kernel.threads-max` to 112 for a second:
+    `KERN007` (93%) and `KERN008` (84%, limit responsible `kernel.threads-max`) go to Warning
+    with their steps, values put back afterwards. The proposed commands were run on the machine
+    and they answer. The tracking table was empty (0 entries out of 262144): its Warning was
+    only seen on test figures, not on a real table that fills up.
+  - Tests: 46 new (the rule and its exact bounds, including huge limits; the reading of the
+    three files on fake trees, missing or unreadable pieces; every verdict and every sentence;
+    the choice of the limit responsible; the steps and the capped doubling; the order of the
+    findings in the two modules; four end-to-end tests, two of them with the real binary, which
+    compare what it says with `/proc`). They fail when the code is broken: 39 mutants tried, 39
+    caught (two had survived: a limit of 1 was not tested anywhere, cases were added). An
+    existing test (`the_profile_lowers_no_finding_of_the_other_modules`) compared all the
+    findings of the `kernel` module from one run to the next: the counters of `KERN007` and
+    `KERN008` move, so it now only compares their severity.
 
-- **Deux pannes de réseau que rien d'autre ne signale : `NET006` (agrégat de liens dégradé) et
-  `NET007` (lien qui saute).** Dans les deux cas la machine « marche » : un agrégat dont une carte
-  est tombée continue de passer par l'autre, un lien qui retombe se rétablit en une seconde. Ce
-  qui casse, c'est ce qui passait par là à ce moment-là. Aucun outil lancé : `/proc/net/bonding`
-  et `/sys/class/net`, sous une racine que les tests remplacent par un arbre factice.
-  - **`NET006` — interface agrégée** (module `network`, une constatation par agrégat, que son
-    état soit bon ou non, pour que `linuxdoctor diff` ne signale pas une constatation qui
-    n'apparaît que lors d'une panne) :
-    **Erreur** quand aucune carte n'a de lien (rien ne passe) ; **Avertissement** quand l'agrégat
-    marche mais a perdu sa redondance (« il ne reste qu'un lien entre la machine et la coupure »,
-    avec le nombre de pannes de lien de chaque carte depuis la création) ; **Avertissement** à
-    80 % en 802.3ad quand toutes les cartes ont un lien mais pas dans le même agrégat LACP
-    (c'est ce que donne un commutateur non configuré pour LACP sur ces ports : une seule carte
-    porte le trafic, et le texte dit si aucun commutateur n'a répondu) ; **Info** sinon. Les étapes
-    regardent avant de toucher (`cat /proc/net/bonding/…`, puis `ethtool` et `dmesg` pour chaque
-    carte sans lien) et ne changent rien.
-  - **`NET007` — lien qui saute** (module `network`) : `carrier_changes` d'une carte physique
-    filtrée (ni virtuelle, ni Wi-Fi, qui perd son lien par nature). Un seul chiffre ne dit rien
-    (le lien monte au démarrage, un commutateur redémarré fait tomber chaque carte une fois) :
-    il faut au moins **10 changements et un en moyenne toutes les 12 heures** depuis le démarrage.
-    **Avertissement** à 80 % (c'est un taux moyen depuis le démarrage : une rafale ancienne
-    compte aussi, et le texte le dit). Les étapes : `dmesg`, `ethtool` et ses compteurs d'erreurs,
-    l'Energy-Efficient Ethernet (`--show-eee` avant `--set-eee … off`), changer le câble ou le
-    port pour voir si le problème suit l'un ou l'autre, puis surveiller le compteur.
-  - **Limites connues** : le format de `/proc/net/bonding` a été repris du code du noyau
-    (`bond_procfs.c`) et d'exemples publiés, **pas vu sur un vrai noyau** : le conteneur de
-    développement n'a pas le pilote `bonding`. Le test avec le vrai binaire vérifie donc surtout
-    qu'il ne dit rien là où il n'y a rien. Seuls les agrégats du noyau sont vus (pas `teamd`, ni
-    un pont, ni Open vSwitch). `carrier_changes` est un compteur depuis l'apparition de
-    l'interface : on ne sait pas quand les changements ont eu lieu, `dmesg` le dit.
-  - **Vérifié** avec le vrai binaire dans le conteneur de développement : aucun agrégat, `eth0` à
-    2 changements, donc ni `NET006` ni `NET007`, et la sortie du module réseau est celle d'avant.
-    Le reste est vu sur de faux arbres.
-  - Tests : 51 nouveaux (le format du noyau, ligne par ligne, y compris les morceaux
-    manquants, les noms hostiles et les fichiers énormes ; chaque état d'un agrégat et chaque
-    phrase ; les bornes exactes de la règle du lien qui saute ; les étapes et les noms qui ne
-    sont pas de simples mots ; l'ordre des constatations ; trois tests de bout en bout dont un
-    avec le vrai binaire). Ils échouent quand on casse le code : 105 casseurs essayés, tous détectés
-    (13 avaient survécu : les bornes exactes — 64 Kio et 2000 lignes lus, 256 cartes, neuf cartes
-    contre huit nommées —, la valeur d'une carte qui ne dit rien (sans lien) et un temps de
-    marche nul n'étaient testés nulle part, des tests ont été ajoutés ; deux casseurs
-    équivalents ont disparu en simplifiant le code).
+- **Two network failures that nothing else reports: `NET006` (degraded link aggregate) and
+  `NET007` (flapping link).** In both cases the machine "works": an aggregate that has lost a
+  card keeps passing through the other, a link that drops comes back within a second. What
+  breaks is whatever was passing through at that moment. No tool is run: `/proc/net/bonding`
+  and `/sys/class/net`, under a root that the tests replace with a fake tree.
+  - **`NET006` — aggregated interface** (`network` module, one finding per aggregate, whether
+    its state is good or not, so that `linuxdoctor diff` does not report a finding that only
+    appears during a failure): **Error** when no card has a link (nothing passes); **Warning**
+    when the aggregate works but has lost its redundancy ("only one link stands between the
+    machine and being cut off", with the number of link failures of each card since creation);
+    **Warning** at 80% in 802.3ad when all the cards have a link but not in the same LACP
+    aggregate (this is what a switch not configured for LACP on those ports gives: a single
+    card carries the traffic, and the text says whether no switch answered); **Info** otherwise.
+    The steps look before touching (`cat /proc/net/bonding/…`, then `ethtool` and `dmesg` for
+    each card without a link) and change nothing.
+  - **`NET007` — flapping link** (`network` module): `carrier_changes` of a filtered physical
+    card (neither virtual nor Wi-Fi, which loses its link by nature). A single figure says
+    nothing (the link comes up at boot, a rebooted switch drops each card once): it takes at
+    least **10 changes and one on average every 12 hours** since boot. **Warning** at 80%
+    (it is an average rate since boot: an old burst counts too, and the text says so). The
+    steps: `dmesg`, `ethtool` and its error counters, Energy-Efficient Ethernet (`--show-eee`
+    before `--set-eee … off`), changing the cable or the port to see whether the problem follows
+    either, then watching the counter.
+  - **Known limits**: the format of `/proc/net/bonding` was taken from the kernel code
+    (`bond_procfs.c`) and from published examples, **not seen on a real kernel**: the
+    development container does not have the `bonding` driver. The test with the real binary
+    therefore mostly checks that it says nothing where there is nothing. Only the kernel's
+    aggregates are seen (not `teamd`, nor a bridge, nor Open vSwitch). `carrier_changes` is a
+    counter since the interface appeared: there is no way to know when the changes took place,
+    `dmesg` says.
+  - **Verified** with the real binary in the development container: no aggregate, `eth0` at 2
+    changes, so neither `NET006` nor `NET007`, and the output of the network module is the one
+    from before. The rest is seen on fake trees.
+  - Tests: 51 new (the kernel format, line by line, including missing pieces, hostile names and
+    huge files; every state of an aggregate and every sentence; the exact bounds of the
+    flapping-link rule; the steps and the names that are not simple words; the order of the
+    findings; three end-to-end tests, one of them with the real binary). They fail when the code
+    is broken: 105 mutants tried, all caught (13 had survived: the exact bounds — 64 KiB and
+    2000 lines read, 256 cards, nine cards against eight named —, the value of a card that says
+    nothing (no link) and a zero uptime were not tested anywhere, tests were added; two
+    equivalent mutants disappeared when simplifying the code).
 
 ## [1.10.0] - 2026-10-17
 
-Les profils de machine arrivent : `--profile hpc` (quatre vérifications propres aux
-nœuds de calcul) et `--profile server` (les mises à jour de sécurité automatiques).
-Le module GPU détaille les GPU Intel, et l'en-tête des rapports donne le vrai nombre de
-CPU d'une machine dont certains sont isolés. Un profil se choisit, il ne se devine pas :
-sans lui, les profils ne changent ni une sévérité ni un code de sortie. La disposition du rapport JSON ne change pas : `profile`
-est un champ ajouté, absent quand aucun profil n'a été choisi, et `schema_version` reste 1.
-Le côté dnf de `SRV001` n'a été vu que sur de faux fichiers, pas sur une vraie machine
-Fedora ou RHEL.
+Machine profiles arrive: `--profile hpc` (four checks specific to compute nodes) and
+`--profile server` (automatic security updates). The GPU module details Intel GPUs, and the
+header of the reports gives the real number of CPUs of a machine on which some are isolated. A
+profile is chosen, it is not guessed: without one, the profiles change neither a severity nor an
+exit code. The layout of the JSON report does not change: `profile`
+is an added field, absent when no profile was chosen, and `schema_version` stays 1.
+The dnf side of `SRV001` has only been seen on fake files, not on a real Fedora or RHEL machine.
 
-### Ajouté
+### Added
 
-- **Profils de machine : `--profile hpc`** (ou `profile = "hpc"` en tête du fichier
-  de configuration). Les vérifications jugent une machine « en général » ; certaines
-  mesures veulent dire autre chose sur un type de machine précis. Une charge égale au
-  nombre de CPU est de la contention sur un poste de travail, et un nœud de calcul qui
-  fait son travail. Un profil le dit une fois, à un seul endroit (`src/profile.rs`),
-  au lieu que chaque module devine. Pour `audit` et `tui` (`diff` n'en a pas : il lit
-  celui que chaque rapport a enregistré).
-  - **Choisi, jamais deviné.** Aucune détection : deux machines semblables ne doivent
-    pas être jugées différemment pour une raison que personne ne voit. Sans profil,
-    rien ne change, pas une sévérité.
-  - **Un profil ne fait que baisser.** Chaque règle est un plafond : une constatation
-    au-dessus est rapportée au plafond, une constatation en dessous est laissée telle
-    quelle, et aucune règle ne peut rien relever. Ce n'est pas un détail de style : le
-    code de sortie suit les sévérités, donc un profil qui aggraverait des
-    constatations ferait échouer des audits qui passent aujourd'hui, à cause d'un
-    réglage. Il ne supprime aucune constatation, ne touche ni aux preuves ni à la
-    confiance, et n'a rien à dire d'un disque plein ou d'un service exposé (vérifié
-    avec le vrai binaire : mêmes constatations, même code de sortie).
-  - **Il dit ce qu'il a fait, dans la constatation.** Une constatation ajustée reçoit
-    `severity_before_profile` et `profile` dans ses preuves, et un dernier paragraphe
-    d'explication avec la raison (« Profile hpc: reported as info instead of
-    critical. … »). Le rapport nomme aussi le profil : première ligne du rapport
-    terminal, en-tête Markdown et HTML, bandeau de la TUI, et une clé `profile` en
-    haut du JSON, **absente quand aucun profil n'a été choisi** (champ ajouté,
-    `schema_version` reste 1).
-  - **Appliqué au rapport terminé, avant le code de sortie et avant le filtre
-    d'affichage** : `--fail-on` et le code de sortie par défaut jugent les sévérités
-    que le rapport montre.
-  - **`hpc`** (nœud de calcul, où des CPU pleinement occupés sont l'état normal) :
-    `CPU002` (charge) et `CPU003` (surcharge soutenue, Critique sur toute autre
-    machine) sont rapportées comme Info au plus ; les chiffres de charge restent dans
-    les preuves. **À savoir** : sous `hpc`, un nœud sur-souscrit par erreur ressemble à
-    un nœud qui travaille. Le profil retire l'alarme, pas le chiffre.
-  - **`diff` prévient** quand deux rapports ont été écrits avec des profils
-    différents, y compris *aucun* contre un profil (sans cela, une constatation
-    « améliorée » entre un rapport sans profil et un rapport `hpc` le serait sur le
-    papier seulement) : avertissement `different_profiles` en JSON, avant la liste des
-    changements, sans jamais modifier un changement ni le code de sortie.
-  - La page de manuel a une section `PROFILES` (générée depuis le code, donc toujours
-    à jour) et décrit la clé `profile` du fichier de configuration ; l'exemple du
-    fichier de configuration, dans le README comme dans la page de manuel, la montre.
-  - Prévu ensuite, sans rien promettre : d'autres vérifications pour le profil `server`
-    (voir plus bas).
-- **Le module GPU donne maintenant des détails sur les GPU Intel** (pilotes `i915`
-  et `xe`). Ils étaient reconnus mais sans aucune mesure, contrairement à AMD et
-  NVIDIA. Lecture directe de sysfs, sans outil externe, dans le même `GPU002`.
-  - **Fréquence** : fréquence réelle, maximum du matériel, et maximum autorisé. Si
-    ce dernier est plus bas que ce que le matériel peut atteindre, le rapport le
-    signale (un plafond a été posé par quelqu'un ou quelque chose ; le programme ne
-    sait pas qui). Un GPU qui rapporte 0 MHz est dit « idle » (endormi dans son état
-    d'économie d'énergie), pas « cadencé à 0 MHz ».
-  - **Bridage** : le pilote dit si le GPU est retenu sous sa fréquence cible en ce
-    moment et pourquoi (`pl1`, `pl2`, `pl4`, `thermal`, `ratl`, `prochot`, ...).
-    Un bridage dû à la température est un **Avertissement**, même sur un GPU
-    intégré qui n'a aucune mesure de température, avec une recommandation sur le
-    refroidissement ; un bridage dû à une limite de puissance est expliqué mais
-    reste une information (atteindre sa limite sous charge n'est pas une panne).
-    Un nom de cause que le programme ne connaît pas est montré tel que le noyau le
-    donne, sans explication inventée.
-  - **Cartes dédiées** : température, ventilateur et limite de puissance, par la
-    puce hwmon du pilote (choisie par son nom, pas par sa position). Avec `xe`, la
-    température du boîtier et sa valeur critique (noyau 7.0) permettent de juger la
-    température par rapport à la limite de la carte elle-même.
-  - **Ce qui n'est volontairement pas lu** : l'utilisation et la VRAM (les pilotes
-    Intel ne les donnent pas par sysfs), et `cur_freq` de `xe` (le noyau réveille le
-    GPU pour y répondre, ce qu'un audit en lecture seule n'a pas à faire).
-  - **Limite à connaître** : les chemins, unités et formats viennent des sources du
-    noyau et de sa documentation ; ils n'ont pas encore été vérifiés sur un vrai
-    GPU Intel. Chaque lecture est facultative : un fichier absent ou illisible
-    laisse la mesure de côté, jamais une valeur devinée. Seul le premier GT
-    graphique (`gt0`) est lu.
-  - Tests : 33 nouveaux, dont des arborescences sysfs factices reproduisant les
-    deux pilotes, l'ancienne disposition d'`i915`, les valeurs absentes ou
-    absurdes, et un périphérique Intel confié à un autre pilote. Ils échouent
-    quand on casse le code (21 casseurs essayés).
-- **Le module GPU voit les cartes que le noyau n'expose pas dans `/sys/class/drm`.**
-  Il ne regardait que ces cartes-là : une carte réservée à une machine virtuelle
-  (`vfio-pci`), un GPU sans pilote, ou un GPU de calcul dont le pilote n'enregistre
-  pas de carte graphique n'apparaissaient pas, et un serveur de calcul pouvait
-  afficher « No GPU detected » alors qu'il en contient. Le module cherche maintenant
-  aussi les contrôleurs d'affichage (classe PCI `0x03`) sur le bus PCI.
-  - **Carte sous `vfio-pci`** : listée en Info, avec une phrase disant qu'elle est
-    réservée au passage à une machine virtuelle et que c'est attendu sur un hôte de
-    virtualisation. Le résumé `GPU001` les compte (« 1 of 3 is bound to vfio-pci »).
-  - **GPU sans pilote** : un GPU NVIDIA, AMD ou Intel est un **Avertissement**, comme
-    pour une carte DRM (avant, il était invisible). Un adaptateur d'un autre fabricant
-    trouvé seulement sur le bus PCI (typiquement la puce vidéo du contrôleur de gestion
-    d'un serveur, souvent laissée sans pilote exprès) est listé en Info, sans alerte.
-    Le comportement des cartes DRM ne change pas.
-  - **Ce qui est lu** pour ces cartes : le lien PCIe, et `nvidia-smi` pour les cartes
-    NVIDIA que le pilote `nvidia` gère. Rien d'autre : sans carte DRM, sysfs n'offre
-    pas de mesure. La preuve `drm_card: false` l'indique.
-  - **`nvidia-smi` ne compte plus que les cartes qu'il voit.** Sans cela, une carte
-    réservée à `vfio-pci` à côté d'une carte utilisée aurait fait croire à un
-    système multi-cartes et supprimé l'attribution des processus à la carte utilisée.
-  - Les fonctions virtuelles SR-IOV ne sont pas comptées comme des GPU à part
-    entière.
-  - Tests : 15 nouveaux (faux bus PCI, fusion avec les cartes DRM, analyse, et le cas
-    complet d'un hôte avec une carte utilisée, une carte réservée et une puce de
-    gestion). Ils échouent quand on casse le code (18 casseurs essayés).
-- **Une limite de puissance connue s'affiche même quand la consommation ne l'est
-  pas** (« Power limit: 190.0 W. »), pour tous les fabricants. Jusque-là, elle
-  n'apparaissait que dans les preuves.
-- **Le module GPU nomme les puces vidéo courantes au lieu d'écrire « unknown
-  vendor ».** Le fabricant se lit dans l'identifiant PCI : ASPEED (la puce vidéo
-  du contrôleur de gestion d'un serveur), Matrox, VMware, Red Hat (virtio, QXL) et
-  Cirrus Logic. Le résumé `GPU001` compte « 1 ASPEED » et la preuve `vendor` dit
-  `ASPEED`. Ce n'est qu'un nom : la façon de juger l'adaptateur ne change pas (pas
-  d'alerte pour une puce de gestion sans pilote, ce qui est normal), et un
-  fabricant non reconnu reste « unknown vendor ».
-- **Un lien PCIe plus étroit que la carte sait faire n'est plus présenté comme une
-  anomalie à aller vérifier sur le câble.** Le cas le plus courant est ordinaire :
-  deux cartes se partagent les lignes de la carte mère et tournent chacune en x8.
-  La constatation lit maintenant la largeur maximale du port auquel la carte est
-  branchée (nouvelle preuve `pcie_port_width_max`) et le dit :
-  - **le port ne porte pas plus** : « The port it is plugged into allows at most
-    x8 » : c'est la disposition de la machine, pas un défaut de la carte ;
-  - **le port pourrait porter plus** : le texte ne l'attribue pas au port et
-    renvoie d'abord au manuel de la carte mère (lignes partagées, réglage du
-    BIOS), puis à la fixation de la carte ;
-  - **le port ne dit rien** : les causes ordinaires sont listées, sans en
-    accuser une.
-  Quand une autre carte de la machine tourne à la même largeur réduite, le texte
-  le signale (les cartes qui se partagent des lignes les répartissent souvent à
-  parts égales). Une vitesse inférieure est expliquée à part : un lien au repos
-  ralentit pour économiser l'énergie, ce qui est normal ; et pour une carte
-  réservée à `vfio-pci`, le texte dit que la vitesse de repos ne dit rien de la
-  carte, puisqu'aucun pilote de cette machine ne la gère. Aucune sévérité ne
-  change.
-  - **Vérifié sur une vraie machine** (deux cartes, chacune derrière un port
-    qui annonce x8) : les deux ports annoncent bien x8, et le rapport dit « The port it is plugged into allows at
-    most x8 ». La largeur du port n'est lue que pour un périphérique qui a un
-    lien PCIe à lui : la puce vidéo d'un contrôleur de gestion, derrière un pont
-    PCIe-vers-PCI, n'en a pas, et la largeur de ce pont (x1) est celle du lien du
-    pont, pas de la puce.
-  - **Limite connue** : un port bifurqué qui annoncerait sa largeur d'origine
-    (x16) alors que la carte mère la partage n'a pas été vu. Le texte tomberait
-    dans le cas « le port pourrait porter plus », dont la formulation reste
-    prudente et cite les lignes partagées en premier.
-  - Tests : 27 nouveaux (faux arbre sysfs avec de vrais liens symboliques pour
-    le port amont, chaque cas de largeur, les cartes qui se partagent des lignes,
-    la vitesse seule, la carte réservée à une machine virtuelle, les puces
-    nommées, et le cas complet de la machine qui a motivé tout cela). Ils
-    échouent quand on casse le code (41 casseurs essayés, 40 détectés ; le
-    dernier était une condition redondante, supprimée).
+- **Machine profiles: `--profile hpc`** (or `profile = "hpc"` at the top of the configuration
+  file). The checks judge a machine "in general"; some measurements mean something else on a
+  specific type of machine. A load equal to the number of CPUs is contention on a workstation,
+  and a compute node doing its job. A profile says so once, in a single place
+  (`src/profile.rs`), instead of each module guessing. For `audit` and `tui` (`diff` has none:
+  it reads the one that each report recorded).
+  - **Chosen, never guessed.** No detection: two similar machines must not be judged
+    differently for a reason that nobody can see. Without a profile, nothing changes, not a
+    severity.
+  - **A profile only lowers.** Each rule is a ceiling: a finding above it is brought down to the
+    ceiling, a finding below it is left as it is, and no rule can raise anything. This is not a
+    matter of style: the exit code follows the severities, so a profile that made findings worse
+    would make audits that pass today fail, because of a setting. It removes no finding, touches
+    neither the evidence nor the confidence, and has nothing to say about a full disk or an
+    exposed service (verified with the real binary: same findings, same exit code).
+  - **It says what it did, in the finding.** An adjusted finding receives
+    `severity_before_profile` and `profile` in its evidence, and a last paragraph of
+    explanation with the reason ("Profile hpc: reported as info instead of
+    critical. … "). The report also names the profile: first line of the terminal report,
+    Markdown and HTML header, banner of the TUI, and a `profile` key at the top of the JSON,
+    **absent when no profile was chosen** (added field, `schema_version` stays 1).
+  - **Applied to the finished report, before the exit code and before the display
+    filter**: `--fail-on` and the default exit code judge the severities that the report shows.
+  - **`hpc`** (compute node, where fully busy CPUs are the normal state): `CPU002` (load) and
+    `CPU003` (sustained overload, Critical on any other machine) are reported as Info at most;
+    the load figures stay in the evidence. **Worth knowing**: under `hpc`, a node that is
+    oversubscribed by mistake looks like a node that is working. The profile removes the alarm,
+    not the figure.
+  - **`diff` warns** when two reports were written with different profiles, including *none*
+    against a profile (without this, a finding "improved" between a report without a profile and
+    an `hpc` report would be so on paper only): `different_profiles` warning in JSON, before the
+    list of changes, without ever altering a change or the exit code.
+  - The manual page has a `PROFILES` section (generated from the code, so always up to date) and
+    describes the `profile` key of the configuration file; the example configuration file, in the
+    README as in the manual page, shows it.
+  - Planned next, without promising anything: more checks for the `server` profile
+    (see below).
+- **The GPU module now gives details on Intel GPUs** (`i915` and `xe` drivers). They were
+  recognized but had no measurement at all, unlike AMD and NVIDIA. Direct reading of sysfs,
+  without an external tool, in the same `GPU002`.
+  - **Frequency**: actual frequency, hardware maximum, and allowed maximum. If the latter is
+    lower than what the hardware can reach, the report says so (a ceiling was set by someone or
+    something; the program does not know who). A GPU that reports 0 MHz is said to be "idle"
+    (asleep in its power-saving state), not "clocked at 0 MHz".
+  - **Throttling**: the driver says whether the GPU is held below its target frequency right now
+    and why (`pl1`, `pl2`, `pl4`, `thermal`, `ratl`, `prochot`, ...). Throttling due to
+    temperature is a **Warning**, even on an integrated GPU that has no temperature measurement,
+    with a recommendation about cooling; throttling due to a power limit is explained but remains
+    information (reaching its limit under load is not a failure). A cause name that the program
+    does not know is shown as the kernel gives it, with no invented explanation.
+  - **Discrete cards**: temperature, fan and power limit, through the driver's hwmon chip
+    (chosen by its name, not by its position). With `xe`, the package temperature and its
+    critical value (kernel 7.0) make it possible to judge the temperature against the card's own
+    limit.
+  - **What is deliberately not read**: utilization and VRAM (Intel drivers do not give them
+    through sysfs), and `cur_freq` of `xe` (the kernel wakes up the GPU to answer it, which a
+    read-only audit has no business doing).
+  - **A limit to know about**: the paths, units and formats come from the kernel sources and its
+    documentation; they have not yet been verified on a real Intel GPU. Each reading is optional:
+    a missing or unreadable file leaves the measurement aside, never a guessed value. Only the
+    first graphics GT (`gt0`) is read.
+  - Tests: 33 new, including fake sysfs trees reproducing both drivers, the old `i915` layout,
+    missing or absurd values, and an Intel device entrusted to another driver. They fail
+    when the code is broken (21 mutants tried).
+- **The GPU module sees the cards that the kernel does not expose in `/sys/class/drm`.**
+  It only looked at those cards: a card reserved for a virtual machine (`vfio-pci`), a GPU with
+  no driver, or a compute GPU whose driver does not register a graphics card did not appear, and
+  a compute server could display "No GPU detected" while containing one. The module now also
+  looks for display controllers (PCI class `0x03`) on the PCI bus.
+  - **Card under `vfio-pci`**: listed as Info, with a sentence saying that it is reserved for
+    passthrough to a virtual machine and that this is expected on a virtualization host. The
+    `GPU001` summary counts them ("1 of 3 is bound to vfio-pci").
+  - **GPU without a driver**: an NVIDIA, AMD or Intel GPU is a **Warning**, as for a DRM card
+    (before, it was invisible). An adapter from another manufacturer found only on the PCI bus
+    (typically the video chip of a server's management controller, often left without a driver
+    on purpose) is listed as Info, without an alert. The behavior of DRM cards does not change.
+  - **What is read** for these cards: the PCIe link, and `nvidia-smi` for the NVIDIA cards that
+    the `nvidia` driver handles. Nothing else: without a DRM card, sysfs offers no measurement.
+    The `drm_card: false` evidence indicates it.
+  - **`nvidia-smi` now only counts the cards it sees.** Without this, a card reserved for
+    `vfio-pci` next to a card in use would have made the system look multi-card and removed the
+    attribution of processes to the card in use.
+  - SR-IOV virtual functions are not counted as GPUs in their own right.
+  - Tests: 15 new (fake PCI bus, merging with the DRM cards, analysis, and the complete case of a
+    host with a card in use, a reserved card and a management chip). They fail when the code is
+    broken (18 mutants tried).
+- **A known power limit is displayed even when the consumption is not** ("Power limit:
+  190.0 W."), for all manufacturers. Until now, it only appeared in the evidence.
+- **The GPU module names the common video chips instead of writing "unknown vendor".** The
+  manufacturer is read from the PCI identifier: ASPEED (the video chip of a server's management
+  controller), Matrox, VMware, Red Hat (virtio, QXL) and Cirrus Logic. The `GPU001` summary
+  counts "1 ASPEED" and the `vendor` evidence says `ASPEED`. It is only a name: the way the
+  adapter is judged does not change (no alert for a management chip without a driver, which is
+  normal), and an unrecognized manufacturer remains "unknown vendor".
+- **A PCIe link narrower than what the card can do is no longer presented as an anomaly to go
+  and check on the cable.** The most common case is ordinary: two cards share the motherboard's
+  lanes and each runs at x8. The finding now reads the maximum width of the port the card is
+  plugged into (new evidence `pcie_port_width_max`) and says so:
+  - **the port does not carry more**: "The port it is plugged into allows at most
+    x8": this is the machine's layout, not a defect of the card;
+  - **the port could carry more**: the text does not attribute it to the port and refers first to
+    the motherboard's manual (shared lanes, BIOS setting), then to how the card is seated;
+  - **the port says nothing**: the ordinary causes are listed, without accusing any one of them.
+  When another card in the machine runs at the same reduced width, the text points it out (cards
+  that share lanes often split them equally). A lower speed is explained separately: an idle link
+  slows down to save energy, which is normal; and for a card reserved for `vfio-pci`, the text
+  says that the idle speed tells nothing about the card, since no driver on this machine
+  handles it. No severity changes.
+  - **Verified on a real machine** (two cards, each behind a port that announces x8): both ports
+    do announce x8, and the report says "The port it is plugged into allows at
+    most x8". The width of the port is only read for a device that has a PCIe link of its own:
+    the video chip of a management controller, behind a PCIe-to-PCI bridge, has none, and the
+    width of that bridge (x1) is that of the bridge's link, not of the chip.
+  - **Known limit**: a bifurcated port that would announce its original width
+    (x16) while the motherboard shares it has not been seen. The text would fall into the "the
+    port could carry more" case, whose wording remains cautious and cites shared lanes first.
+  - Tests: 27 new (fake sysfs tree with real symbolic links for the upstream port, each width
+    case, cards that share lanes, the speed alone, the card reserved for a virtual machine, the
+    named chips, and the complete case of the machine that motivated all this). They
+    fail when the code is broken (41 mutants tried, 40 caught; the last one was a redundant
+    condition, removed).
 
-- **Un profil peut ajouter ses propres vérifications. Premier cas : `--profile hpc`
-  ajoute le module `hpc`, avec la vérification du gouverneur CPU (`HPC001`).** Un profil
-  ne fait que baisser des sévérités. Une vérification qui est fausse sur une machine et
-  juste sur une autre (un poste de travail n'a pas tort de laisser ses CPU en
-  `powersave`) ne peut donc pas être une règle : c'est un module, présent seulement quand
-  le profil est choisi.
-  - **Le mécanisme** (`src/profile.rs`, `engine::modules_for`) : `Profile::modules()`
-    donne les modules du profil, qui ne sont pas dans `all_modules()`. `Context` ne
-    change pas. `--modules` reste exact : `--modules memory --profile hpc` ne lance que
-    `memory`. Nommer le module demande le profil : `--modules hpc` seul est refusé, avant
-    toute exécution, avec le code 2 et un message qui dit quoi taper (« the module 'hpc'
-    is added by the hpc profile: run with --profile hpc (or set profile = "hpc" in the
-    configuration file) »), pour `audit` comme pour `tui`. Les identifiants sont connus
-    de l'analyseur de la ligne de commande : complétions et page de manuel les listent
-    (la page de manuel les range sous le profil, pas sous les modules de tout audit).
-    `diff` n'a rien de nouveau à savoir : un module présent dans un seul rapport est
-    déjà « non comparé », et l'avertissement `different_profiles` existe déjà.
-  - **`HPC001` — gouverneur de fréquence des CPU.** Il lit `scaling_governor`,
-    `scaling_driver` et, quand le pilote en a un, `energy_performance_preference` de
-    chaque CPU. `powersave` ne veut pas dire la même chose partout, et c'est ce qui
-    rend la vérification délicate : avec `intel_pstate` et `amd-pstate-epp`, le
-    processeur choisit lui-même sa fréquence et `powersave` n'est qu'un penchant (jugé
-    selon la préférence : vers la performance = Info, vers l'économie d'énergie =
-    Avertissement, `default` ou valeur inconnue = Info qui le dit ; sans fichier de
-    préférence, la fréquence suit la charge = Avertissement), alors qu'avec les autres
-    pilotes (`acpi-cpufreq`, `intel_cpufreq`…) il bloque la fréquence au minimum
-    (Avertissement). `performance` est Info ; `ondemand`, `conservative` et `schedutil`
-    suivent la charge (Avertissement) ; des CPU qui n'ont pas tous le même gouverneur
-    sont un Avertissement. Les Avertissements viennent avec les commandes pour passer
-    en `performance` tout de suite et à chaque démarrage (un fichier `tmpfiles.d`, sans
-    paquet supplémentaire), et rappellent qu'un outil comme tuned peut remettre l'ancien
-    réglage. Une machine sans interface de fréquence (une machine virtuelle) obtient
-    une Info qui dit qu'il n'y avait rien à vérifier, ce qui n'est pas la même chose
-    que « la fréquence est bonne ». Les faits sur `powersave` viennent de la
-    documentation du noyau (`intel_pstate`, `amd-pstate`).
-  - **Aucun jugement ne dépasse l'Avertissement**, donc choisir le profil ne fait pas
-    échouer l'audit par défaut (le code de sortie suit les Erreurs). Les niveaux de
-    confiance suivent l'échelle du projet (90 quand le pilote et le gouverneur
-    concordent, 80 ou 78 quand reste un facteur non confirmé, 70 quand le pilote est
-    inconnu, et un mélange est au plus aussi sûr que sa partie la moins sûre).
-  - **Pas encore vérifié sur une machine avec `cpufreq`** : le conteneur de
-    développement n'en a pas. Le cas sans interface est vu avec le vrai binaire ; les
-    autres le sont sur de faux arbres sysfs.
-  - Tests : 45 nouveaux (lecture sur faux arbres, chaque branche du jugement avec
-    chaque pilote, le mélange, l'enregistrement du module et son refus sans profil
-    avec le vrai binaire, la page de manuel, les complétions, `diff`). Ils échouent
-    quand on casse le code : 49 casseurs essayés, 46 détectés du premier coup ; les 3
-    autres ont donné un test de plus (le pire des types de CPU décide), un cas de plus
-    (`cpu+1`, qu'un simple `parse` accepterait) et une condition redondante supprimée.
+- **A profile can add its own checks. First case: `--profile hpc` adds the `hpc` module, with
+  the CPU governor check (`HPC001`).** A profile only lowers severities. A check that is wrong
+  on one machine and right on another (a workstation is not wrong to leave its CPUs on
+  `powersave`) therefore cannot be a rule: it is a module, present only when the profile is
+  chosen.
+  - **The mechanism** (`src/profile.rs`, `engine::modules_for`): `Profile::modules()` gives the
+    modules of the profile, which are not in `all_modules()`. `Context` does not change.
+    `--modules` remains exact: `--modules memory --profile hpc` runs only `memory`. Naming the
+    module requires the profile: `--modules hpc` alone is refused, before any execution, with
+    code 2 and a message that says what to type ("the module 'hpc' is added by the hpc profile:
+    run with --profile hpc (or set profile = "hpc" in the configuration file)"), for `audit` as
+    for `tui`. The identifiers are known to the command-line parser: completions and the manual
+    page list them (the manual page files them under the profile, not under the modules of every
+    audit). `diff` has nothing new to know: a module present in only one report is already "not
+    compared", and the `different_profiles` warning already exists.
+  - **`HPC001` — CPU frequency governor.** It reads `scaling_governor`, `scaling_driver` and,
+    when the driver has one, `energy_performance_preference` of each CPU. `powersave` does not
+    mean the same thing everywhere, and that is what makes the check delicate: with
+    `intel_pstate` and `amd-pstate-epp`, the processor chooses its own frequency and `powersave`
+    is only a leaning (judged by the preference: towards performance = Info, towards power
+    saving = Warning, `default` or unknown value = Info that says so; without a preference file,
+    the frequency follows the load = Warning), whereas with the other drivers (`acpi-cpufreq`,
+    `intel_cpufreq`…) it locks the frequency at the minimum (Warning). `performance` is Info;
+    `ondemand`, `conservative` and `schedutil` follow the load (Warning); CPUs that do not all
+    have the same governor are a Warning. The Warnings come with the commands to switch to
+    `performance` right away and at every boot (a `tmpfiles.d` file, no extra package), and
+    remind that a tool like tuned may put the old setting back. A machine without a frequency
+    interface (a virtual machine) gets an Info saying there was nothing to check, which is not
+    the same thing as "the frequency is good". The facts about `powersave` come from the kernel
+    documentation (`intel_pstate`, `amd-pstate`).
+  - **No judgment goes beyond Warning**, so choosing the profile does not make the default audit
+    fail (the exit code follows Errors). The confidence levels follow the project's scale (90
+    when the driver and the governor agree, 80 or 78 when an unconfirmed factor remains, 70 when
+    the driver is unknown, and a mix is at most as sure as its least sure part).
+  - **Not yet verified on a machine with `cpufreq`**: the development container has none. The
+    case without an interface was seen with the real binary; the others on fake sysfs trees.
+  - Tests: 45 new (reading on fake trees, every branch of the judgment with every driver, the
+    mix, the registration of the module and its refusal without a profile with the real binary,
+    the manual page, the completions, `diff`). They fail when the code is broken: 49 mutants
+    tried, 46 caught the first time; the other 3 produced one more test (the worst CPU type
+    decides), one more case (`cpu+1`, which a plain `parse` would accept) and a redundant
+    condition removed.
 
-- **`--profile hpc` : nouvelle vérification `HPC002`, la limite de mémoire verrouillée
-  (RDMA).** Le module `hpc` en a maintenant deux : le gouverneur (`HPC001`) puis cette
-  limite. Le RDMA (InfiniBand, RoCE) transfère la mémoire sans le CPU : le noyau la garde
-  verrouillée en RAM et la compte dans `RLIMIT_MEMLOCK`, quelques MiB par défaut. Une tâche
-  MPI qui en enregistre davantage échoue à enregistrer la mémoire, puis s'arrête ou passe
-  sur un transport plus lent.
-  - **Ce qu'il lit** : les périphériques RDMA (`/sys/class/infiniband`, avec la couche de
-    liaison de chaque port : InfiniBand, ou Ethernet pour RoCE) et la ligne
-    `Max locked memory` de `/proc/self/limits` (limites souple et dure), comparées à la RAM
-    de la machine. La ligne n'est lue que si l'unité est `bytes` et que chaque limite est un
-    nombre ou `unlimited`.
-  - **Ce qu'il dit** : sans périphérique RDMA, une Info qui dit que la limite n'a pas
-    d'importance ici (une carte dont le pilote n'est pas chargé n'apparaît pas dans la liste).
-    Avec des périphériques : limite souple illimitée ou au moins égale à la RAM = Info ;
-    plus basse = Avertissement, confiance 75 %, qui dit si la limite dure laisse les
-    utilisateurs la relever eux-mêmes ou s'il faut être root, avec les commandes
-    (`ulimit -l`, un fichier `limits.d` pour les connexions, `DefaultLimitMEMLOCK` pour les
-    services systemd, puis les commandes de vérification). Limite illisible, ou finie avec une
-    RAM inconnue : Info qui le dit, sans juger.
-  - **Pourquoi seulement 75 %** : la limite lue est celle de la session qui a lancé
-    l'audit. Les tâches lancées par un ordonnanceur ou par un service systemd ont les leurs ;
-    le constat le dit dans chaque cas.
-  - **Pas encore vu sur du matériel RDMA** : ni le conteneur de développement ni la machine
-    de test n'en ont. La lecture est vérifiée sur de faux arbres sysfs (plusieurs
-    périphériques, plusieurs ports, ordre quelconque du système de fichiers, noms hostiles) ;
-    le chemin `/sys/class/infiniband` est celui de rdma-core. Le cas « aucun périphérique »
-    est vu avec le vrai binaire.
-  - Tests : 25 nouveaux (23 unitaires pour la lecture et le jugement, aux frontières
-    comprises : limite égale à la RAM, limite dure égale à la RAM ; plus 2 de bout en bout,
-    le test existant étant remplacé par trois, un par constat et un pour l'ordre). Ils
-    échouent quand on casse le code : 64 casseurs essayés, 63 détectés ; le dernier est
-    équivalent (retirer le `?` sur la colonne de la limite dure donne le même résultat, car
-    l'unité manquante échoue de toute façon). Un test trop lâche (la commande `printf` de
-    systemd sans saut de ligne final passait) a été resserré.
+- **`--profile hpc`: new check `HPC002`, the locked-memory limit (RDMA).** The `hpc` module now
+  has two: the governor (`HPC001`) then this limit. RDMA (InfiniBand, RoCE) transfers memory
+  without the CPU: the kernel keeps it locked in RAM and counts it in `RLIMIT_MEMLOCK`, a few
+  MiB by default. An MPI job that registers more fails to register the memory, then stops or
+  falls back to a slower transport.
+  - **What it reads**: the RDMA devices (`/sys/class/infiniband`, with the link layer of each
+    port: InfiniBand, or Ethernet for RoCE) and the `Max locked memory` line of
+    `/proc/self/limits` (soft and hard limits), compared with the machine's RAM. The line is
+    only read if the unit is `bytes` and each limit is a number or `unlimited`.
+  - **What it says**: without an RDMA device, an Info saying that the limit does not matter here
+    (a card whose driver is not loaded does not appear in the list). With devices: soft limit
+    unlimited or at least equal to the RAM = Info; lower = Warning, confidence 75%, which says
+    whether the hard limit lets users raise it themselves or whether root is needed, with the
+    commands (`ulimit -l`, a `limits.d` file for logins, `DefaultLimitMEMLOCK` for systemd
+    services, then the verification commands). Unreadable limit, or finite with unknown RAM:
+    Info that says so, without judging.
+  - **Why only 75%**: the limit read is that of the session that launched the audit. Jobs
+    launched by a scheduler or by a systemd service have their own; the finding says so in
+    each case.
+  - **Not yet seen on RDMA hardware**: neither the development container nor the test machine
+    has any. The reading is verified on fake sysfs trees (several devices, several ports, any
+    filesystem order, hostile names); the `/sys/class/infiniband` path is that of rdma-core. The
+    "no device" case was seen with the real binary.
+  - Tests: 25 new (23 unit tests for reading and judgment, boundaries included: limit equal to
+    the RAM, hard limit equal to the RAM; plus 2 end-to-end, the existing test being replaced by
+    three, one per finding and one for the order). They fail when the code is broken: 64 mutants
+    tried, 63 caught; the last is equivalent (removing the `?` on the hard-limit column gives the
+    same result, because the missing unit fails anyway). A test that was too loose (systemd's
+    `printf` command without a final newline passed) was tightened.
 
-- **`--profile hpc` : deux constats d'information de plus, `HPC003` (équilibrage NUMA
-  automatique) et `HPC004` (SMT).** Le module `hpc` en a maintenant quatre. Ce sont des
-  Info, jamais un avertissement : savoir si le réglage aide dépend des tâches, que le nœud
-  ne peut pas connaître. Ils disent comment le noyau est réglé et ce que cela veut dire
-  selon le genre de tâche.
-  - **`HPC003`** lit `/proc/sys/kernel/numa_balancing` (un champ de bits : le bit 0
-    équilibre entre les nœuds, le bit 1 est le mode « tiering » de mémoire) et compte les
-    nœuds NUMA. Sans interrupteur (noyau compilé sans), ou avec moins de deux nœuds, il le
-    dit et dit que le réglage ne change rien. Avec plusieurs nœuds : *actif* = le noyau
-    échantillonne la mémoire par des défauts de page et la déplace vers le nœud qui s'en
-    sert, ce qui aide les tâches non liées à des nœuds mais coûte du temps, et que la
-    documentation du noyau dit de désactiver pour une charge déjà liée à des nœuds NUMA
-    (`numactl`, liaison MPI ou Slurm) ; les commandes pour le désactiver (tout de suite,
-    puis à chaque démarrage) viennent avec le constat. *Inactif* = la mémoire reste sur le
-    nœud où la tâche l'a touchée en premier. Les valeurs 2 (tiering seul) et 3 (les deux)
-    sont décrites à part, sans commande (écrire 0 couperait aussi le tiering) ; une valeur
-    avec d'autres bits est rapportée sans être interprétée.
-  - **`HPC004`** lit `/sys/devices/system/cpu/smt/` (`control`, `active`) et, avec la
-    `thread_siblings_list` de chaque CPU, combien de CPU logiques se partagent un coeur
-    (« 56 logical CPUs on 28 cores, 2 threads per core » ; et il le dit quand les coeurs
-    diffèrent, comme sur un processeur qui mêle coeurs de performance et d'efficacité).
-    Il distingue *actif*, *inactif*, *forcé inactif* (impossible à remettre sans
-    redémarrer) et *pas de SMT dans ce processeur*. Quand le SMT est actif et que le noyau
-    permet de l'arrêter à chaud, il explique le compromis (le SMT aide les tâches qui
-    attendent la mémoire et peut ralentir celles qui calculent sur tous les CPU logiques)
-    et donne les commandes pour un fil par coeur : tout de suite, puis le paramètre de
-    noyau `nosmt` avec la commande de génération de la configuration de démarrage de la
-    famille de la distribution (`update-grub` ou `grub2-mkconfig`, rien d'inventé pour une
-    autre).
-  - **Vérifié** avec le vrai binaire dans le conteneur de développement (un seul nœud ;
-    SMT absent du processeur) et sur de faux arbres sysfs pour les autres cas (deux nœuds,
-    SMT actif, forcé inactif, coeurs de tailles différentes, noms hostiles). **Pas encore
-    vu sur une machine à deux nœuds avec SMT actif**, la tienne en est une : à regarder
-    dans le premier rapport.
-  - Tests : 32 nouveaux (la lecture des interrupteurs, des nœuds, du SMT et de la topologie
-    sur de faux arbres ; chaque état de chaque constat, les frontières — deux nœuds, plus
-    de CPU logiques que de coeurs —, la précédence de `control` sur `active` puis sur la
-    topologie ; et le test de bout en bout, qui compare avec les fichiers de la machine
-    quand elle les a). Ils échouent quand on casse le code : 68 casseurs essayés, 68
-    détectés.
+- **`--profile hpc`: two more information findings, `HPC003` (automatic NUMA balancing) and
+  `HPC004` (SMT).** The `hpc` module now has four. They are Info, never a warning: whether the
+  setting helps depends on the jobs, which the node cannot know. They say how the kernel is set
+  and what that means depending on the kind of job.
+  - **`HPC003`** reads `/proc/sys/kernel/numa_balancing` (a bit field: bit 0 balances between
+    nodes, bit 1 is the memory "tiering" mode) and counts the NUMA nodes. Without a switch
+    (kernel compiled without it), or with fewer than two nodes, it says so and says that the
+    setting changes nothing. With several nodes: *active* = the kernel samples memory through
+    page faults and moves it to the node that uses it, which helps jobs not bound to nodes but
+    costs time, and which the kernel documentation says to disable for a workload already bound
+    to NUMA nodes (`numactl`, MPI or Slurm binding); the commands to disable it (right away,
+    then at every boot) come with the finding. *Inactive* = the memory stays on the node where
+    the job first touched it. The values 2 (tiering only) and 3 (both) are described
+    separately, without a command (writing 0 would also turn off tiering); a value with other
+    bits is reported without being interpreted.
+  - **`HPC004`** reads `/sys/devices/system/cpu/smt/` (`control`, `active`) and, with the
+    `thread_siblings_list` of each CPU, how many logical CPUs share a core ("56 logical CPUs on
+    28 cores, 2 threads per core"; and it says so when the cores differ, as on a processor that
+    mixes performance and efficiency cores). It distinguishes *active*, *inactive*, *forced
+    inactive* (impossible to put back without rebooting) and *no SMT in this processor*. When SMT
+    is active and the kernel allows stopping it on the fly, it explains the trade-off (SMT helps
+    jobs that wait for memory and can slow down those that compute on all logical CPUs) and gives
+    the commands for one thread per core: right away, then the `nosmt` kernel parameter with the
+    command that regenerates the boot configuration for the distribution's family
+    (`update-grub` or `grub2-mkconfig`, nothing invented for another one).
+  - **Verified** with the real binary in the development container (a single node; SMT absent
+    from the processor) and on fake sysfs trees for the other cases (two nodes, SMT active,
+    forced inactive, cores of different sizes, hostile names). **Not yet seen on a two-node
+    machine with SMT active**, yours is one: to look at in the first report.
+  - Tests: 32 new (reading the switches, the nodes, SMT and the topology on fake trees; every
+    state of every finding, the boundaries — two nodes, more logical CPUs than cores —, the
+    precedence of `control` over `active` and then over the topology; and the end-to-end test,
+    which compares with the machine's files when it has them). They fail when the code is
+    broken: 68 mutants tried, 68 caught.
 
-- **Le profil `server` (`--profile server`) et sa première vérification, `SRV001` : les
-  mises à jour de sécurité sont-elles installées automatiquement ?** Un serveur que
-  personne ne regarde chaque jour est tenu à jour par un mécanisme, pas par une personne ;
-  la vérification dit si le mécanisme du système est en place.
-  - **Le profil ne baisse aucune sévérité** (la description le dit, et un test l'exige) :
-    il n'y a rien à excuser sur un serveur. Il ajoute le module `server`, qui n'existe que
-    quand le profil est choisi, comme `hpc` pour le sien. `--modules server` sans le profil
-    est refusé (code 2) avec la phrase qui dit quoi lancer. Le choix reste explicite, par
-    `--profile server` ou `profile = "server"` dans le fichier de configuration.
-  - **Avec apt** (Debian, Ubuntu et dérivées) : `apt-config dump` (qui fusionne tout
-    `apt.conf.d`, dans l'ordre où apt le fait), la présence de `unattended-upgrade`, la
-    liste des origines autorisées, et les deux timers `apt-daily.timer` et
-    `apt-daily-upgrade.timer`. Les intervalles sont lus comme le script d'apt les lit :
-    `0` coupe, `always` ou un nombre (avec `s`, `m`, `h` ou `d`) allume, et `00` ou `0d`
-    *allument* (le script compare le texte avec `0`, pas le nombre) ; `APT::Periodic::Enable`
-    à `0` coupe toutes les tâches quoi que disent les autres réglages. **Avec dnf** (Fedora,
-    RHEL et dérivées) : dnf 4 ou dnf 5, `dnf-automatic` installé ou non, `apply_updates` et
-    `upgrade_type` du fichier `/etc/dnf/automatic.conf` (sur les valeurs par défaut du
-    paquet avec dnf 5), et les timers. Les timers qui ne font que télécharger ou prévenir ne
-    comptent pas comme une installation, et la constatation dit lequel est actif à la place.
-  - **Honnête sur ce qu'elle ne sait pas.** Au pire un **Avertissement à 80 %**, jamais
-    certain : une machine tenue à jour autrement (outil de configuration, Landscape,
-    Satellite, fenêtre de maintenance) est correcte sans ce mécanisme, et la constatation
-    le dit dans son texte. En place : Info à 90 %. Un outil qui ne répond pas (`apt-config`,
-    `systemctl`) donne une Info « n'a pas pu être dit », jamais un avertissement. Une
-    distribution qui n'est ni Debian ni Red Hat donne une Info qui dit qu'elle n'a **pas**
-    été vérifiée. Elle ne dit pas non plus si la dernière exécution a réussi (elle indique
-    le `journalctl` qui le dit).
-  - Chaque problème a sa phrase et ses commandes (installer le paquet, activer les
-    réglages dans `20auto-upgrades`, autoriser l'archive de sécurité, activer les timers —
-    après `unmask` s'ils sont masqués), et seulement celles qu'il faut.
-  - Un nouvel outil dans `src/core/command.rs` : `ToolSession::run_ignoring_status`.
-    `systemctl is-enabled` répond sur sa sortie (`enabled`, `masked`, `not-found`…) et son
-    code de retour ne veut rien dire ; la session existante jetait toute réponse d'un outil
-    qui sortait en échec.
-  - **Vérifié** avec le vrai binaire dans le conteneur de développement (Ubuntu) : sans le
-    paquet, puis avec un faux paquet `unattended-upgrade` posé temporairement, et avec de
-    faux `apt-config` et `systemctl` pour chaque cas. **Le côté dnf n'a été vu que sur de
-    faux fichiers et d'après la documentation** (pas de machine Fedora ou RHEL sous la main) :
-    à regarder dans le premier rapport sur une telle machine. La tienne est une Ubuntu, donc
-    le côté apt.
-  - Tests : 88 nouveaux (la lecture de `apt-config dump` et du fichier dnf sur de faux
-    arbres, y compris un fichier énorme et des valeurs hostiles ; chaque problème, ses
-    phrases et ses étapes ; le profil, les options et le refus du module sans profil ; et
-    17 tests de bout en bout avec le vrai binaire et de faux outils). Ils échouent quand
-    on casse le code : 220 casseurs essayés, 217 détectés. Les trois autres ont montré du
-    code inutile, retiré (le cas particulier des commentaires `#` et `;` du fichier dnf,
-    déjà exclus parce que le nom commence par la marque, et une branche dnf 5 qui ne
-    pouvait jamais servir). Plusieurs tests trop lâches ont été resserrés en route.
-  - Prévu ensuite, sans rien promettre : `SRV002` (journal persistant) et `SRV003`
-    (redémarrage en attente depuis longtemps).
+- **The `server` profile (`--profile server`) and its first check, `SRV001`: are security
+  updates installed automatically?** A server that nobody looks at every day is kept up to date
+  by a mechanism, not by a person; the check says whether the system's mechanism is in place.
+  - **The profile lowers no severity** (the description says so, and a test requires it): there
+    is nothing to excuse on a server. It adds the `server` module, which only exists when the
+    profile is chosen, like `hpc` for its own. `--modules server` without the profile is
+    refused (code 2) with the sentence that says what to run. The choice remains explicit, with
+    `--profile server` or `profile = "server"` in the configuration file.
+  - **With apt** (Debian, Ubuntu and derivatives): `apt-config dump` (which merges the whole of
+    `apt.conf.d`, in the order apt does it), the presence of `unattended-upgrade`, the list of
+    allowed origins, and the two timers `apt-daily.timer` and `apt-daily-upgrade.timer`. The
+    intervals are read the way apt's script reads them: `0` switches off, `always` or a number
+    (with `s`, `m`, `h` or `d`) switches on, and `00` or `0d` *switch on* (the script compares
+    the text with `0`, not the number); `APT::Periodic::Enable` at `0` switches off all the
+    tasks whatever the other settings say. **With dnf** (Fedora, RHEL and derivatives): dnf 4 or
+    dnf 5, `dnf-automatic` installed or not, `apply_updates` and `upgrade_type` of the
+    `/etc/dnf/automatic.conf` file (on the package's default values with dnf 5), and the timers.
+    Timers that only download or notify do not count as an installation, and the finding says
+    which one is active instead.
+  - **Honest about what it does not know.** At worst a **Warning at 80%**, never certain: a
+    machine kept up to date another way (configuration tool, Landscape, Satellite, maintenance
+    window) is fine without this mechanism, and the finding says so in its text. In place: Info
+    at 90%. A tool that does not answer (`apt-config`, `systemctl`) gives an Info "could not be
+    determined", never a warning. A distribution that is neither Debian nor Red Hat gives an
+    Info saying that it was **not** checked. It does not say either whether the last run
+    succeeded (it points to the `journalctl` command that does).
+  - Each problem has its sentence and its commands (install the package, enable the settings in
+    `20auto-upgrades`, allow the security archive, enable the timers — after `unmask` if they
+    are masked), and only the ones needed.
+  - A new tool in `src/core/command.rs`: `ToolSession::run_ignoring_status`.
+    `systemctl is-enabled` answers on its output (`enabled`, `masked`, `not-found`…) and its
+    return code means nothing; the existing session discarded any answer from a tool that exited
+    with a failure.
+  - **Verified** with the real binary in the development container (Ubuntu): without the
+    package, then with a fake `unattended-upgrade` package temporarily put in place, and with
+    fake `apt-config` and `systemctl` for each case. **The dnf side was only seen on fake files
+    and from the documentation** (no Fedora or RHEL machine at hand): to look at in the first
+    report on such a machine. Yours is an Ubuntu, so the apt side.
+  - Tests: 88 new (reading `apt-config dump` and the dnf file on fake trees, including a huge
+    file and hostile values; every problem, its sentences and its steps; the profile, the
+    options and the refusal of the module without a profile; and 17 end-to-end tests with the
+    real binary and fake tools). They fail when the code is broken: 220 mutants tried, 217
+    caught. The other three showed useless code, removed (the special case of the `#` and `;`
+    comments of the dnf file, already excluded because the name starts with the mark, and a dnf 5
+    branch that could never be used). Several tests that were too loose were tightened along the
+    way.
+  - Planned next, without promising anything: `SRV002` (persistent journal) and `SRV003`
+    (reboot pending for a long time).
 
-### Modifié
+### Changed
 
-- Le message sur l'absence de pilote cite maintenant `amdgpu`, `i915` ou `xe`.
-- La description du profil `hpc` (en-tête des rapports, page de manuel) dit maintenant
-  aussi qu'il ajoute le module `hpc`.
-  Elle dit aussi, ainsi que la phrase du module dans la page de manuel, qu'il vérifie la
-  limite de mémoire verrouillée et qu'il rapporte l'équilibrage NUMA et le SMT.
-- Le texte sur le lien PCIe d'une carte ne dit plus « worth checking the physical
-  slot/cable » : il décrit ce qui est mesuré (`PCIe: 8.0 GT/s PCIe x8 (this card
-  supports up to 8.0 GT/s PCIe x16).`), puis explique la largeur et la vitesse
-  séparément. Les preuves `pcie_link_*` n'ont pas changé.
+- The message about a missing driver now cites `amdgpu`, `i915` or `xe`.
+- The description of the `hpc` profile (report header, manual page) now also says that it adds
+  the `hpc` module.
+  It also says, as does the module's sentence in the manual page, that it checks the
+  locked-memory limit and that it reports NUMA balancing and SMT.
+- The text about a card's PCIe link no longer says "worth checking the physical
+  slot/cable": it describes what is measured (`PCIe: 8.0 GT/s PCIe x8 (this card
+  supports up to 8.0 GT/s PCIe x16).`), then explains the width and the speed
+  separately. The `pcie_link_*` evidence has not changed.
 
-### Corrigé
+### Fixed
 
-- **Le nombre de CPU d'un rapport est celui de la machine, pas celui du processus.**
-  Il venait de `available_parallelism()`, qui respecte l'affinité du processus et les
-  limites de cgroup : sur une machine de 56 CPU dont 24 sont isolés pour une machine
-  virtuelle, l'en-tête annonçait « 32 CPUs » alors que le module `hpc` en voyait 56. Le
-  nombre vient maintenant de la liste des CPU en ligne du noyau
-  (`/sys/devices/system/cpu/online`, par exemple `0-55` ou `0-27,56-83`), et
-  `available_parallelism()` ne sert plus que de repli quand la liste est illisible.
-  Cela touche l'en-tête des rapports (terminal, Markdown, HTML, interface), le champ
-  `context.cpu_count` du JSON et la comparaison de machines de `diff` ; les modules, eux,
-  ne s'en servent pas (le module CPU compte ses propres processeurs dans `/proc/cpuinfo`).
-  - Vu avec le vrai binaire : confiné à un seul CPU par `taskset -c 0`, l'ancien annonçait
-    « 1 CPUs », le nouveau le nombre réel.
-  - Tests : 8 nouveaux (l'analyse de la liste : intervalles, trous, entrées refusées dont
-    les signes et les listes inversées ; le repli ; et `tests/cpu_count.rs`, qui lance le vrai
-    binaire confiné à un CPU et exige le même nombre qu'en liberté). Ils échouent quand on
-    casse le code : 12 casseurs essayés, 10 détectés (dont deux seulement grâce au test de
-    bout en bout). Restent un équivalent sur 64 bits (l'arithmétique contrôlée contre le
-    débordement, qui ne sert qu'aux systèmes 32 bits) et un indiscernable ici (`possible`
-    à la place de `online`, identiques sur cette machine).
+- **The number of CPUs in a report is the machine's, not the process's.**
+  It came from `available_parallelism()`, which respects the process's affinity and cgroup
+  limits: on a 56-CPU machine on which 24 are isolated for a virtual machine, the header
+  announced "32 CPUs" while the `hpc` module saw 56. The number now comes from the kernel's list
+  of online CPUs (`/sys/devices/system/cpu/online`, for example `0-55` or `0-27,56-83`), and
+  `available_parallelism()` is now only a fallback when the list is unreadable.
+  This affects the report header (terminal, Markdown, HTML, interface), the
+  `context.cpu_count` field of the JSON and the machine comparison of `diff`; the modules do not
+  use it (the CPU module counts its own processors in `/proc/cpuinfo`).
+  - Seen with the real binary: confined to a single CPU by `taskset -c 0`, the old one announced
+    "1 CPUs", the new one the real number.
+  - Tests: 8 new (parsing the list: ranges, gaps, rejected entries including signs and reversed
+    lists; the fallback; and `tests/cpu_count.rs`, which launches the real binary confined to
+    one CPU and requires the same number as when free). They fail when the code is broken: 12
+    mutants tried, 10 caught (two of them only thanks to the end-to-end test). What remains is
+    an equivalent one on 64 bits (the arithmetic checked against overflow, which only serves
+    32-bit systems) and one indistinguishable here (`possible` in place of `online`, identical on
+    this machine).
 
 ## [1.9.0] - 2026-10-16
 
-Chaque sortie dit quelle version de LinuxDoctor l'a produite, la TUI se filtre et
-se cherche, et `diff` prévient quand il compare des rapports de versions
-différentes. La disposition du rapport JSON ne change pas : `linuxdoctor_version`
-est un champ ajouté, `schema_version` reste 1.
+Every output says which version of LinuxDoctor produced it, the TUI can be filtered and
+searched, and `diff` warns when it compares reports from different versions. The layout of the
+JSON report does not change: `linuxdoctor_version` is an added field, `schema_version` stays 1.
 
-### Ajouté
+### Added
 
-- **`diff` prévient quand les deux rapports ne viennent pas de la même version de
-  LinuxDoctor.** Les contrôles évoluent d'une version à l'autre : un constat qui
-  apparaît ou disparaît peut venir du programme, pas de la machine. L'avertissement
-  est dit avant les changements, comme celui des machines différentes, dans les trois
-  formats (`> ⚠` en Markdown, `caveats` en JSON avec `"kind": "different_versions"`
-  et les deux versions).
-  - Il se déclenche si les deux versions enregistrées diffèrent, **et aussi** si un
-    seul des deux rapports en enregistre une : toute version qui l'enregistre est plus
-    récente que toute version qui ne le fait pas, donc les deux diffèrent
-    forcément (l'autre est alors « not recorded »).
-  - Il ne dit rien quand les versions sont égales, ni quand aucun des deux rapports
-    n'en enregistre : il n'y a rien à conclure, et l'avertissement s'afficherait à
-    chaque comparaison de rapports anciens.
-  - Il n'ajoute ni ne masque aucun changement et ne modifie pas le code de sortie.
-    Les versions viennent de fichiers : elles sont nettoyées dans le texte et
-    échappées en Markdown.
-  - Tests : unitaires (détection, rendu des trois formats, texte hostile) et
-    `tests/version_shown.rs` avec le vrai binaire, y compris le code de sortie
-    identique avec ou sans avertissement. Ils échouent quand on supprime
-    l'avertissement, qu'on l'étend à deux rapports sans version ou qu'on retire le
-    nettoyage.
+- **`diff` warns when the two reports do not come from the same version of
+  LinuxDoctor.** The checks evolve from one version to the next: a finding that
+  appears or disappears may come from the program, not from the machine. The warning
+  is given before the changes, like the one for different machines, in all three
+  formats (`> ⚠` in Markdown, `caveats` in JSON with `"kind": "different_versions"`
+  and the two versions).
+  - It triggers if the two recorded versions differ, **and also** if only one of the two
+    reports records one: any version that records it is newer than any version that does
+    not, so the two necessarily differ (the other is then "not recorded").
+  - It says nothing when the versions are equal, nor when neither report records one: there
+    is nothing to conclude, and the warning would be displayed on every comparison of old
+    reports.
+  - It neither adds nor hides any change and does not alter the exit code.
+    The versions come from files: they are cleaned in the text and
+    escaped in Markdown.
+  - Tests: unit tests (detection, rendering of the three formats, hostile text) and
+    `tests/version_shown.rs` with the real binary, including the identical exit code with or
+    without the warning. They fail when the warning is removed, when it is extended to two
+    reports without a version, or when the cleaning is removed.
 
-- **La version de LinuxDoctor s'affiche en tête de chaque sortie.** Première
-  ligne du rapport terminal (`LinuxDoctor 1.8.0 — machine`), première ligne sous
-  le titre du rapport Markdown, premier fait de l'en-tête du rapport HTML,
-  en-tête de la TUI et son écran de chargement, et en-tête de la comparaison
-  produite par `diff`. Dans les rapports Markdown et HTML elle figurait déjà,
-  mais en fin d'en-tête (« Generated … by LinuxDoctor ») ; elle est maintenant
-  la première information, et la ligne « Generated » ne donne plus que la date.
-  - **Le rapport JSON l'enregistre** : `linuxdoctor_version`, juste après
-    `schema_version`. Ce n'est pas une modification de la disposition
-    (`schema_version` reste 1) : un lecteur qui ignore les clés inconnues n'est
-    pas touché. Les contrôles évoluent d'une version à l'autre ; un rapport
-    conservé ne se comprend pleinement qu'avec la version qui l'a écrit.
-  - **`diff` montre trois versions** : celle qui compare (titre du texte,
-    « Compared with LinuxDoctor … » en Markdown, `linuxdoctor_version` en JSON)
-    et celle qui a écrit chacun des deux rapports (entre parenthèses en
-    terminal, colonne « Written by » en Markdown, `before` / `after` en JSON).
-    Un rapport d'une version qui ne l'enregistrait pas (la 1.8.0 et les
-    précédentes) n'en a pas : il est présenté comme
-    « LinuxDoctor version not recorded » (`null` en JSON). Cette version vient
-    d'un fichier, donc d'un texte non fiable : elle est nettoyée comme le reste
-    (terminal) et échappée (Markdown).
-  - Une seule source : la constante `linuxdoctor::VERSION` (celle de
+- **The version of LinuxDoctor is displayed at the head of every output.** First
+  line of the terminal report (`LinuxDoctor 1.8.0 — machine`), first line under
+  the title of the Markdown report, first fact of the HTML report header,
+  header of the TUI and its loading screen, and header of the comparison
+  produced by `diff`. In the Markdown and HTML reports it was already there,
+  but at the end of the header ("Generated … by LinuxDoctor"); it is now
+  the first piece of information, and the "Generated" line only gives the date.
+  - **The JSON report records it**: `linuxdoctor_version`, right after
+    `schema_version`. This is not a change of layout
+    (`schema_version` stays 1): a reader that ignores unknown keys is
+    not affected. The checks evolve from one version to the next; a kept report
+    can only be fully understood with the version that wrote it.
+  - **`diff` shows three versions**: the one that compares (title of the text,
+    "Compared with LinuxDoctor …" in Markdown, `linuxdoctor_version` in JSON)
+    and the one that wrote each of the two reports (in parentheses in
+    the terminal, "Written by" column in Markdown, `before` / `after` in JSON).
+    A report from a version that did not record it (1.8.0 and earlier) has none:
+    it is presented as "LinuxDoctor version not recorded" (`null` in JSON). This
+    version comes from a file, hence from untrusted text: it is cleaned like the rest
+    (terminal) and escaped (Markdown).
+  - A single source: the `linuxdoctor::VERSION` constant (the one behind
     `--version`).
-  - Tests : `tests/version_shown.rs` lance le vrai binaire et vérifie la version
-    en tête de chaque format, dans `diff` (dont un rapport sans version et un
-    rapport dont la version contient des séquences d'échappement), et que le
-    fichier `VERSION` et `Cargo.toml` s'accordent (une release qui n'en met à
-    jour qu'un des deux échoue). Des tests unitaires couvrent chaque rendu,
-    l'en-tête et l'écran de chargement de la TUI. Ils échouent quand on retire
-    l'affichage ou le nettoyage.
+  - Tests: `tests/version_shown.rs` launches the real binary and checks the version
+    at the head of each format, in `diff` (including a report without a version and a
+    report whose version contains escape sequences), and that the
+    `VERSION` file and `Cargo.toml` agree (a release that only updates one of the two
+    fails). Unit tests cover each rendering, the header and the loading screen of
+    the TUI. They fail when the display or the cleaning is removed.
 
-- **La TUI se filtre et se cherche.** Avec 13 modules et des dizaines de constats,
-  voir seulement ce qui compte demandait de tout faire défiler.
-  - **`f` choisit une sévérité minimale** : tout, avertissement et plus, erreur et
-    plus, critique seul (les quatre niveaux de `--min-severity`).
-  - **`/` cherche un texte**, sans tenir compte de la casse, dans l'identifiant, le
-    titre, l'explication, la recommandation, l'instance et les preuves d'un constat.
-    Entrée le garde, Échap l'oublie ; pendant la saisie, `q`, `r`, `f`, `j` et `k`
-    sont des lettres, pas des commandes.
-  - **Un écran filtré ne peut pas passer pour complet** : la barre du bas indique
-    `Filter: … · N of M findings`, chaque module affiche le nombre de ses constats
-    retenus (ceux qui n'en ont plus sont grisés), et chaque page rappelle combien de
-    constats du module sont montrés. Un module en erreur ou ignoré garde son
-    affichage.
-  - **Le rapport n'est jamais modifié** : le ✓/⚠/✗ d'un module décrit toujours le
-    module entier et le code de sortie de `linuxdoctor tui` tient compte de tous les
-    constats, filtrés ou non.
-  - **Les sous-éléments suivent le filtre** : si une seule instance reste, elle est
-    montrée à plat, comme pour un module qui n'en a qu'une. L'écran passe au premier
-    module qui a une correspondance quand le filtre change.
-  - **Échap défait un niveau à la fois** : le sous-menu, puis le filtre, puis quitte.
-    Sans filtre, rien ne change. La barre du bas fait maintenant deux lignes (l'état
-    de l'affichage, puis les touches).
-  - Le texte tapé est limité à 40 caractères et refuse les caractères de contrôle,
-    puisqu'il est réaffiché.
-  - Tests : `output::tui_filter` (sévérité, texte, longueur, casse) et la TUI sans
-    terminal (touches, écran dessiné, couleurs des modules vides, sous-menus,
-    actualisation, texte hostile sous filtre). Ils échouent quand on retire le saut
-    vers le module qui correspond, le filtre de sévérité, le contrôle des touches
-    Ctrl/Alt ou le rôle de Échap.
+- **The TUI can be filtered and searched.** With 13 modules and dozens of findings,
+  seeing only what matters meant scrolling through everything.
+  - **`f` picks a minimum severity**: everything, warning and above, error and
+    above, critical only (the four levels of `--min-severity`).
+  - **`/` searches for text**, case-insensitively, in the identifier, title,
+    explanation, recommendation, instance and evidence of a finding.
+    Enter keeps it, Esc forgets it; while typing, `q`, `r`, `f`, `j` and `k`
+    are letters, not commands.
+  - **A filtered screen cannot pass for a complete one**: the bottom bar shows
+    `Filter: … · N of M findings`, each module displays the number of its retained
+    findings (those that have none left are greyed out), and each page recalls how many
+    of the module's findings are shown. A module in error or skipped keeps its
+    display.
+  - **The report is never modified**: the ✓/⚠/✗ of a module still describes the
+    whole module and the exit code of `linuxdoctor tui` takes all the
+    findings into account, filtered or not.
+  - **Sub-items follow the filter**: if a single instance remains, it is
+    shown flat, as for a module that only has one. The screen jumps to the first
+    module that has a match when the filter changes.
+  - **Esc undoes one level at a time**: the submenu, then the filter, then quits.
+    Without a filter, nothing changes. The bottom bar is now two lines (the state
+    of the display, then the keys).
+  - The typed text is limited to 40 characters and refuses control characters,
+    since it is displayed again.
+  - Tests: `output::tui_filter` (severity, text, length, case) and the TUI without a
+    terminal (keys, drawn screen, colors of empty modules, submenus,
+    refresh, hostile text under a filter). They fail when the jump to the matching
+    module, the severity filter, the check on Ctrl/Alt keys or the role of Esc is removed.
 
 ## [1.8.0] - 2026-10-16
 
-Un fichier de configuration pour garder ses options sans les retaper, et la
-correction du plantage de `audit | head`. Le format du rapport JSON ne change
-pas (`schema_version` reste 1).
+A configuration file to keep your options without retyping them, and the
+fix for the crash of `audit | head`. The format of the JSON report does not change
+(`schema_version` stays 1).
 
-### Ajouté
+### Added
 
-- **Un fichier de configuration, `~/.config/linuxdoctor/config.toml`** (sous
-  `$XDG_CONFIG_HOME` quand il est défini), pour garder sans les retaper les
-  options qu'on tape à chaque fois : `timeout`, `fail_on`, `min_severity`
-  (valables pour `audit` et `diff`) et `output` (dans les sections `[audit]` et
-  `[diff]`, car les deux commandes n'acceptent pas les mêmes formats). Le
-  fichier est facultatif, comme chacune de ses lignes.
-  - **Ce qu'on tape sur la ligne de commande l'emporte toujours**, option par
-    option : le fichier ne remplit que ce qui n'a pas été tapé. Taper la valeur
-    par défaut compte comme une saisie (`--output terminal` l'emporte sur
-    `output = "markdown"`). Dans le fichier, la ligne d'une section l'emporte
-    sur celle du haut.
-  - **Les mots sont ceux de la ligne de commande**, lus par le même analyseur
-    (`"md"` marche comme `--output md`) : une valeur ou un alias ajouté plus
-    tard existe aux deux endroits à la fois.
-  - **Une erreur est une erreur, jamais une devinette.** Clé inconnue, valeur
-    refusée, fichier illisible, trop gros (plus de 64 Kio), qui n'est pas du
-    texte UTF-8 ou qui n'est pas un fichier ordinaire : le programme s'arrête
-    avec le code 2, avant d'avoir rien exécuté, en disant quel fichier et quelle
-    ligne. Seule l'absence du fichier par défaut est normale.
-  - **`--config FICHIER`** lit un autre fichier (qui doit exister) et
-    **`--no-config`** ignore le fichier pour une exécution, y compris un fichier
-    cassé. `man` et `completions` ne lisent jamais le fichier ; `tui` ne lit que
+- **A configuration file, `~/.config/linuxdoctor/config.toml`** (under
+  `$XDG_CONFIG_HOME` when it is set), to keep without retyping the
+  options that you type every time: `timeout`, `fail_on`, `min_severity`
+  (valid for `audit` and `diff`) and `output` (in the `[audit]` and
+  `[diff]` sections, because the two commands do not accept the same formats). The
+  file is optional, as is each of its lines.
+  - **What you type on the command line always wins**, option by
+    option: the file only fills in what has not been typed. Typing the default
+    value counts as typing (`--output terminal` wins over
+    `output = "markdown"`). In the file, the line of a section wins
+    over the one at the top.
+  - **The words are those of the command line**, read by the same parser
+    (`"md"` works like `--output md`): a value or an alias added
+    later exists in both places at once.
+  - **An error is an error, never a guess.** Unknown key, refused value,
+    unreadable file, too big (more than 64 KiB), not UTF-8
+    text or not an ordinary file: the program stops
+    with code 2, before having run anything, saying which file and which
+    line. Only the absence of the default file is normal.
+  - **`--config FILE`** reads another file (which must exist) and
+    **`--no-config`** ignores the file for one run, including a broken
+    file. `man` and `completions` never read the file; `tui` only reads
     `timeout`.
-  - **Un niveau venant du fichier s'explique**, comme `--fail-on`, quand il
-    donne le code de sortie 1 : `fail_on = "warning" in /home/vous/.config/…`.
-    Le niveau par défaut reste silencieux.
-  - `--modules` n'est volontairement pas configurable : un fichier qui
-    restreindrait discrètement chaque audit donnerait des rapports d'apparence
-    saine sur des vérifications jamais faites.
-  - Le fichier est traité comme un texte non fiable : lu après un `stat` (un
-    tube nommé ferait attendre `open` indéfiniment), borné, et la ligne citée
-    dans une erreur est raccourcie et débarrassée de ses caractères de
-    contrôle (l'affichage d'erreur de la bibliothèque TOML aurait recopié la
-    ligne entière).
-  - La page de manuel a une section FILES avec l'exemple complet ; le README a
-    la section « The configuration file », et un test vérifie que l'exemple du
-    README est exactement celui que le programme accepte.
-  - Nouvelle dépendance : `toml` 0.9.6 (lecture seule : fonctionnalités `std`,
-    `serde` et `parse`), fixée avec ses dépendances pour rester compilable avec
-    Rust 1.75 (voir la « Toolchain note » du README).
-  - Tests : 34 tests unitaires (`src/config.rs`) et 19 tests d'intégration avec
-    le vrai binaire (`tests/config_file.rs`) ; ils échouent quand on inverse la
-    priorité, qu'on oublie de lire le fichier ou qu'on perd l'origine du niveau.
-    Un test vérifie aussi que chaque test qui lance le binaire l'isole du vrai
-    fichier de configuration de celui qui exécute la suite.
+  - **A level coming from the file explains itself**, like `--fail-on`, when it
+    gives exit code 1: `fail_on = "warning" in /home/you/.config/…`.
+    The default level stays silent.
+  - `--modules` is deliberately not configurable: a file that would
+    quietly restrict every audit would give healthy-looking reports
+    on checks that were never made.
+  - The file is treated as untrusted text: read after a `stat` (a named pipe
+    would make `open` wait indefinitely), bounded, and the line quoted
+    in an error is shortened and stripped of its control characters
+    (the error display of the TOML library would have copied the whole
+    line).
+  - The manual page has a FILES section with the complete example; the README has
+    the "The configuration file" section, and a test checks that the README's example
+    is exactly the one that the program accepts.
+  - New dependency: `toml` 0.9.6 (read-only: `std`, `serde` and `parse`
+    features), pinned with its dependencies to remain compilable with
+    Rust 1.75 (see the "Toolchain note" of the README).
+  - Tests: 34 unit tests (`src/config.rs`) and 19 integration tests with
+    the real binary (`tests/config_file.rs`); they fail when the priority is
+    reversed, when reading the file is forgotten or when the origin of the level is lost.
+    A test also checks that every test that launches the binary isolates it from the real
+    configuration file of whoever runs the suite.
 
-### Modifié
+### Changed
 
-- `audit --output` et `diff --output` n'ont plus de valeur par défaut dans
-  `clap` : l'aide n'affiche plus « [default: terminal] » mais le dit dans son
-  texte (« Default: terminal »). Le comportement est le même ; il fallait
-  pouvoir distinguer « non tapé » de « tapé » pour que le fichier ne remplace
-  que ce qui n'a pas été tapé.
-- Le message de `--fail-on` sur la sortie d'erreur indique maintenant d'où vient
-  le niveau (`--fail-on warning` ou la ligne du fichier) ; avec l'option tapée,
-  il est identique à avant.
+- `audit --output` and `diff --output` no longer have a default value in
+  `clap`: the help no longer shows "[default: terminal]" but says it in its
+  text ("Default: terminal"). The behavior is the same; it was necessary to
+  distinguish "not typed" from "typed" so that the file only replaces
+  what has not been typed.
+- The `--fail-on` message on the error output now says where the level
+  comes from (`--fail-on warning` or the file's line); with the option typed,
+  it is identical to before.
 
-### Corrigé
+### Fixed
 
-- **`linuxdoctor audit | head` ne plante plus.** Quand le lecteur de la sortie
-  disparaissait avant l'écriture (`| head -1`, un pager quitté aussitôt), les
-  quatre formats d'`audit` paniquaient (message `failed printing to stdout:
-  Broken pipe`, code de sortie 101) parce qu'ils écrivaient avec `print!`.
-  Le texte est maintenant construit puis écrit avec l'écriture sûre déjà
-  utilisée par `diff`, `man` et `completions` : un lecteur parti n'est pas une
-  erreur. Le verdict ne change pas pour autant : le code de sortie reste celui
-  de l'audit (1 si un constat atteint le niveau `--fail-on`) et un `--fail-on`
-  explicite s'explique toujours sur la sortie d'erreur. Une vraie erreur
-  d'écriture (disque plein) reste signalée et donne le code 1.
-  - Tests : `tests/broken_pipe.rs` ferme le tube avant l'écriture (les audits
-    sont assez longs pour que ce soit certain) et vérifie, avec le vrai
-    binaire, l'absence de panique pour les quatre formats, le verdict conservé
-    (faux `df` presque plein), le message de `--fail-on`, et `man`,
-    `completions` et `diff`. Trois de ces tests échouent sans le correctif.
+- **`linuxdoctor audit | head` no longer crashes.** When the reader of the output
+  disappeared before the write (`| head -1`, a pager quit immediately), the
+  four formats of `audit` panicked (message `failed printing to stdout:
+  Broken pipe`, exit code 101) because they wrote with `print!`.
+  The text is now built and then written with the safe write already
+  used by `diff`, `man` and `completions`: a reader that has left is not an
+  error. The verdict does not change for all that: the exit code remains that
+  of the audit (1 if a finding reaches the `--fail-on` level) and an
+  explicit `--fail-on` is still explained on the error output. A real write
+  error (full disk) is still reported and gives code 1.
+  - Tests: `tests/broken_pipe.rs` closes the pipe before the write (the audits
+    are long enough for this to be certain) and checks, with the real
+    binary, the absence of a panic for the four formats, the verdict preserved
+    (fake almost-full `df`), the `--fail-on` message, and `man`,
+    `completions` and `diff`. Three of these tests fail without the fix.
 
 ## [1.7.0] - 2026-10-16
 
-La comparaison de deux rapports (`linuxdoctor diff`) et un correctif de
-sécurité : le texte choisi par la machine auditée ne peut plus agir sur votre
-terminal. Le format du rapport JSON ne change pas (`schema_version` reste 1).
+Comparison of two reports (`linuxdoctor diff`) and a security fix: text chosen by
+the audited machine can no longer act on your terminal. The format of the JSON
+report does not change (`schema_version` stays 1).
 
-### Sécurité
+### Security
 
-- **Le texte choisi par la machine auditée ne peut plus agir sur votre
-  terminal.** Noms de processus, de machines virtuelles et de conteneurs,
-  points de montage, noms d'utilisateurs, messages d'outils : n'importe lequel
-  pouvait contenir une séquence d'échappement (effacer l'écran, changer le titre
-  de la fenêtre, réécrire la ligne du dessus avec un retour chariot) ou un
-  contrôle bidirectionnel qui inverse l'ordre d'affichage. Les rapports
-  Markdown et HTML les transmettaient tels quels (un `cat rapport.md` suffisait
-  à les déclencher), et le terminal comme la TUI ne les filtraient pas
-  partout. Désormais le rapport terminal, Markdown, HTML et la TUI remplacent
-  par `?` les caractères de contrôle et les contrôles bidirectionnels ; les
-  retours à la ligne, l'indentation, les accents et les écritures de droite à
-  gauche sont conservés, et un vrai audit complet (874 chaînes) n'est modifié
-  en rien.
-  - Un seul point d'entrée : `output::common::display_safe` copie le rapport en
-    traitant **chaque** chaîne. Il décompose `Context`, `ModuleRunResult`,
-    `Finding` et `Confidence` sans `..` : ajouter un champ texte à l'un d'eux
-    empêche la compilation tant qu'il n'est pas traité, donc un rendu ne peut
-    pas l'oublier. La fonction de nettoyage est `core::text::printable`.
-  - Le JSON ne change pas, volontairement : il échappe déjà les caractères de
-    contrôle (`\u001b`) et reste l'enregistrement fidèle de ce qui a été
-    observé, ce que `linuxdoctor diff` compare.
-  - Tests : un test par rendu (terminal, Markdown, HTML, mémoire tampon de la
-    TUI, y compris après un `r`), un test sur le rapport entier, et
-    `tests/hostile_names.rs` qui lance le vrai binaire contre un faux `df` dont
-    le point de montage est fait de séquences d'échappement, dans les quatre
-    formats et dans `diff`. Chacun échoue quand l'appel est retiré.
+- **Text chosen by the audited machine can no longer act on your
+  terminal.** Names of processes, virtual machines and containers,
+  mount points, user names, tool messages: any of them
+  could contain an escape sequence (clear the screen, change the window
+  title, rewrite the line above with a carriage return) or a
+  bidirectional control that reverses the display order. The Markdown and HTML reports
+  passed them on as they were (a `cat report.md` was enough to trigger
+  them), and the terminal and the TUI did not filter them
+  everywhere. From now on the terminal, Markdown and HTML reports and the TUI replace
+  control characters and bidirectional controls with `?`; line
+  breaks, indentation, accents and right-to-left scripts are kept, and a real
+  complete audit (874 strings) is not modified in any way.
+  - A single entry point: `output::common::display_safe` copies the report
+    processing **every** string. It destructures `Context`, `ModuleRunResult`,
+    `Finding` and `Confidence` without `..`: adding a text field to any of them
+    prevents compilation until it is handled, so a renderer cannot
+    forget it. The cleaning function is `core::text::printable`.
+  - The JSON does not change, deliberately: it already escapes control characters
+    (`\u001b`) and remains the faithful record of what was
+    observed, which is what `linuxdoctor diff` compares.
+  - Tests: one test per renderer (terminal, Markdown, HTML, TUI
+    buffer, including after an `r`), a test on the whole report, and
+    `tests/hostile_names.rs`, which launches the real binary against a fake `df` whose
+    mount point is made of escape sequences, in the four
+    formats and in `diff`. Each fails when the call is removed.
 
-### Ajouté
+### Added
 
-- **Comparaison de rapports** : `linuxdoctor diff avant.json apres.json`
-  compare deux rapports JSON (`audit --output json`) et indique ce qui a
-  changé : constats **apparus**, **résolus**, **aggravés** ou **améliorés**
-  (avec les valeurs de preuve qui ont bougé), les changements d'information
-  seule (« Autres changements ») étant séparés pour qu'une nouvelle interface
-  réseau ne passe pas pour une régression. Les faits de la machine (noyau,
-  distribution, mémoire, CPU, redémarrage) sont listés en premier.
-  - **Une absence n'est jamais une bonne nouvelle** : un constat qui a disparu
-    n'est « résolu » que si son module est réellement allé au bout dans le
-    second rapport. Un module en échec, ignoré ou absent est listé sous
-    « Non comparés » (avec le nombre de constats qu'on n'a pas pu revérifier),
-    et un module dont des commandes ont été interrompues marque les changements
-    concernés d'un `?`.
-  - Avertissements en tête quand la comparaison risque de ne rien valoir :
-    machines différentes, rapports probablement inversés (le second date d'un
-    démarrage antérieur), ou rapport écrit avec `--min-severity`.
-  - `--output terminal|json|markdown` (alias `md`) ; le JSON est un document
-    versionné (`schema_version`, `kind: "comparison"`). `-` lit l'un des deux
-    rapports sur l'entrée standard.
-  - `--min-severity` (filtre d'affichage, qui compte ce qu'il masque) et
-    `--fail-on` (code de sortie, jugé sur la comparaison entière avant tout
-    filtre) fonctionnent comme pour `audit`. Codes de sortie : **0** rien
-    n'est apparu ni n'a empiré au niveau demandé (par défaut `error`), **1**
-    un constat est apparu ou a empiré à ce niveau ou au-dessus, **2** la
-    comparaison n'a pas pu se faire (fichier illisible, pas un rapport
-    LinuxDoctor, format plus récent que le programme) ou erreur d'usage.
-  - Les fichiers lus sont traités comme non fiables : titres, instances,
-    preuves, messages d'erreur et noms de machine passent par
-    `core::text::clean` pour le terminal et sont échappés pour le Markdown ;
-    un fichier hostile ne peut pas envoyer de séquences d'échappement au
-    terminal. Taille limitée à 64 Mio.
-  - La page de manuel (code de sortie, exemples, description) et les
-    complétions du shell connaissent la nouvelle commande.
-- `core::text::clean` : le nettoyage du texte non fiable (caractères de
-  contrôle, séquences d'échappement, contrôles bidirectionnels, troncature),
-  déplacé du module Journaux pour servir aussi à `diff`. Le module Journaux
-  le réexporte, son comportement est inchangé.
-- `Severity` est désormais désérialisable (`serde`), ce que la lecture des
-  rapports exige.
-- Tests : 25 tests d'intégration du binaire réel (`tests/diff_command.rs` :
-  codes de sortie, entrée standard, fichiers illisibles ou hostiles, trois
-  formats, relecture d'un vrai rapport `audit`), 44 tests unitaires dans
-  `src/diff/`, 6 dans la CLI et la page de manuel.
+- **Comparison of reports**: `linuxdoctor diff before.json after.json`
+  compares two JSON reports (`audit --output json`) and shows what
+  changed: findings that **appeared**, were **resolved**, **worsened** or **improved**
+  (with the evidence values that moved), the information-only changes
+  ("Other changes") being separated so that a new network
+  interface does not pass for a regression. The machine's facts (kernel,
+  distribution, memory, CPU, reboot) are listed first.
+  - **An absence is never good news**: a finding that has disappeared
+    is only "resolved" if its module really ran to completion in the
+    second report. A module that failed, was skipped or is absent is listed under
+    "Not compared" (with the number of findings that could not be rechecked),
+    and a module whose commands were interrupted marks the changes
+    concerned with a `?`.
+  - Warnings at the top when the comparison risks being worthless:
+    different machines, probably swapped reports (the second dates from an earlier
+    boot), or a report written with `--min-severity`.
+  - `--output terminal|json|markdown` (alias `md`); the JSON is a versioned
+    document (`schema_version`, `kind: "comparison"`). `-` reads one of the two
+    reports from standard input.
+  - `--min-severity` (display filter, which counts what it hides) and
+    `--fail-on` (exit code, judged on the whole comparison before any
+    filter) work as for `audit`. Exit codes: **0** nothing
+    appeared or worsened at the requested level (default `error`), **1**
+    a finding appeared or worsened at that level or above, **2** the
+    comparison could not be made (unreadable file, not a LinuxDoctor
+    report, format newer than the program) or usage error.
+  - The files read are treated as untrusted: titles, instances,
+    evidence, error messages and machine names go through
+    `core::text::clean` for the terminal and are escaped for Markdown;
+    a hostile file cannot send escape sequences to the
+    terminal. Size limited to 64 MiB.
+  - The manual page (exit code, examples, description) and the shell
+    completions know the new command.
+- `core::text::clean`: the cleaning of untrusted text (control
+  characters, escape sequences, bidirectional controls, truncation),
+  moved out of the Logs module so that `diff` can use it too. The Logs module
+  re-exports it, its behavior is unchanged.
+- `Severity` is now deserializable (`serde`), which reading
+  reports requires.
+- Tests: 25 integration tests of the real binary (`tests/diff_command.rs`:
+  exit codes, standard input, unreadable or hostile files, three
+  formats, re-reading a real `audit` report), 44 unit tests in
+  `src/diff/`, 6 in the CLI and the manual page.
 
 ## [1.6.0] - 2026-10-15
 
-Deux modules (Sécurité, Journaux), les rapports Markdown et HTML, les options
-`--min-severity` et `--fail-on`, la page de manuel et les complétions du
-shell. Un changement de comportement à connaître : `--modules` refuse
-désormais un identifiant inexistant au lieu de produire un rapport vide.
+Two modules (Security, Logs), the Markdown and HTML reports, the `--min-severity` and
+`--fail-on` options, the manual page and the shell completions. One change of behavior to
+know about: `--modules` now refuses a nonexistent identifier instead of producing an empty
+report.
 
-### Ajouté
+### Added
 
-- **Page de manuel** : `linuxdoctor man` écrit sur la sortie standard la page
-  `linuxdoctor(1)` (format roff), avec NOM, SYNOPSIS, DESCRIPTION, OPTIONS,
-  COMMANDES (chacune avec ses propres options), MODULES, CODES DE SORTIE,
-  EXEMPLES, VOIR AUSSI. Les options viennent de la définition clap que
-  l'analyseur utilise réellement (via `clap_mangen`) et la liste des modules du
-  registre `all_modules()` : la page ne peut pas contredire le programme. Elle
-  est déterministe (pas de date, seulement la version), et le test
-  d'intégration la fait relire par `groff -ww` quand il est installé, sans le
-  moindre avertissement. Un module enregistré sans ligne de description dans
-  `module_summary()` (`src/manpage.rs`) fait échouer un test.
-- **Complétions du shell** : `linuxdoctor completions <bash|zsh|fish|elvish|
-  powershell>` écrit le script de complétion (via `clap_complete`). Il propose
-  les sous-commandes, les options, les valeurs de `--output`, `--min-severity`
-  et `--fail-on`, et les identifiants de modules pour `--modules`.
-- **Les paquets `.deb` et `.rpm` installent** la page de manuel
-  (`/usr/share/man/man1/linuxdoctor.1.gz`, `gzip -9n`) et les complétions bash,
-  fish et zsh (`vendor-completions` sur Debian/Ubuntu, `site-functions` sur
-  Fedora/RHEL/openSUSE). `build-deb.sh` et `build-rpm.sh` les génèrent avec le
-  binaire qu'ils viennent de compiler ; si une génération échoue, `Cargo.toml`
-  est restauré comme pour les autres étapes.
-- Dépendances : `clap_complete` 4.4.10 et `clap_mangen` 0.2.20 (donc `roff`
-  0.2.2), figées sur ces versions car ce sont les dernières à accepter
-  `clap` 4.4 et une version de Rust inférieure à 1.85. Elles n'ajoutent que
-  trois paquets au `Cargo.lock` et ne changent aucune version existante.
+- **Manual page**: `linuxdoctor man` writes the `linuxdoctor(1)` page (roff format) to
+  standard output, with NAME, SYNOPSIS, DESCRIPTION, OPTIONS, COMMANDS (each with its own
+  options), MODULES, EXIT CODES, EXAMPLES, SEE ALSO. The options come from the clap definition
+  that the parser really uses (via `clap_mangen`) and the list of modules from the
+  `all_modules()` registry: the page cannot contradict the program. It is
+  deterministic (no date, only the version), and the integration test has it
+  re-read by `groff -ww` when installed, without the slightest warning. A module registered
+  without a description line in `module_summary()` (`src/manpage.rs`) makes a test fail.
+- **Shell completions**: `linuxdoctor completions <bash|zsh|fish|elvish|
+  powershell>` writes the completion script (via `clap_complete`). It offers
+  the subcommands, the options, the values of `--output`, `--min-severity`
+  and `--fail-on`, and the module identifiers for `--modules`.
+- **The `.deb` and `.rpm` packages install** the manual page
+  (`/usr/share/man/man1/linuxdoctor.1.gz`, `gzip -9n`) and the bash, fish and
+  zsh completions (`vendor-completions` on Debian/Ubuntu, `site-functions` on
+  Fedora/RHEL/openSUSE). `build-deb.sh` and `build-rpm.sh` generate them with the
+  binary they have just compiled; if a generation fails, `Cargo.toml`
+  is restored as for the other steps.
+- Dependencies: `clap_complete` 4.4.10 and `clap_mangen` 0.2.20 (hence `roff`
+  0.2.2), pinned to those versions because they are the last ones to accept
+  `clap` 4.4 and a Rust version below 1.85. They only add
+  three packages to `Cargo.lock` and change no existing version.
 
-- **Module Journaux** (`linuxdoctor audit --modules logs`) : lecture seule.
-  Il lit le journal systemd (`journalctl -o json`), avec repli sur
-  `/var/log/auth.log` ou `secure` et sur `dmesg`. Quatre sujets (sous-menus
-  du TUI) :
-  - **Authentification** (`LOG002` à `LOG004`) : échecs de connexion SSH des
-    dernières 24 heures par adresse source et par nom de compte ; une
-    connexion par mot de passe qui suit de nombreux échecs de la même adresse
-    (la signature d'un mot de passe deviné : Critical à partir de 20 échecs,
-    Warning à partir de 5) ; échecs `sudo`, `su` et console, et comptes
-    refusés par `sudo`. Un échec compte une seule fois même si sshd journalise
-    à la fois le compte refusé et la tentative de mot de passe.
-  - **Erreurs système** (`LOG005`) : messages d'erreur depuis le démarrage,
-    regroupés par service, avec le message que chacun répète le plus.
-  - **Messages du noyau** (`LOG006`, `LOG007`) : erreurs de disque et de
-    système de fichiers, système de fichiers passé en lecture seule,
-    erreurs mémoire/PCIe corrigées ou non, tâches bloquées, bridage
-    thermique, fautes du noyau, blocages de processeur, programmes qui
-    plantent. Les arrêts par manque de mémoire (OOM) restent au module Noyau.
-  - **Journal et fichiers de log** (`LOG008`, `LOG009`) : le journal survit-il
-    à un redémarrage, sa taille face au plafond de journald, services dont
-    journald a dû jeter des messages, fichiers de `/var/log` jamais tournés.
-  Un constat de synthèse `LOG001` ouvre la page du module et liste ce qui
-  demande de l'attention **et ce qui n'a pas pu être lu** : un journal
-  illisible (pas de droits, journald absent, conteneur) n'est jamais présenté
-  comme un journal tranquille, et la commande pour rejoindre les groupes
-  `adm` et `systemd-journal` est donnée. Un suspect d'intrusion passe avant
-  tout autre constat de même gravité. Le texte venu des logs (noms de compte
-  choisis par un attaquant, noms de programmes) est débarrassé de ses
-  caractères de contrôle — séquences d'échappement du terminal comprises —,
-  borné en longueur, et n'entre dans une commande suggérée que s'il s'agit
-  d'un simple mot ; les adresses n'y entrent que si ce sont de vraies
-  adresses IP. Les commandes sont seulement proposées, jamais exécutées.
-- `modules::recommend` fournit maintenant aussi la famille de distribution
-  (`Family`, `family_of`) pour choisir entre `apt` et `dnf` ; le module
-  Sécurité l'utilise au lieu de sa propre copie.
-- `core::context::effective_uid()` : identifiant utilisateur effectif lu dans
-  `/proc/self/status`, partagé par les modules Sécurité et Journaux.
+- **Logs module** (`linuxdoctor audit --modules logs`): read-only.
+  It reads the systemd journal (`journalctl -o json`), falling back to
+  `/var/log/auth.log` or `secure` and to `dmesg`. Four subjects (TUI
+  submenus):
+  - **Authentication** (`LOG002` to `LOG004`): SSH login failures over the
+    last 24 hours by source address and by account name; a password
+    login that follows many failures from the same address
+    (the signature of a guessed password: Critical from 20 failures,
+    Warning from 5); `sudo`, `su` and console failures, and accounts
+    refused by `sudo`. A failure counts only once even if sshd logs
+    both the refused account and the password attempt.
+  - **System errors** (`LOG005`): error messages since boot,
+    grouped by service, with the message that each repeats the most.
+  - **Kernel messages** (`LOG006`, `LOG007`): disk and
+    filesystem errors, filesystem gone read-only,
+    corrected or uncorrected memory/PCIe errors, blocked tasks, thermal
+    throttling, kernel faults, processor lockups, programs that
+    crash. Out-of-memory (OOM) kills stay with the Kernel module.
+  - **Journal and log files** (`LOG008`, `LOG009`): does the journal survive
+    a reboot, its size against journald's cap, services whose messages
+    journald had to drop, `/var/log` files that were never rotated.
+  A summary finding `LOG001` opens the module's page and lists what
+  needs attention **and what could not be read**: an unreadable journal
+  (no permissions, journald absent, container) is never presented
+  as a quiet journal, and the command to join the groups
+  `adm` and `systemd-journal` is given. A suspected intrusion comes before
+  any other finding of the same severity. Text coming from the logs (account names
+  chosen by an attacker, program names) is stripped of its control
+  characters — terminal escape sequences included —,
+  bounded in length, and only enters a suggested command if it is
+  a simple word; addresses only enter it if they are real IP
+  addresses. The commands are only suggested, never executed.
+- `modules::recommend` now also provides the distribution family
+  (`Family`, `family_of`) to choose between `apt` and `dnf`; the Security
+  module uses it instead of its own copy.
+- `core::context::effective_uid()`: effective user identifier read from
+  `/proc/self/status`, shared by the Security and Logs modules.
 
-- **Module Sécurité** (`linuxdoctor audit --modules security`) : lecture
-  seule, utilisable sans root (root ajoute de la visibilité, et chaque
-  constat dit ce qu'il n'a pas pu voir). Six sujets (sous-menus du TUI) :
-  - **Services à l'écoute** (`SEC002`, `SEC003`) : tous les sockets TCP/UDP
-    de `/proc/net/*`, accessibles du réseau ou seulement de la machine,
-    avec le programme propriétaire quand c'est possible. Un catalogue de
-    services qui ne devraient presque jamais être exposés (Telnet, API
-    Docker non chiffrée, Redis, Memcached, bases de données, VNC, SNMP…)
-    produit un constat par service exposé, avec des étapes pour le
-    vérifier, le restreindre ou le filtrer.
-  - **Pare-feu** (`SEC004`) : ufw, firewalld, nftables ou iptables. Une
-    absence de pare-feu n'est un avertissement que si un port TCP (hors SSH)
-    est réellement joignable ; le constat précise si les règles ont pu être
-    lues.
-  - **SSH** (`SEC005`) : configuration effective de `sshd_config` avec
-    `Include` et blocs `Match` (connexion root, mots de passe vides ou
-    autorisés, protocole 1, confiance par hôte, algorithmes faibles…),
-    plafonnée à Warning quand sshd ne tourne pas. Les étapes mettent
-    l'action sûre en premier : installer une clé avant de désactiver les
-    mots de passe, valider avec `sshd -t`, garder une seconde session
-    ouverte.
-  - **Contrôle d'accès** (`SEC006`) : SELinux (enforcing, permissive,
-    désactivé, et écart avec `/etc/selinux/config`) et AppArmor (profils
-    chargés et appliqués), lus dans sysfs sans outil externe.
-  - **Durcissement** (`SEC007`) : 19 réglages noyau/réseau jugés selon la
-    valeur réellement appliquée, avec les commandes pour les rendre
-    persistants dans `/etc/sysctl.d/` sans toucher aux fichiers de la
-    distribution.
-  - **Comptes et fichiers** (`SEC008`, `SEC009`) : comptes UID 0 supplémentaires,
-    connexions sans mot de passe, hachages faibles (si `/etc/shadow` est
-    lisible), droits de `/etc/passwd`, `/etc/shadow`, `sudoers`, de la
-    configuration SSH et de `/tmp`.
-  Un constat de synthèse `SEC001` ouvre la page du module et liste ce qui
-  demande de l'attention ; tout ce qui est Warning ou plus reste sur cette
-  page, le reste est rangé par sujet. Les commandes ne sont jamais
-  exécutées, seulement proposées.
-- Module `modules::recommend` : le constructeur d'étapes numérotées
-  (`Steps`) et les commandes `sysctl`, extraits du module Mémoire pour être
-  partagés.
+- **Security module** (`linuxdoctor audit --modules security`): read-only,
+  usable without root (root adds visibility, and each
+  finding says what it could not see). Six subjects (TUI submenus):
+  - **Listening services** (`SEC002`, `SEC003`): all the TCP/UDP sockets
+    of `/proc/net/*`, reachable from the network or only from the machine,
+    with the owning program when possible. A catalog of
+    services that should almost never be exposed (Telnet, unencrypted Docker
+    API, Redis, Memcached, databases, VNC, SNMP…)
+    produces one finding per exposed service, with steps to
+    check it, restrict it or filter it.
+  - **Firewall** (`SEC004`): ufw, firewalld, nftables or iptables. The
+    absence of a firewall is only a warning if a TCP port (other than SSH)
+    is really reachable; the finding specifies whether the rules could be
+    read.
+  - **SSH** (`SEC005`): effective `sshd_config` configuration with
+    `Include` and `Match` blocks (root login, empty or allowed
+    passwords, protocol 1, host-based trust, weak algorithms…),
+    capped at Warning when sshd is not running. The steps put
+    the safe action first: install a key before disabling
+    passwords, validate with `sshd -t`, keep a second session
+    open.
+  - **Access control** (`SEC006`): SELinux (enforcing, permissive,
+    disabled, and mismatch with `/etc/selinux/config`) and AppArmor (profiles
+    loaded and enforced), read in sysfs without an external tool.
+  - **Hardening** (`SEC007`): 19 kernel/network settings judged by the
+    value actually applied, with the commands to make them
+    persistent in `/etc/sysctl.d/` without touching the distribution's
+    files.
+  - **Accounts and files** (`SEC008`, `SEC009`): additional UID 0 accounts,
+    logins without a password, weak hashes (if `/etc/shadow` is
+    readable), permissions of `/etc/passwd`, `/etc/shadow`, `sudoers`, of the SSH
+    configuration and of `/tmp`.
+  A summary finding `SEC001` opens the module's page and lists what
+  needs attention; everything that is Warning or above stays on this
+  page, the rest is filed by subject. The commands are never
+  executed, only suggested.
+- `modules::recommend` module: the numbered-steps builder
+  (`Steps`) and the `sysctl` commands, extracted from the Memory module to be
+  shared.
 
-- **Rapport Markdown** : `linuxdoctor audit --output markdown` (alias `md`)
-  produit un document complet — en-tête (machine, date, version), tableau
-  récapitulatif par module, puis chaque constat avec sa gravité, sa
-  confiance, ses preuves, son explication et ses recommandations (étapes
-  numérotées, commandes dans des blocs `bash`). Les tableaux alignés par
-  les modules sont rendus en blocs de code pour garder leurs colonnes. Tout
-  texte venant de la machine (nom d'hôte, noms de processus, messages
-  d'erreur des outils) est échappé : il ne peut pas casser la mise en page
-  ni injecter de balise.
-- **Rapport HTML** : `linuxdoctor audit --output html` produit une page
-  unique et autonome (CSS intégré, aucun JavaScript, aucun fichier ni accès
-  réseau externe), thèmes clair et sombre, lisible jusque sur téléphone,
-  avec des constats repliables (ouverts à partir de Warning). La gravité
-  n'est jamais indiquée par la seule couleur. Les chaînes dynamiques sont
-  échappées et la page porte une `Content-Security-Policy` stricte.
-- **`--min-severity info|warning|error|critical`** (`audit`) : filtre
-  d'**affichage** qui masque les constats moins graves. Il ne cache jamais
-  un module en erreur, ignoré ou aux données incomplètes, et tous les
-  formats indiquent combien de constats ont été masqués (ligne finale en
-  terminal, bandeau « Filtered view » en Markdown et HTML, objet `filter`
-  en JSON).
-- **`--fail-on info|warning|error|critical|never`** (`audit`) : seuil du
-  **code de sortie**. Le code 1 est renvoyé dès qu'un constat atteint le
-  seuil ; `never` renvoie toujours 0. Le verdict porte sur le rapport
-  **complet**, avant le filtre d'affichage : masquer des constats ne peut
-  pas transformer un audit en échec en audit réussi. Quand l'option est
-  donnée explicitement, une phrase sur la sortie d'erreur explique l'échec
-  (la sortie standard reste un JSON/Markdown/HTML propre).
-- **Clé `filter` dans le JSON** (uniquement quand `--min-severity` est
-  utilisé) : `{"min_severity": "...", "hidden_findings": N}`, juste après
-  `schema_version`. Ajout d'un champ : `schema_version` reste à 1.
-- Modules `core::gate` (décision de réussite/échec), `output::common`
-  (éléments partagés par les rendus-documents) et `output::markdown` /
+- **Markdown report**: `linuxdoctor audit --output markdown` (alias `md`)
+  produces a complete document — header (machine, date, version), summary
+  table per module, then each finding with its severity, confidence,
+  evidence, explanation and recommendations (numbered
+  steps, commands in `bash` blocks). The tables aligned by
+  the modules are rendered as code blocks to keep their columns. Any
+  text coming from the machine (host name, process names, error
+  messages of the tools) is escaped: it cannot break the layout
+  or inject a tag.
+- **HTML report**: `linuxdoctor audit --output html` produces a single,
+  self-contained page (embedded CSS, no JavaScript, no external file or
+  network access), light and dark themes, readable even on a phone,
+  with collapsible findings (open from Warning). Severity
+  is never indicated by color alone. Dynamic strings are
+  escaped and the page carries a strict `Content-Security-Policy`.
+- **`--min-severity info|warning|error|critical`** (`audit`): a
+  **display** filter that hides the less severe findings. It never hides
+  a module in error, skipped or with incomplete data, and all the
+  formats state how many findings were hidden (final line in the
+  terminal, "Filtered view" banner in Markdown and HTML, `filter` object
+  in JSON).
+- **`--fail-on info|warning|error|critical|never`** (`audit`): **exit code**
+  threshold. Code 1 is returned as soon as a finding reaches the
+  threshold; `never` always returns 0. The verdict is based on the
+  **complete** report, before the display filter: hiding findings cannot
+  turn a failed audit into a successful one. When the option is
+  given explicitly, a sentence on the error output explains the failure
+  (standard output remains clean JSON/Markdown/HTML).
+- **`filter` key in the JSON** (only when `--min-severity` is
+  used): `{"min_severity": "...", "hidden_findings": N}`, right after
+  `schema_version`. Addition of a field: `schema_version` stays at 1.
+- Modules `core::gate` (pass/fail decision), `output::common`
+  (elements shared by the document renderers) and `output::markdown` /
   `output::html`.
 
-### Modifié
+### Changed
 
-- **`--modules` refuse maintenant un identifiant inconnu** (code de sortie 2,
-  avec la suggestion « a similar value exists: 'memory' »), pour `audit` comme
-  pour `tui`. Avant, une faute de frappe (`--modules memroy`) ne sélectionnait
-  aucun module et produisait un rapport vide avec le code 0 : un résultat
-  « propre » que personne n'avait vérifié. Une seule faute dans une liste
-  (`memory,logz`) arrête toute l'exécution. Les identifiants sont ceux de
-  `all_modules()`, donc un nouveau module est accepté (et complété) dès qu'il
-  est enregistré.
-- Le code de sortie passe par `core::gate`. Sans `--fail-on`, le comportement
-  est inchangé : code 1 dès qu'un constat Error ou Critical existe (et
-  pour une erreur d'exécution), code 2 pour une erreur d'utilisation.
-  `linuxdoctor tui` garde ce seuil par défaut et n'a pas les nouvelles options.
-- Un module dont un outil a été interrompu (« données incomplètes ») est
-  présenté en Markdown/HTML comme « ⚠ Incomplete data » et non comme « OK »,
-  comme dans le terminal.
+- **`--modules` now refuses an unknown identifier** (exit code 2,
+  with the suggestion "a similar value exists: 'memory'"), for `audit` as
+  for `tui`. Before, a typo (`--modules memroy`) selected
+  no module and produced an empty report with code 0: a "clean"
+  result that nobody had checked. A single mistake in a list
+  (`memory,logz`) stops the whole run. The identifiers are those of
+  `all_modules()`, so a new module is accepted (and completed) as soon as it
+  is registered.
+- The exit code goes through `core::gate`. Without `--fail-on`, the behavior
+  is unchanged: code 1 as soon as an Error or Critical finding exists (and
+  for an execution error), code 2 for a usage error.
+  `linuxdoctor tui` keeps this default threshold and does not have the new options.
+- A module whose tool was interrupted ("incomplete data") is
+  presented in Markdown/HTML as "⚠ Incomplete data" and not as "OK",
+  as in the terminal.
 
 ### Tests
 
-- `tests/docs_commands.rs` : 11 tests d'intégration avec le vrai binaire —
-  `man` (page roff, tous les modules listés, sortie identique d'une exécution à
-  l'autre, relecture par `groff -ww` sans avertissement), `completions`
-  (bash, zsh, fish ; shell inconnu ou absent = erreur d'usage) et le contrôle de
-  `--modules` (faute de frappe seule ou dans une liste, aussi pour `tui`, et un
-  identifiant correct qui s'exécute toujours). Plus 17 tests unitaires
-  (`cli.rs`, `manpage.rs`) : sections dans l'ordre, options communes
-  documentées une seule fois, `help` absent, version dans l'en-tête sans date,
-  scripts de complétion qui connaissent chaque module.
-- `tests/logs_module.rs` : 14 tests d'intégration du module Journaux — un
-  serveur tranquille (rien au-dessus d'Info), un serveur en difficulté (tous
-  les constats attendus avec la bonne gravité), l'ordre des pages et les
-  étapes numérotées, les conseils selon la famille de distribution, un
-  contenu hostile (balises HTML/Markdown, séquences d'échappement du
-  terminal, noms pouvant casser une commande) à travers les quatre
-  formats, et le vrai binaire contre un faux `journalctl` placé en tête du
-  `PATH` : journal simulé, code de sortie, journal illisible signalé, journal
-  qui ne répond pas (arrêté après la limite de temps et signalé comme
-  incomplet), et un test sur la machine hôte qui ne vérifie que la présence
-  des constats, jamais leur gravité.
-- 110 tests unitaires pour le module Journaux (analyseurs du journal, de
-  syslog et de `dmesg`, des messages SSH/sudo/PAM, du noyau, de
-  `journald.conf`, logique de repli entre sources, parcours de `/var/log`
-  sans suivre les liens symboliques).
-- `tests/security_module.rs` : 8 tests d'intégration du module Sécurité —
-  un serveur bien tenu (rien au-dessus d'Info), un serveur négligé (tous les
-  constats attendus avec la bonne gravité), l'ordre des pages et la présence
-  d'étapes numérotées, les identifiants `SEC001` à `SEC009`, noms hostiles
-  (balises HTML, Markdown, JavaScript) à travers les rendus Markdown et HTML,
-  les quatre formats, et un test du vrai binaire sur la machine hôte qui ne
-  vérifie que la présence des constats, jamais leur gravité (elle dépend de
-  la machine).
-- 139 tests unitaires pour le module Sécurité (analyseurs de `/proc/net/*`,
+- `tests/docs_commands.rs`: 11 integration tests with the real binary —
+  `man` (roff page, all the modules listed, identical output from one run to
+  the next, re-reading by `groff -ww` without warning), `completions`
+  (bash, zsh, fish; unknown or missing shell = usage error) and the check of
+  `--modules` (typo alone or in a list, also for `tui`, and a correct
+  identifier that still runs). Plus 17 unit tests
+  (`cli.rs`, `manpage.rs`): sections in order, common options
+  documented only once, `help` absent, version in the header without a date,
+  completion scripts that know every module.
+- `tests/logs_module.rs`: 14 integration tests of the Logs module — a
+  quiet server (nothing above Info), a server in trouble (all
+  the expected findings with the right severity), the order of the pages and the
+  numbered steps, the advice depending on the distribution family, hostile
+  content (HTML/Markdown tags, terminal escape sequences, names that
+  could break a command) through the four
+  formats, and the real binary against a fake `journalctl` placed at the head of the
+  `PATH`: simulated journal, exit code, unreadable journal reported, journal
+  that does not answer (stopped after the time limit and reported as
+  incomplete), and a test on the host machine that only checks the presence
+  of the findings, never their severity.
+- 110 unit tests for the Logs module (parsers for the journal, for
+  syslog and for `dmesg`, for SSH/sudo/PAM messages, for the kernel, for
+  `journald.conf`, fallback logic between sources, walking of `/var/log`
+  without following symbolic links).
+- `tests/security_module.rs`: 8 integration tests of the Security module —
+  a well-kept server (nothing above Info), a neglected server (all the
+  expected findings with the right severity), the order of the pages and the presence
+  of numbered steps, the identifiers `SEC001` to `SEC009`, hostile names
+  (HTML tags, Markdown, JavaScript) through the Markdown and HTML renderers,
+  the four formats, and a test of the real binary on the host machine that only
+  checks the presence of the findings, never their severity (it depends on
+  the machine).
+- 139 unit tests for the Security module (parsers for `/proc/net/*`,
   `sshd_config`, `nft`/`iptables`, `passwd`/`shadow`/`group`, SELinux,
-  AppArmor, réglages sysctl) sur des textes d'exemple, y compris les entrées
-  mal formées.
-- `tests/export_and_gate.rs` : 14 tests de bout en bout avec le vrai binaire
-  (formats Markdown/HTML, alias `md`, `--min-severity`, `--fail-on`, code de
-  sortie pour chaque seuil, le filtre d'affichage ne change jamais le code de
-  sortie, erreurs d'utilisation = code 2).
-- Tests unitaires des rendus (échappement de contenu hostile, balises
-  autorisées dans le HTML, structure des tableaux/blocs de code), de
-  `core::gate`, du filtrage du rapport et de l'analyse des arguments.
-- Les rendus ont aussi été validés avec un analyseur CommonMark, un analyseur
-  HTML5 strict et un navigateur sans interface (clair, sombre, largeur de
-  téléphone).
+  AppArmor, sysctl settings) on sample texts, including malformed
+  inputs.
+- `tests/export_and_gate.rs`: 14 end-to-end tests with the real binary
+  (Markdown/HTML formats, `md` alias, `--min-severity`, `--fail-on`, exit code
+  for each threshold, the display filter never changes the exit
+  code, usage errors = code 2).
+- Unit tests of the renderers (escaping of hostile content, tags
+  allowed in the HTML, structure of tables/code blocks), of
+  `core::gate`, of the report filtering and of argument parsing.
+- The renderers were also validated with a CommonMark parser, a strict
+  HTML5 parser and a headless browser (light, dark, phone
+  width).
 
 ## 2026-10-14
 
-### Ajouté
+### Added
 
-- **`schema_version` dans le JSON** : `linuxdoctor audit --output json`
-  commence par `"schema_version": 1`. Règle : ajouter un champ ne change
-  pas la version (les lecteurs ignorent les clés inconnues) ; supprimer,
-  renommer ou changer le sens d'un champ l'incrémente. Les autres champs
-  ne bougent pas. Constante `output::json::SCHEMA_VERSION`, documentée
-  dans `ARCHITECTURE.md` (« Schema version »).
-- **Intégration continue GitHub Actions** (`.github/workflows/ci.yml`),
-  sur chaque push vers `main` et chaque pull request : `cargo fmt
-  --check`, `cargo clippy --all-targets -- -D warnings` (stable), puis
-  `cargo build` et `cargo test` avec Rust 1.75.0 (version minimale) et
-  stable. Tout est lancé avec `--locked` pour respecter les versions
-  figées de `Cargo.lock`. Le format v4 de `Cargo.lock` (Cargo ≥ 1.78) est
-  illisible par Cargo 1.75 : la tâche 1.75 repasse l'en-tête en v3 dans
-  l'exécution de CI uniquement — avec des dépendances 100 % « registry »,
-  le contenu est identique.
-- **Module mémoire entièrement refondu** : 13 contrôles (`MEM001` à
-  `MEM013`) répartis en six thèmes, qui sont aussi les sous-menus du TUI :
-  - *Used memory* : `MEM007` détaille la mémoire utilisée par nature
-    (anonyme des programmes, cache, mémoire partagée, noyau) et les
-    principaux consommateurs par mémoire privée (RssAnon), regroupés par
-    nom de programme ; `MEM004` (vue d'ensemble) et `MEM003` (mémoire
-    critique) sont conservés.
-  - *Page cache* : `MEM008` (cache réellement récupérable, mythe de
-    `drop_caches`, `vfs_cache_pressure`) ; `MEM005` (pages sales).
-  - *Shared memory* : `MEM006` — `Shmem`, remplissage de tmpfs et
-    `/dev/shm`, segments SysV orphelins (`nattch = 0`) avec la commande
-    `ipcrm -m` pour les supprimer.
-  - *Swap* : `MEM001` (swappiness jugé selon le type de swap : zram, SSD,
-    disque rotatif), `MEM002` (activité de swap, programmes les plus
-    swappés, trafic de swap depuis le démarrage), `MEM010` (configuration :
-    absence de swap, priorité zram, taux de compression, algorithme,
-    zswap + zram redondants, `page-cluster`).
-  - *Pressure* : `MEM009` — PSI (`/proc/pressure/memory`), éliminations
-    OOM depuis le démarrage, récupération directe.
-  - *Kernel tuning* : `MEM011` (surallocation et `CommitLimit`),
-    `MEM012` (Transparent Huge Pages, hugepages réservées inutilisées),
-    `MEM013` (slab non récupérable, tables de pages, ZFS ARC,
-    `min_free_kbytes`, ballon).
-- **Recommandations en étapes numérotées**, avec les commandes sur leurs
-  propres lignes (jamais exécutées par l'outil), dimensionnées pour la
-  machine : taille du fichier de swap suggérée, `vm.overcommit_ratio`
-  laissant 20 % de marge, plafond `zfs_arc_max`, etc. Le TUI affiche le
-  titre « Recommendation: » en gras et les commandes en cyan ; la sortie
-  terminal les indente sous un titre en gras.
-- Nouvelles sources de données, toutes facultatives : `/proc/vmstat`,
+- **`schema_version` in the JSON**: `linuxdoctor audit --output json`
+  starts with `"schema_version": 1`. Rule: adding a field does not change
+  the version (readers ignore unknown keys); removing,
+  renaming or changing the meaning of a field increments it. The other fields
+  do not move. Constant `output::json::SCHEMA_VERSION`, documented
+  in `ARCHITECTURE.md` ("Schema version").
+- **GitHub Actions continuous integration** (`.github/workflows/ci.yml`),
+  on every push to `main` and every pull request: `cargo fmt
+  --check`, `cargo clippy --all-targets -- -D warnings` (stable), then
+  `cargo build` and `cargo test` with Rust 1.75.0 (minimum version) and
+  stable. Everything is run with `--locked` to respect the pinned versions of
+  `Cargo.lock`. The v4 format of `Cargo.lock` (Cargo ≥ 1.78) is
+  unreadable by Cargo 1.75: the 1.75 job puts the header back to v3 in
+  the CI run only — with 100% "registry" dependencies,
+  the content is identical.
+- **Memory module completely reworked**: 13 checks (`MEM001` to
+  `MEM013`) split into six themes, which are also the TUI submenus:
+  - *Used memory*: `MEM007` details the memory used by nature
+    (programs' anonymous memory, cache, shared memory, kernel) and the
+    main consumers by private memory (RssAnon), grouped by
+    program name; `MEM004` (overview) and `MEM003` (critical
+    memory) are kept.
+  - *Page cache*: `MEM008` (really reclaimable cache, the `drop_caches`
+    myth, `vfs_cache_pressure`); `MEM005` (dirty pages).
+  - *Shared memory*: `MEM006` — `Shmem`, filling of tmpfs and
+    `/dev/shm`, orphaned SysV segments (`nattch = 0`) with the command
+    `ipcrm -m` to remove them.
+  - *Swap*: `MEM001` (swappiness judged by swap type: zram, SSD,
+    spinning disk), `MEM002` (swap activity, most swapped
+    programs, swap traffic since boot), `MEM010` (configuration:
+    no swap, zram priority, compression ratio, algorithm,
+    redundant zswap + zram, `page-cluster`).
+  - *Pressure*: `MEM009` — PSI (`/proc/pressure/memory`), OOM kills
+    since boot, direct reclaim.
+  - *Kernel tuning*: `MEM011` (overcommit and `CommitLimit`),
+    `MEM012` (Transparent Huge Pages, reserved but unused hugepages),
+    `MEM013` (unreclaimable slab, page tables, ZFS ARC,
+    `min_free_kbytes`, balloon).
+- **Recommendations in numbered steps**, with the commands on their
+  own lines (never executed by the tool), sized for the
+  machine: suggested swap file size, `vm.overcommit_ratio`
+  leaving a 20% margin, `zfs_arc_max` cap, etc. The TUI shows the
+  title "Recommendation:" in bold and the commands in cyan; the terminal output
+  indents them under a bold title.
+- New data sources, all optional: `/proc/vmstat`,
   `/proc/pressure/memory`, `/proc/swaps`, `/sys/block/zram*`,
-  `/proc/<pid>/status`, `/proc/sysvipc/shm`, `df -t tmpfs`, fichiers de
-  THP et de `vm.*`, `arcstats` de ZFS. Une source absente supprime
-  seulement les contrôles qui en dépendent. L'audit mémoire reste
-  rapide (~35 ms, ~60 ms avec 2000 processus).
-- `MemoryRawData::from_meminfo()` : construit les données à partir du
-  seul texte de `/proc/meminfo` (utile pour les tests et les exemples).
-- Page d'accueil du module : les problèmes (Warning et plus) passent
-  en premier, la vue d'ensemble `MEM004` ferme la page.
+  `/proc/<pid>/status`, `/proc/sysvipc/shm`, `df -t tmpfs`, THP
+  and `vm.*` files, ZFS `arcstats`. A missing source only removes
+  the checks that depend on it. The memory audit stays
+  fast (~35 ms, ~60 ms with 2000 processes).
+- `MemoryRawData::from_meminfo()`: builds the data from the
+  `/proc/meminfo` text alone (useful for tests and examples).
+- Module home page: the problems (Warning and above) come
+  first, the `MEM004` overview closes the page.
 
-### Changé
+### Changed
 
-- `Cargo.toml` déclare `rust-version = "1.75"` : une chaîne d'outils plus
-  ancienne s'arrête avec un message clair au lieu d'erreurs de compilation
-  obscures. Les scripts de construction ne sont pas affectés (ils ne
-  réécrivent que la ligne `version = ` en début de ligne).
-- **Mise en forme et Clippy sur tout le projet** : `cargo fmt` appliqué à
-  l'ensemble du code (19 fichiers reformatés, sans changement de
-  comportement) et les 7 avertissements Clippy qui restaient corrigés
-  (`trim()` inutile avant `split_whitespace()`, `splitn(2, …)` remplacé
-  par `split_once`, `format!` sans argument, fermeture inutile dans
-  `cli.rs`). `cargo clippy --all-targets -- -D warnings` passe sans
-  avertissement ; la mention « avertissements Clippy » de la section
-  « Limites connues » ci-dessous est donc réglée.
-- **Sémantique de « Cached » corrigée** : la ligne `Cached` de
-  `/proc/meminfo` contient la mémoire partagée (`Shmem`) ; le cache
-  « de fichiers » est désormais calculé sans elle, et la mémoire
-  récupérable compte buffers, cache de fichiers et slab récupérable.
-- Les seuils de pages sales sont calculés sur la mémoire « dirtyable »
-  (libre + cache de fichiers) et non sur la RAM totale, avec trois zones :
-  écriture en arrière-plan (Info), ralentissement des écritures
-  (Warning), blocage (Error). Les réglages `dirty_*_bytes` l'emportent
-  sur les ratios. Une limite en pourcentage qui dépasse 4 GiB sur un
-  gros serveur est signalée en Info avec des plafonds optionnels.
-- Un swap rempli à 80 % ou plus est maintenant un Warning (avant : Info
-  même à 97 %).
-- La mémoire partagée attachée à des segments SysV (PostgreSQL, Oracle…)
-  est considérée comme légitime et n'entre plus dans le jugement en
-  pourcentage.
-- `src/modules/memory/analyze.rs` n'est plus qu'un coordinateur : la
-  logique vit dans `used`, `cache`, `shared`, `swap`, `pressure`,
-  `tuning`, `kernel` et `format`.
+- `Cargo.toml` declares `rust-version = "1.75"`: an older toolchain
+  stops with a clear message instead of obscure compilation errors.
+  The build scripts are not affected (they only
+  rewrite the `version = ` line at the start of a line).
+- **Formatting and Clippy across the whole project**: `cargo fmt` applied to
+  all the code (19 files reformatted, no change of
+  behavior) and the 7 remaining Clippy warnings fixed
+  (useless `trim()` before `split_whitespace()`, `splitn(2, …)` replaced
+  by `split_once`, `format!` without arguments, useless closure in
+  `cli.rs`). `cargo clippy --all-targets -- -D warnings` passes without
+  warnings; the mention of "Clippy warnings" in the
+  "Known limits" section below is therefore settled.
+- **Semantics of "Cached" fixed**: the `Cached` line of
+  `/proc/meminfo` contains shared memory (`Shmem`); the "file"
+  cache is now computed without it, and reclaimable
+  memory counts buffers, file cache and reclaimable slab.
+- The dirty-page thresholds are computed on "dirtyable" memory
+  (free + file cache) and not on total RAM, with three zones:
+  background writeback (Info), write throttling
+  (Warning), blocking (Error). The `dirty_*_bytes` settings win
+  over the ratios. A percentage limit that exceeds 4 GiB on a
+  big server is reported as Info with optional caps.
+- A swap that is 80% full or more is now a Warning (before: Info
+  even at 97%).
+- Shared memory attached to SysV segments (PostgreSQL, Oracle…)
+  is considered legitimate and no longer enters the percentage
+  judgment.
+- `src/modules/memory/analyze.rs` is now just a coordinator: the
+  logic lives in `used`, `cache`, `shared`, `swap`, `pressure`,
+  `tuning`, `kernel` and `format`.
 
-### Corrigé
+### Fixed
 
-- `tests/hung_tools.rs` : les faux outils définissent aussi `docker` et
-  `podman` (sortie 127). Avec un vrai `docker` lent, le test pouvait
-  dépasser la limite de 1 s et échouer de façon intermittente.
+- `tests/hung_tools.rs`: the fake tools also define `docker` and
+  `podman` (exit 127). With a slow real `docker`, the test could
+  exceed the 1 s limit and fail intermittently.
 
 ### Tests
 
-- 4 tests unitaires pour l'enveloppe JSON (`schema_version` présent,
-  numérique, premier champ, seul ajout au niveau supérieur) et 2 tests de
-  bout en bout avec le vrai binaire (`tests/json_schema.rs`).
-- 219 tests unitaires pour le module mémoire, dont des invariants vérifiés sur huit scénarios : confiance
-  d'au moins 60 %, étapes numérotées pour tout résultat au-dessus d'Info,
-  aucun `{}` résiduel, pas d'unités MiB/GiB, JSON sérialisable. 10 tests
-  d'intégration (`tests/memory_module.rs`) : serveur sain de 64 Go,
-  poste saturé, zram mal priorisé, segments SysV orphelins, ZFS ARC,
-  rendu terminal et JSON. Total : 567 tests de bibliothèque, 7 CLI,
-  45 d'intégration (619, tous verts).
-- Vérifié sur un système réel : segment SysV orphelin, fichier de 900 Mo
-  dans `/dev/shm`, processus de 3 Go, vraie élimination OOM, vrai swap
-  (fichier de 256 Mo) et rendu dans un vrai terminal (TUI sous tmux).
+- 4 unit tests for the JSON envelope (`schema_version` present,
+  numeric, first field, only addition at the top level) and 2 end-to-end tests
+  with the real binary (`tests/json_schema.rs`).
+- 219 unit tests for the memory module, including invariants checked on eight scenarios:
+  confidence of at least 60%, numbered steps for any result above Info,
+  no leftover `{}`, no MiB/GiB units, serializable JSON. 10 integration
+  tests (`tests/memory_module.rs`): healthy 64 GB server,
+  saturated workstation, badly prioritized zram, orphaned SysV segments, ZFS ARC,
+  terminal and JSON rendering. Total: 567 library tests, 7 CLI,
+  45 integration (619, all green).
+- Verified on a real system: orphaned SysV segment, 900 MB file
+  in `/dev/shm`, 3 GB process, real OOM kill, real swap
+  (256 MB file) and rendering in a real terminal (TUI under tmux).
 
-### Limites connues
+### Known limits
 
-- La version minimale de Rust (1.75) n'a pas pu être vérifiée ici (le
-  compilateur local est en 1.97) ; le nouveau code évite les API
-  postérieures connues (par exemple `Option::is_none_or`).
-- Compatibilité avec Rust 1.75 : non vérifiable en local (rustup bloqué dans
-  l'environnement de développement), mais **vérifiée par l'intégration
-  continue** — la tâche « Tests (Rust 1.75.0) » est passée au vert sur la
-  pull request #1, comme les tâches stable, fmt et Clippy.
+- The minimum Rust version (1.75) could not be verified here (the local
+  compiler is 1.97); the new code avoids the known later
+  APIs (for example `Option::is_none_or`).
+- Compatibility with Rust 1.75: not verifiable locally (rustup blocked in
+  the development environment), but **verified by continuous
+  integration** — the "Tests (Rust 1.75.0)" job went green on
+  pull request #1, like the stable, fmt and Clippy jobs.
 
 ## 2026-10-07
 
-### Ajouté
+### Added
 
-- **Délai maximal pour chaque commande externe.** Jusqu'ici, un `virsh`
-  dont le démon ne répondait plus, un `smartctl` sur un disque en
-  difficulté ou un `nvidia-smi` bloqué figeait tout l'audit — et le TUI
-  avec lui, sans message. Chaque commande lancée via
-  `core::command::command()` a maintenant une limite de **10 s** par
-  défaut, réglable avec `--timeout <secondes>` (1 à 3600, avant ou après
-  la sous-commande). `smartctl`, `nvidia-smi` et `docker/podman stats`
-  disposent du double (réveil d'un disque en veille, initialisation du
-  pilote). Au-delà, la commande est tuée et l'audit continue.
-- **Données incomplètes visibles, jamais silencieuses.** Un délai dépassé
-  est consigné dans un nouveau champ `notes` du résultat de chaque
-  module (présent dans le JSON). Le mode terminal affiche
+- **Maximum time for every external command.** Until now, a `virsh`
+  whose daemon no longer answered, a `smartctl` on a disk in
+  trouble or a hung `nvidia-smi` froze the whole audit — and the TUI
+  with it, without a message. Every command launched through
+  `core::command::command()` now has a default limit of **10 s**,
+  adjustable with `--timeout <seconds>` (1 to 3600, before or after
+  the subcommand). `smartctl`, `nvidia-smi` and `docker/podman stats`
+  get double (waking a sleeping disk, initializing the
+  driver). Beyond that, the command is killed and the audit continues.
+- **Incomplete data is visible, never silent.** A timeout
+  is recorded in a new `notes` field of each module's result
+  (present in the JSON). The terminal mode shows
   `↳ incomplete data: 'virsh list --all --name' did not finish within
-  10s and was stopped` sous le module ; le TUI affiche un bandeau jaune
-  sur la page du module, avec le rappel de `--timeout`. Un module avec
-  des notes reçoit un ⚠ au lieu d'un ✓ : une coche verte affirmerait plus
-  que ce que les données permettent. Les notes sont rattachées au bon
-  module même quand les modules tournent en parallèle (suivi par thread).
-- **Garde-fou par outil (`ToolSession`).** Les ~9 appels `virsh` faits
-  pour chaque VM, et les 3 appels `nvidia-smi`, partagent une session :
-  au premier délai dépassé, les appels suivants sont ignorés. Un
-  `libvirtd` bloqué coûte une limite, pas (nombre de VM × 9) limites.
-- **Modules exécutés en parallèle** (`std::thread::scope`, aucune
-  dépendance ajoutée) : un module lent ne retarde plus que lui-même.
-  L'ordre du menu et des résultats est inchangé. Une erreur **ou une
-  panique** dans un module est isolée dans son `error` ; si le système
-  refuse un thread, le module tourne en ligne plutôt que d'être perdu.
-- **Requêtes SMART en parallèle** (`core::parallel::parallel_map`, 8 à la
-  fois au plus, résultats dans l'ordre des disques) : un serveur à une
-  douzaine de disques n'attend plus chaque `smartctl` l'un après l'autre.
-- Tests : 33 nouveaux tests unitaires (30 bibliothèque + 3 CLI : limite de temps, sortie
-  volumineuse sans interblocage, petit-enfant gardant le tube ouvert,
-  ordre des résultats, concurrence réelle et plafond de threads,
-  isolation d'une panique, attribution des notes au bon module,
-  progression, `--timeout`, rendus terminal/TUI) et 3 tests de bout en
-  bout (`tests/hung_tools.rs`) qui lancent le vrai binaire contre de
-  faux `virsh` qui se bloquent. Contrôle par mutation : sans le
-  garde-fou de session, le test « blocage en cours de route » échoue
-  (6,1 s au lieu de 1,2 s).
+  10s and was stopped` under the module; the TUI shows a yellow banner
+  on the module's page, with a reminder of `--timeout`. A module with
+  notes gets a ⚠ instead of a ✓: a green tick would claim more
+  than the data allows. The notes are attached to the right
+  module even when the modules run in parallel (tracking per thread).
+- **Per-tool safeguard (`ToolSession`).** The ~9 `virsh` calls made
+  for each VM, and the 3 `nvidia-smi` calls, share a session:
+  at the first timeout, the following calls are skipped. A stuck
+  `libvirtd` costs one limit, not (number of VMs × 9) limits.
+- **Modules run in parallel** (`std::thread::scope`, no
+  dependency added): a slow module now only delays itself.
+  The order of the menu and of the results is unchanged. An error **or a
+  panic** in a module is isolated in its `error`; if the system
+  refuses a thread, the module runs inline rather than being lost.
+- **SMART queries in parallel** (`core::parallel::parallel_map`, 8 at a
+  time at most, results in disk order): a server with a dozen
+  disks no longer waits for each `smartctl` one after the other.
+- Tests: 33 new unit tests (30 library + 3 CLI: time limit, large output
+  without deadlock, grandchild keeping the pipe open,
+  order of the results, real concurrency and thread cap,
+  isolation of a panic, attribution of notes to the right module,
+  progress, `--timeout`, terminal/TUI rendering) and 3 end-to-end
+  tests (`tests/hung_tools.rs`) that launch the real binary against
+  fake `virsh` that hang. Mutation check: without the session
+  safeguard, the "mid-run hang" test fails
+  (6.1 s instead of 1.2 s).
 
-### Changé
+### Changed
 
-- `core::command::command()` renvoie désormais un `Cmd` (même usage :
-  `arg`, `args`, `output`, plus `timeout` et `slow`) au lieu d'un
-  `std::process::Command`. Une commande trop lente renvoie une erreur
-  `ErrorKind::TimedOut` ; « outil absent » reste `NotFound`.
-- Le rappel de progression est maintenant
-  `on_progress(terminés, total, en_cours)`. L'écran de démarrage/
-  rafraîchissement du TUI affiche par exemple
-  `10/11 done — waiting for virtualization` : avec des modules
-  simultanés il n'y a plus un seul « module courant ».
-- Le JSON gagne un champ `notes` par module (ajout compatible : les
-  champs existants ne bougent pas).
+- `core::command::command()` now returns a `Cmd` (same usage:
+  `arg`, `args`, `output`, plus `timeout` and `slow`) instead of a
+  `std::process::Command`. A command that is too slow returns an
+  `ErrorKind::TimedOut` error; "tool missing" remains `NotFound`.
+- The progress callback is now
+  `on_progress(finished, total, running)`. The TUI's startup/refresh
+  screen shows for example
+  `10/11 done — waiting for virtualization`: with simultaneous
+  modules there is no longer a single "current module".
+- The JSON gains a `notes` field per module (compatible addition: the existing
+  fields do not move).
 
-### Mesures (honnêtes)
+### Measurements (honest)
 
-Binaire release, mêmes faux outils lents (`virsh`, `smartctl` sur 6
-disques, `mokutil`, `dmesg`, 1 s chacun) :
+Release binary, same slow fake tools (`virsh`, `smartctl` on 6
+disks, `mokutil`, `dmesg`, 1 s each):
 
-| Version | Durée de l'audit |
+| Version | Audit duration |
 |---|---|
-| avant (séquentiel) | 10,1 s |
-| modules en parallèle seulement | 6,1 s |
-| + SMART en parallèle | **2,0 s** |
+| before (sequential) | 10.1 s |
+| modules in parallel only | 6.1 s |
+| + SMART in parallel | **2.0 s** |
 
-Avec les outils réels de cette machine d'essai (rapides, pas de disque
-physique ni de GPU), la durée est la même, ~0,1 s : le gain n'apparaît
-que lorsque des outils sont réellement lents, ce qui est précisément le
-cas qui posait problème. Le reste de ces 2 s est le module `firmware`,
-qui enchaîne `mokutil` puis `dmesg` en interne.
+With the real tools of this test machine (fast, no physical
+disk or GPU), the duration is the same, ~0.1 s: the gain only appears
+when tools are really slow, which is precisely the
+case that was a problem. The rest of those 2 s is the `firmware` module,
+which chains `mokutil` then `dmesg` internally.
 
-### Limites connues
+### Known limits
 
-- Seul le processus lancé est tué à l'échéance, pas ses éventuels
-  descendants ; ils n'empêchent toutefois jamais l'audit de continuer
-  (les tubes sont abandonnés à l'échéance).
-- Un processus bloqué en attente d'E/S non interruptible (montage NFS
-  mort, disque défaillant) ne peut pas être tué par le noyau avant le
-  retour de l'E/S : l'audit continue sans l'attendre, mais le processus
-  peut rester en sommeil disque jusqu'à son retour.
-- Le fichier `config.toml` décrit dans ARCHITECTURE.md n'existe toujours
-  pas ; `--timeout` est pour l'instant le seul réglage.
-- Cette étape a été compilée et testée avec `rustc` 1.97 (la 1.75 n'était
-  pas installable dans l'environnement d'essai). Le code nouveau n'utilise
-  que des API stables depuis ≤ 1.75 (`thread::scope`, `spawn_scoped`,
-  `thread_local!` avec `const`, `recv_timeout`), vérifié par relecture ;
-  la CI prévue à l'étape suivante compilera explicitement avec 1.75.
+- Only the launched process is killed at the deadline, not its possible
+  descendants; they never prevent the audit from continuing, however
+  (the pipes are abandoned at the deadline).
+- A process blocked waiting on uninterruptible I/O (dead NFS
+  mount, failing disk) cannot be killed by the kernel before the
+  I/O returns: the audit continues without waiting for it, but the process
+  may remain in disk sleep until it returns.
+- The `config.toml` file described in ARCHITECTURE.md still does not
+  exist; `--timeout` is for now the only setting.
+- This step was compiled and tested with `rustc` 1.97 (1.75 could not
+  be installed in the test environment). The new code only uses
+  APIs stable since ≤ 1.75 (`thread::scope`, `spawn_scoped`,
+  `thread_local!` with `const`, `recv_timeout`), verified by reading;
+  the CI planned for the next step will explicitly compile with 1.75.
 
 ## 2026-09-14
 
-### Changé — politique de gestion de version revue
+### Changed — version management policy revised
 
-Correction de la correction précédente : la resynchronisation manuelle
-faite le 10/09 (voir plus bas) traitait le mauvais symptôme. Signalé
-par l'utilisateur : ce n'est pas que ses builds locaux dépassaient ce
-qui était livré ici — c'est l'inverse. Son `VERSION` local restait
-bloqué à `0.4.0` malgré plusieurs lancements de `build-deb.sh` avec
-des options d'incrément, alors qu'il aurait dû atteindre `1.3.0`.
+Correction of the previous correction: the manual resynchronization
+done on 10 September (see below) treated the wrong symptom. Reported
+by the user: it is not that their local builds were ahead of what was
+delivered here — it is the opposite. Their local `VERSION` stayed
+stuck at `0.4.0` despite several runs of `build-deb.sh` with
+increment options, whereas it should have reached `1.3.0`.
 
-Vérifié en profondeur avant de conclure : la logique d'incrémentation
-elle-même fonctionne correctement — 4 lancements successifs réels
-(`--major`, `--minor`, `--minor`, `--minor`) enchaînent bien
-`0.4.0 → 1.0.0 → 1.1.0 → 1.2.0 → 1.3.0`, confirmant qu'un incrément se
-compose correctement d'un lancement à l'autre. La cause la plus
-probable côté utilisateur : `fpm` n'est pas un paquet système, il
-s'installe via `gem install --user-install fpm` — s'il n'est pas
-présent, chaque lancement échoue proprement à la vérification des
-outils, avec un message clair, **sans jamais toucher `VERSION`**
-(comportement volontaire : aucun incrément sans build entièrement
-réussi). Confirmé par un test dédié : lancement sans `fpm` disponible
-→ échec propre, `VERSION` inchangé, exactement le symptôme rapporté.
+Verified in depth before concluding: the increment logic
+itself works correctly — 4 successive real runs
+(`--major`, `--minor`, `--minor`, `--minor`) chain correctly
+`0.4.0 → 1.0.0 → 1.1.0 → 1.2.0 → 1.3.0`, confirming that an increment
+composes correctly from one run to the next. The most probable cause on the
+user's side: `fpm` is not a system package, it is installed via
+`gem install --user-install fpm` — if it is not present, every run
+fails cleanly at the tool check, with a clear message, **without ever touching `VERSION`**
+(deliberate behavior: no increment without a fully successful
+build). Confirmed by a dedicated test: a run without `fpm` available
+→ clean failure, `VERSION` unchanged, exactly the reported symptom.
 
-**Décision** : `VERSION` (et le champ `version` de `Cargo.toml`) ne
-sont plus inclus dans les livraisons de code source à partir de
-maintenant. Ce fichier appartient exclusivement à l'environnement local
-de l'utilisateur, avancé uniquement par ses propres lancements réussis
-de `build-deb.sh`/`build-rpm.sh` — le faire avancer aussi côté
-livraison créait exactement le problème inverse de celui visé : chaque
-nouvelle livraison écrasait la progression locale de l'utilisateur.
-Vérifié que les deux scripts démarrent proprement à `0.1.0` en
-l'absence totale de `VERSION` (cas d'une extraction neuve). Les entrées
-de ce changelog utiliseront désormais une date plutôt qu'un numéro de
-version inventé ici, pour la même raison — ce numéro n'est plus de mon
-ressort.
+**Decision**: `VERSION` (and the `version` field of `Cargo.toml`) are
+no longer included in source code deliveries from now on. This file belongs exclusively to the user's
+local environment, advanced only by their own successful runs
+of `build-deb.sh`/`build-rpm.sh` — making it advance on the delivery side as well
+created exactly the opposite of the problem it aimed at: each
+new delivery overwrote the user's local progress.
+Verified that both scripts start cleanly at `0.1.0` in
+the total absence of `VERSION` (the case of a fresh extraction). The entries
+of this changelog will now use a date rather than a version number
+invented here, for the same reason — that number is no longer
+mine to decide.
 
-### Ajouté
+### Added
 
-- Nouveau module **firmware**, placé dans le menu juste après `kernel`
-  et avant `virtualization` (la virtualisation activée au BIOS est un
-  prérequis logique de ce que fait ce dernier) — vérifié en conditions
-  réelles, pas seulement dans le code.
-  - **Réponse honnête à la question posée** : non, il n'existe aucune
-    API Linux universelle pour lire l'intégralité du menu de
-    configuration BIOS/UEFI (courbes de ventilateur, profils XMP,
-    ordre de démarrage détaillé, bascule CSM) — ce module ne prétend
-    pas le faire. Certains constructeurs (Dell, Lenovo) ont des outils
-    propriétaires pour une partie de leurs réglages spécifiques ; pas
-    couvert ici, périmètre bien plus vaste et fragile.
-  - **Ce qui est couvert, entièrement vérifié avant codage** : identité
-    du firmware (fabricant/version/date/révision) via
-    `/sys/class/dmi/id/*` — lecture sysfs pure, aucun outil externe,
-    aucun root requis (confirmé via plusieurs sources indépendantes) ;
-    mode de démarrage (UEFI vs Legacy/CSM) et état du Secure Boot (via
-    `mokutil`, laissé "indéterminé" plutôt que deviné depuis les
-    octets bruts de la variable EFI quand l'outil est absent — les
-    sources divergeaient sur l'offset exact) ; extensions de
-    virtualisation (VT-x/AMD-V) ; IOMMU/VT-d ; présence d'un TPM.
-  - **Virtualisation activée au BIOS** : la sévérité n'augmente que
-    lorsque `dmesg` confirme explicitement "disabled by bios" — la
-    simple absence du flag `vmx`/`svm` reste ambiguë (CPU sans support
-    réel vs désactivé au BIOS, deux cas indiscernables depuis cette
-    seule donnée) et ne fait donc jamais monter la sévérité seule,
-    juste baisser la confiance en conséquence.
-  - **IOMMU/VT-d** : croise le paramètre noyau demandé (`/proc/cmdline`)
-    avec l'état réellement actif (`/sys/class/iommu/`) — un
-    paramètre demandé mais jamais actif signale un blocage au niveau
-    BIOS, avec un renvoi direct vers les modules GPU (passthrough
-    SR-IOV) et Virtualization (VFIO) déjà existants.
-  - Nouvelle catégorie canonique `Firmware`, ajoutée à l'enum et à la
-    liste de vision de `PROJECT_CONTEXT.md` (même précédent que pour
+- New **firmware** module, placed in the menu right after `kernel`
+  and before `virtualization` (virtualization enabled in the BIOS is a
+  logical prerequisite of what the latter does) — verified under real
+  conditions, not only in the code.
+  - **Honest answer to the question asked**: no, there is no
+    universal Linux API to read the whole of the BIOS/UEFI
+    configuration menu (fan curves, XMP profiles,
+    detailed boot order, CSM toggle) — this module does not claim
+    to do so. Some manufacturers (Dell, Lenovo) have
+    proprietary tools for part of their specific settings; not
+    covered here, a much wider and more fragile scope.
+  - **What is covered, entirely verified before coding**: firmware
+    identity (manufacturer/version/date/revision) via
+    `/sys/class/dmi/id/*` — pure sysfs reading, no external tool,
+    no root required (confirmed through several independent sources);
+    boot mode (UEFI vs Legacy/CSM) and Secure Boot state (via
+    `mokutil`, left "undetermined" rather than guessed from the
+    raw bytes of the EFI variable when the tool is absent — the
+    sources disagreed on the exact offset); virtualization
+    extensions (VT-x/AMD-V); IOMMU/VT-d; presence of a TPM.
+  - **Virtualization enabled in the BIOS**: the severity only increases
+    when `dmesg` explicitly confirms "disabled by bios" — the
+    mere absence of the `vmx`/`svm` flag remains ambiguous (CPU without
+    real support vs disabled in the BIOS, two cases indistinguishable from
+    that single piece of data) and therefore never raises the severity alone,
+    it only lowers the confidence accordingly.
+  - **IOMMU/VT-d**: cross-checks the requested kernel parameter (`/proc/cmdline`)
+    with the state actually active (`/sys/class/iommu/`) — a
+    parameter requested but never active signals a block at BIOS
+    level, with a direct pointer to the already existing GPU (SR-IOV
+    passthrough) and Virtualization (VFIO) modules.
+  - New canonical category `Firmware`, added to the enum and to the
+    vision list of `PROJECT_CONTEXT.md` (same precedent as for
     GPU).
 
 ## [1.3.0] - 2026-09-10
 
-### Note sur ce saut de version (0.4.0 → 1.3.0)
+### Note on this version jump (0.4.0 → 1.3.0)
 
-Pas de changement de code dans cette entrée — resynchronisation de
-`VERSION`/`Cargo.toml` uniquement. Signalé comme incohérent par
-l'utilisateur : `VERSION` restait à `0.4.0` alors qu'il en était à
-`1.3.0` sur sa propre machine. Cause identifiée : deux mécanismes
-d'incrémentation distincts et non synchronisés entre eux —
-`build-deb.sh`/`build-rpm.sh` incrémentent `VERSION` directement sur la
-machine où ils sont lancés (localement, indépendamment de toute
-conversation), tandis que chaque livraison faite ici incrémente sa
-propre copie sans visibilité sur l'état local de l'utilisateur.
-Resynchronisé sur `1.3.0` (l'état local rapporté) plutôt que de
-continuer sur une base désynchronisée à `0.4.0`.
+No code change in this entry — resynchronization of
+`VERSION`/`Cargo.toml` only. Reported as inconsistent by the
+user: `VERSION` stayed at `0.4.0` while they were at
+`1.3.0` on their own machine. Cause identified: two distinct
+increment mechanisms, not synchronized with each other —
+`build-deb.sh`/`build-rpm.sh` increment `VERSION` directly on the
+machine where they are run (locally, independently of any
+conversation), while each delivery made here increments its
+own copy with no visibility on the user's local state.
+Resynchronized to `1.3.0` (the reported local state) rather than
+continuing on a desynchronized base at `0.4.0`.
 
 ## [0.4.0] - 2026-09-10
 
-### Ajouté
+### Added
 
-- Module **gpu** enrichi avec plusieurs informations supplémentaires
-  demandées explicitement — chacune vérifiée avant d'être codée, avec
-  un piège de fiabilité réel trouvé et intégré honnêtement plutôt que
-  passé sous silence.
-  - **Horloges cœur/mémoire séparées**, pour les deux fabricants —
+- **gpu** module enriched with several additional pieces of information
+  explicitly requested — each verified before being coded, with
+  a real reliability trap found and honestly integrated rather than
+  passed over in silence.
+  - **Separate core/memory clocks**, for both manufacturers —
     NVIDIA via `clocks.gr`/`clocks.mem`, AMD via `pp_dpm_sclk`/
-    `pp_dpm_mclk` (la ligne marquée d'un astérisque indique l'état
-    actif parmi tous les états DPM disponibles).
-  - **Vitesse et largeur du port PCIe** (actuel + maximum), lues de
-    façon générique via les fichiers sysfs PCI standards
-    (`current_link_speed` etc.) — applicable à n'importe quel
-    fabricant, pas seulement AMD/NVIDIA. **Piège de fiabilité trouvé et
-    documenté** : un ticket GitHub réel sur `amdgpu_top` rapporte que
-    `current_link_speed` peut parfois afficher la valeur *maximale*
-    plutôt qu'une vraie lecture en temps réel sur certaines
-    combinaisons noyau/pilote — le texte produit porte cette mise en
-    garde plutôt que de prétendre à une précision non garantie, et
-    cette seule donnée ne fait jamais monter la sévérité.
-  - **Version CUDA maximale supportée par le driver** (`GPU001`,
-    depuis l'en-tête texte de `nvidia-smi` — pas un champ de requête
-    `--query-gpu`, contrairement à ce qu'on pourrait attendre).
-    Explicitement étiquetée comme telle et distinguée de la version du
-    *toolkit* CUDA réellement installée (`nvcc --version`) — une
-    confusion documentée comme fréquente dans plusieurs sources
-    indépendantes trouvées pendant la recherche.
-  - **Nombre de cœurs CUDA — délibérément absent.** Confirmé non exposé
-    par `nvidia-smi`, y compris via `compute_cap` (qui donne
-    l'architecture, pas le nombre de cœurs, et peut en plus faire
-    échouer la requête entière sur d'anciens drivers). C'est une
-    caractéristique matérielle fixe par modèle ; l'ajouter aurait
-    nécessité une table de correspondance modèle→specs qui deviendrait
-    fausse dès la sortie d'une nouvelle carte — refusé plutôt que
-    deviné.
-  - Petite correction cosmétique au passage : le nom du fabricant ne se
-    répète plus quand la description du GPU l'inclut déjà (ex. "NVIDIA
+    `pp_dpm_mclk` (the line marked with an asterisk indicates the
+    active state among all the available DPM states).
+  - **PCIe port speed and width** (current + maximum), read
+    generically through the standard PCI sysfs files
+    (`current_link_speed` etc.) — applicable to any
+    manufacturer, not only AMD/NVIDIA. **Reliability trap found and
+    documented**: a real GitHub ticket on `amdgpu_top` reports that
+    `current_link_speed` can sometimes display the *maximum* value
+    rather than a real real-time reading on certain
+    kernel/driver combinations — the text produced carries this
+    warning rather than claiming a precision that is not
+    guaranteed, and this data alone never raises the severity.
+  - **Maximum CUDA version supported by the driver** (`GPU001`,
+    from the text header of `nvidia-smi` — not a `--query-gpu`
+    query field, contrary to what one might expect).
+    Explicitly labelled as such and distinguished from the version of the
+    CUDA *toolkit* actually installed (`nvcc --version`) — a
+    confusion documented as frequent in several independent
+    sources found during the research.
+  - **Number of CUDA cores — deliberately absent.** Confirmed not exposed
+    by `nvidia-smi`, including through `compute_cap` (which gives the
+    architecture, not the number of cores, and can moreover make the whole query
+    fail on old drivers). It is a fixed hardware characteristic per model;
+    adding it would have required a model→specs lookup table that would become
+    wrong as soon as a new card is released — refused rather than
+    guessed.
+  - Small cosmetic fix along the way: the manufacturer's name no longer
+    repeats when the GPU description already includes it (e.g. "NVIDIA
     NVIDIA GeForce RTX 4090" → "NVIDIA GeForce RTX 4090").
 
 
 
-### Ajouté
+### Added
 
-- Nouveau module **gpu**, placé dans le menu juste après `numa` (avec
-  les autres ressources matérielles : memory/cpu/numa/gpu/storage,
-  avant les modules services/diagnostic) — vérifié en conditions
-  réelles, pas seulement dans le code.
-  - Détection générique via `/sys/class/drm/card*` (filtré des entrées
-    de connecteur type `card0-DP-1`), classification du fabricant à
-    partir du `PCI_ID` lu dans `uevent` (`0x10de` NVIDIA, `0x1002`
-    AMD/ATI — distinct de `0x1022`, l'ID PCI propre d'AMD pour ses
-    CPU/chipsets, volontairement pas confondu avec un GPU — `0x8086`
+- New **gpu** module, placed in the menu right after `numa` (with
+  the other hardware resources: memory/cpu/numa/gpu/storage,
+  before the services/diagnostic modules) — verified under
+  real conditions, not only in the code.
+  - Generic detection via `/sys/class/drm/card*` (filtered of the
+    connector-type entries like `card0-DP-1`), classification of the manufacturer
+    from the `PCI_ID` read in `uevent` (`0x10de` NVIDIA, `0x1002`
+    AMD/ATI — distinct from `0x1022`, AMD's own PCI ID for its
+    CPUs/chipsets, deliberately not confused with a GPU — `0x8086`
     Intel).
-  - **AMD** : entièrement via sysfs direct, aucun outil externe —
-    `mem_info_vram_total`/`used` (octets), `gpu_busy_percent`/
-    `mem_busy_percent` (%), `hwmon/*/temp1_input` (**millidegrés**),
-    `power1_average` (**microwatts**), `fan1_input` (RPM). Chaque
-    chemin et unité confirmé via la documentation noyau elle-même et
-    plusieurs captures réelles indépendantes (dont la bibliothèque Rust
-    `amdgpu-sysfs`), pas supposé.
-  - **NVIDIA** : un seul appel `nvidia-smi --query-gpu=...
-    --format=csv,noheader,nounits` couvrant toutes les cartes NVIDIA à
-    la fois, corrélées aux entrées DRM par adresse PCI normalisée
-    (`nvidia-smi` utilise un domaine à 8 chiffres hex, le reste du
-    projet à 4 — normalisation dédiée, testée). Cas géré explicitement :
-    `power.draw` peut valoir littéralement `"[Not Supported]"` selon
-    l'état d'alimentation de la carte. Remontée des process consommant
-    du GPU (`--query-compute-apps`) uniquement quand une seule carte
-    NVIDIA est présente — avec plusieurs cartes, aucune attribution par
-    process n'est fournie plutôt que de risquer une mauvaise
-    corrélation.
-  - **Sévérité basée sur la température uniquement** : utilisation,
-    VRAM et puissance élevées restent en Info (signe normal d'une carte
-    qui travaille, pas un problème en soi — même raisonnement que les
-    métriques de ressources du module virtualization). Pour AMD, la
-    température est comparée au seuil critique *propre à cette carte*
-    (`temp1_crit`, une vraie donnée) ; pour NVIDIA, faute d'équivalent
-    aussi direct, un seuil générique plus conservateur est utilisé, avec
-    une confiance explicitement réduite en conséquence. Driver manquant
-    détecté séparément et toujours au moins en Warning, sans jamais
-    faire descendre la sévérité d'une carte par ailleurs en surchauffe.
-  - **Limite assumée** : le chemin `nvidia-smi`/sysfs AMD n'a pu être
-    vérifié qu'au niveau du parsing (fixtures basées sur des formats
-    réels confirmés) — `/sys/class/drm` étant une structure du noyau,
-    impossible de la simuler sans modifier le code de production
-    juste pour les tests, et ce sandbox n'a aucun GPU réel disponible.
+  - **AMD**: entirely through direct sysfs, no external tool —
+    `mem_info_vram_total`/`used` (bytes), `gpu_busy_percent`/
+    `mem_busy_percent` (%), `hwmon/*/temp1_input` (**millidegrees**),
+    `power1_average` (**microwatts**), `fan1_input` (RPM). Each
+    path and unit confirmed through the kernel documentation itself and
+    several independent real captures (including the Rust library
+    `amdgpu-sysfs`), not assumed.
+  - **NVIDIA**: a single `nvidia-smi --query-gpu=...
+    --format=csv,noheader,nounits` call covering all the NVIDIA cards at
+    once, correlated with the DRM entries by normalized PCI address
+    (`nvidia-smi` uses an 8-hex-digit domain, the rest of the
+    project 4 — dedicated normalization, tested). Case handled explicitly:
+    `power.draw` can literally be `"[Not Supported]"` depending on the
+    card's power state. Reporting of the processes using the
+    GPU (`--query-compute-apps`) only when a single NVIDIA card is
+    present — with several cards, no per-process attribution is
+    provided rather than risking a wrong correlation.
+  - **Severity based on temperature only**: high utilization,
+    VRAM and power remain Info (a normal sign of a card that is
+    working, not a problem in itself — same reasoning as the resource
+    metrics of the virtualization module). For AMD, the
+    temperature is compared with the critical threshold *specific to that card*
+    (`temp1_crit`, a real piece of data); for NVIDIA, lacking an equally
+    direct equivalent, a more conservative generic threshold is used, with
+    an explicitly reduced confidence accordingly. Missing driver
+    detected separately and always at least a Warning, without ever
+    lowering the severity of a card that is otherwise overheating.
+  - **Assumed limit**: the `nvidia-smi`/AMD sysfs path could only be
+    verified at the parsing level (fixtures based on confirmed real
+    formats) — `/sys/class/drm` being a kernel structure, it is
+    impossible to simulate it without modifying the production code
+    just for the tests, and this sandbox has no real GPU available.
 
+First truly "published" version since the initial scaffold
+0.1.0 — until now, every change accumulated under "Unreleased"
+without ever getting a version increment, which was
+reported as a real problem: `VERSION` stayed frozen at `0.1.0`
+despite substantial evolution of the project. From now on,
+every delivered change increments `VERSION`/`Cargo.toml` and "publishes"
+the corresponding section with a date, instead of letting
+it accumulate indefinitely under "Unreleased".
 
+This version groups everything that was built since the initial scaffold
+(memory/cpu/numa/storage/systemd + basic TUI): the network, kernel, ntp and
+virtualization modules; the deep enrichment of memory, storage (SMART), and
+virtualization (VMs/host containers, CPU/NUMA pinning, passthrough/SR-IOV,
+stats inside the VMs); the rework of the TUI (submenus, live header,
+progress screen, manual refresh); and several fixes for real bugs
+(SR-IOV false positive, sensitivity of `virsh` to the locale, blocking
+confirmation prompt in the build scripts, default behavior of
+`linuxdoctor` without a subcommand).
 
-Première version "publiée" au sens propre depuis le scaffold initial
-0.1.0 — jusqu'ici, chaque changement s'accumulait sous "Non publié"
-sans jamais faire l'objet d'un incrément de version, ce qui a été
-signalé comme un problème réel : `VERSION` restait figé à `0.1.0`
-malgré une évolution substantielle du projet. À partir de maintenant,
-chaque changement livré incrémente `VERSION`/`Cargo.toml` et "publie"
-la section correspondante avec une date, au lieu de laisser
-s'accumuler indéfiniment sous "Non publié".
+### Changed
 
-Cette version regroupe tout ce qui a été construit depuis le scaffold
-initial (memory/cpu/numa/storage/systemd + TUI de base) : les modules
-network, kernel, ntp et virtualization ; l'enrichissement profond de
-memory, storage (SMART), et virtualization (VMs/conteneurs hôtes,
-pinning CPU/NUMA, passthrough/SR-IOV, stats internes aux VMs) ; la
-refonte du TUI (sous-menus, en-tête vivant, écran de progression,
-rafraîchissement manuel) ; et plusieurs corrections de bugs réels
-(faux positif SR-IOV, sensibilité à la locale de `virsh`, invite de
-confirmation bloquante dans les scripts de build, comportement par
-défaut de `linuxdoctor` sans sous-commande).
+- `linuxdoctor` without a subcommand now opens the TUI by default,
+  when stdin **and** stdout are a real terminal (`std::io::IsTerminal`,
+  standard library since Rust 1.70, no new dependency) —
+  matches the expected usage once the package is installed. Automatic fallback
+  to the `audit` behavior (text, as before) whenever
+  this is not the case (redirection, pipe, script/cron/CI), so that the existing
+  non-interactive uses (`linuxdoctor > report.txt`,
+  `linuxdoctor | grep ...`) keep working exactly as
+  before rather than failing against a TUI that has nowhere to
+  display. `linuxdoctor audit` and `linuxdoctor tui` remain
+  available to explicitly force either mode.
+  Verified with a real pseudo-terminal (`tmux`): launching without
+  arguments does open the TUI, clean exit with `q`; redirection to a
+  file and pipe to `grep` do stay in text mode, unchanged.
+  Decision logic extracted into a pure, testable function
+  separate from the real I/O detection — the same "thin collection +
+  testable core" principle as the diagnostic modules.
 
-### Modifié
+### Clarified
 
-- `linuxdoctor` sans sous-commande ouvre maintenant le TUI par défaut,
-  quand stdin **et** stdout sont un vrai terminal (`std::io::IsTerminal`,
-  bibliothèque standard depuis Rust 1.70, aucune nouvelle dépendance) —
-  correspond à l'usage attendu une fois le paquet installé. Repli
-  automatique sur le comportement `audit` (texte, comme avant) dès que
-  ce n'est pas le cas (redirection, pipe, script/cron/CI), pour que les
-  usages non-interactifs existants (`linuxdoctor > rapport.txt`,
-  `linuxdoctor | grep ...`) continuent de fonctionner exactement comme
-  avant plutôt que d'échouer contre un TUI qui n'a nulle part où
-  s'afficher. `linuxdoctor audit` et `linuxdoctor tui` restent
-  disponibles pour forcer explicitement l'un ou l'autre mode.
-  Vérifié avec un vrai pseudo-terminal (`tmux`) : lancement sans
-  argument ouvre bien le TUI, sortie propre par `q` ; redirection vers
-  fichier et pipe vers `grep` restent bien en mode texte, inchangés.
-  Logique de décision extraite dans une fonction pure et testable
-  séparée de la détection I/O réelle — même principe "collecte fine +
-  cœur testable" que les modules de diagnostic.
+- `build-rpm.sh` adds a "-1" to the name of the generated `.rpm` file (e.g.
+  `linuxdoctor-1.5.2-1.x86_64.rpm`) — reported as abnormal by a
+  user. **Verified in depth, it is not a bug**: it is the
+  "Release" field of the RPM format, distinct from the "Version" field in the
+  NEVRA convention (Name-Epoch:Version-Release.Architecture), set to `1`
+  by default by `fpm` in the absence of an explicit `--iteration`. The
+  `.deb` format has no such notion, hence the absence of this suffix on the
+  `build-deb.sh` side — which explained the confusion. Complete verification
+  performed (not just re-read): the 4 version options (1/2/3/4,
+  both via CLI flags and via the numbered interactive menu, with a
+  real pseudo-terminal) give a strictly identical and correct result
+  in both scripts — `VERSION` and `Cargo.toml` never
+  contain this suffix, in any tested scenario. Success
+  message of `build-rpm.sh` enriched with an explicit note on this, so
+  that it never remains ambiguous.
 
-### Clarifié
+### Fixed
 
-- `build-rpm.sh` ajoute un "-1" au nom du fichier `.rpm` généré (ex.
-  `linuxdoctor-1.5.2-1.x86_64.rpm`) — signalé comme anormal par un
-  utilisateur. **Vérifié en profondeur, ce n'est pas un bug** : c'est le
-  champ "Release" du format RPM, distinct du champ "Version" dans la
-  convention NEVRA (Nom-Epoch:Version-Release.Architecture), fixé à `1`
-  par défaut par `fpm` en l'absence de `--iteration` explicite. Le
-  format `.deb` n'a pas cette notion, d'où l'absence de ce suffixe côté
-  `build-deb.sh` — ce qui expliquait la confusion. Vérification complète
-  effectuée (pas seulement relue) : les 4 options de version (1/2/3/4,
-  aussi bien via flags CLI que via le menu interactif numéroté, avec un
-  vrai pseudo-terminal) donnent un résultat strictement identique et
-  correct dans les deux scripts — `VERSION` et `Cargo.toml` ne
-  contiennent jamais ce suffixe, dans aucun scénario testé. Message de
-  succès de `build-rpm.sh` enrichi d'une note explicite là-dessus, pour
-  que ça ne reste plus jamais ambigu.
+- **Real bug reported by a user**: `VERSION` (and `Cargo.toml`)
+  was never updated during builds, without any visible error message.
+  Cause found by actually running the scripts (with a fake `fpm` to work around the
+  absence of `rubygems.org` in this sandbox) rather than only re-reading
+  them: the confirmation prompt `read -p "Construire ? [o/N]"` existed **even** when an
+  explicit version flag (`--patch` etc.) had already been passed. In any
+  context without an interactive terminal attached to standard input (launched
+  from a script, a tool, an automation), `read` receives an immediate EOF
+  — and with `set -e` at the top of the script, that killed the script
+  instantly, **before even compiling**, without any message,
+  leaving `VERSION`/`Cargo.toml` unchanged. Reproduced and confirmed
+  precisely before fixing (`bash build-deb.sh --patch < /dev/null`
+  → exit code 1, no output).
+  - `build-deb.sh` and `build-rpm.sh` now detect whether standard input
+    is a real terminal (`[ -t 0 ]`). Without a terminal AND without a
+    version flag → clear error message asking for one,
+    instead of a hang or a silent death. Without a terminal BUT
+    with a flag already provided → automatic confirmation (the flag already
+    expresses the intent), with an explicit message saying that this
+    happened.
+  - New `--yes`/`-y` flag to skip the confirmation explicitly,
+    even in an interactive session.
+  - Re-verified after the fix, in both scripts, on the four
+    scenarios: flag + no terminal (works now), no
+    flag + no terminal (fails cleanly with a clear message),
+    explicit `--yes`, and the existing rollback in case of `fpm` failure
+    (still intact, not affected by this fix).
 
-### Corrigé
+### Fixed
 
-- **Bug réel signalé par un utilisateur** : `VERSION` (et `Cargo.toml`)
-  n'était jamais mis à jour lors des builds, sans message d'erreur
-  visible. Cause trouvée en exécutant réellement les scripts (avec un
-  faux `fpm` pour contourner l'absence de `rubygems.org` dans ce
-  sandbox) plutôt qu'en les relisant seulement : l'invite de
-  confirmation `read -p "Construire ? [o/N]"` existait **même** quand un
-  flag de version explicite (`--patch` etc.) était déjà passé. Dans tout
-  contexte sans terminal interactif attaché à l'entrée standard (lancé
-  depuis un script, un outil, une automatisation), `read` reçoit un EOF
-  immédiat — et avec `set -e` en tête de script, ça tuait le script
-  instantanément, **avant même la compilation**, sans aucun message,
-  laissant `VERSION`/`Cargo.toml` inchangés. Reproduit et confirmé
-  précisément avant de corriger (`bash build-deb.sh --patch < /dev/null`
-  → code de sortie 1, aucune sortie).
-  - `build-deb.sh` et `build-rpm.sh` détectent maintenant si l'entrée
-    standard est un vrai terminal (`[ -t 0 ]`). Sans terminal ET sans
-    flag de version → message d'erreur clair demandant d'en passer un,
-    au lieu d'un blocage ou d'une mort silencieuse. Sans terminal MAIS
-    avec un flag déjà fourni → confirmation automatique (le flag exprime
-    déjà l'intention), avec un message explicite indiquant que c'est
-    arrivé.
-  - Nouveau flag `--yes`/`-y` pour sauter la confirmation explicitement,
-    même en session interactive.
-  - Revérifié après correction, dans les deux scripts, sur les quatre
-    scénarios : flag + pas de terminal (fonctionne maintenant), aucun
-    flag + pas de terminal (échoue proprement avec message clair),
-    `--yes` explicite, et le rollback existant en cas d'échec de `fpm`
-    (toujours intact, non affecté par ce correctif).
+- **virtualization** module: display precision of storage. A
+  small-but-real allocation (e.g. a freshly created qcow2 disk)
+  was visually rounded to "0.0 GB" with a single digit after the
+  decimal point, indistinguishable from a real read failure — reported as a bug
+  by a user. New adaptive-unit formatter (GB → MB →
+  KB depending on magnitude) rather than a simple fixed `{:.1} GB`. Investigated
+  in depth before fixing: `virsh domblkinfo` with `target`
+  (`vda`) vs `source` (full host path) as the identifier actually give the
+  **same result** in this version of libvirt (10.0.0,
+  tested against a real domain with a real qcow2 disk, `libvirtd`
+  daemon launched manually in this sandbox) — so the exact symptom
+  reported could not be reproduced identically. Switched to
+  `target` anyway for robustness (recommended by the official libvirt
+  examples, also works for pool-based storage such as
+  `virt-manager` creates by default, unlike
+  `source` which may not be a direct file path in that case).
 
-### Corrigé
+### Added
 
-- Module **virtualization** : précision d'affichage du stockage. Un
-  petit-mais-réel allocation (ex. un disque qcow2 fraîchement créé)
-  s'arrondissait visuellement à "0.0 GB" avec un seul chiffre après la
-  virgule, indistinguable d'un vrai échec de lecture — signalé comme bug
-  par un utilisateur. Nouveau formateur à unité adaptative (GB → MB →
-  KB selon la magnitude) plutôt qu'un simple `{:.1} GB` fixe. Investigué
-  en profondeur avant de corriger : `virsh domblkinfo` avec `target`
-  (`vda`) vs `source` (chemin hôte complet) comme identifiant donnent en
-  fait le **même résultat** dans cette version de libvirt (10.0.0,
-  testé contre un vrai domaine avec un vrai disque qcow2, démon
-  `libvirtd` lancé manuellement dans ce sandbox) — donc le symptôme
-  exact rapporté n'a pas pu être reproduit à l'identique. Basculé vers
-  `target` quand même par robustesse (recommandé par les exemples
-  officiels libvirt, fonctionne aussi pour du stockage basé sur des
-  pools comme `virt-manager` en crée par défaut, contrairement à
-  `source` qui peut ne pas être un chemin de fichier direct dans ce cas).
+- **virtualization** module: per-VM detail greatly enriched, verified with
+  a real `libvirtd` launched manually in this sandbox (no `/dev/kvm`
+  available here, so starting is impossible, but domain definition,
+  `domblklist`, `domblkinfo`, `domiflist` all tested against a real
+  inactive domain).
+  - **CPU pinning + NUMA node integrated per group**: instead of a NUMA
+    summary separate from the aggregate, each pinning group shows
+    its node directly ("vCPUs 0-1: host 0-3 (NUMA node 0)").
+  - **Cross-check with the host's isolated CPUs**: reuses
+    `cpu::collect::collect().all_isolated_cpus()` — indicates whether the pinned
+    vCPUs fall on CPUs reserved/isolated from the general scheduler,
+    not only which ones.
+  - **PCI hardware descriptions** (`lspci -s <address>`): each
+    passthrough/SR-IOV device now shows which hardware
+    it corresponds to, not only its address. Trap handled: a
+    valid but absent address gives an empty output with exit code 0,
+    not an error — verified empirically.
+  - **Guest-internal memory statistics** (`virsh dommemstat`,
+    format confirmed through 4 concordant sources): percentage really used
+    by the guest operating system, with an explicit warning
+    when the "unused" value is 0 (it may be a real zero
+    or a balloon driver without periodic collection enabled — the two
+    are indistinguishable from that single piece of data).
+  - **Approximate CPU usage**: delta between two `virsh dominfo`
+    samples taken before/after the rest of the enrichment of
+    that VM (not a dedicated pause — the word "approximate" in the
+    text honestly reflects a short and variable sampling window, not
+    a precise measurement over a fixed duration like the one in the TUI header).
+  - **Network interfaces** (`virsh domiflist`, much simpler than
+    re-parsing XML — directly gives type/source/model/MAC
+    in columns): type, source, model. No invented "speed" for
+    paravirtualized NICs (virtio has no fixed throughput) — instead,
+    an honest note on what each common model implies.
+  - Cost to know about: about 10 additional `virsh`/`lspci` calls
+    per VM from now on — significant for a host with several VMs,
+    still in the "full scan, not continuous refresh" spirit
+    of the rest of the tool.
 
-### Ajouté
+### Added
 
-- Module **virtualization** : détail par VM très enrichi, vérifié avec
-  un vrai `libvirtd` lancé manuellement dans ce sandbox (aucun `/dev/kvm`
-  disponible ici, donc démarrage impossible, mais définition de domaine,
-  `domblklist`, `domblkinfo`, `domiflist` tous testés contre un domaine
-  inactif réel).
-  - **CPU pinning + nœud NUMA intégré par groupe** : au lieu d'un résumé
-    NUMA séparé de l'agrégat, chaque groupe de pinning affiche
-    directement son nœud ("vCPUs 0-1: host 0-3 (NUMA node 0)").
-  - **Croisement avec les CPUs isolés de l'hôte** : réutilise
-    `cpu::collect::collect().all_isolated_cpus()` — indique si les vCPUs
-    épinglées tombent sur des CPUs réservés/isolés du scheduler général,
-    pas seulement lesquelles.
-  - **Descriptions matérielles PCI** (`lspci -s <adresse>`) : chaque
-    périphérique passthrough/SR-IOV affiche maintenant à quel matériel
-    il correspond, pas seulement son adresse. Piège géré : une adresse
-    valide mais absente donne une sortie vide avec un code de sortie 0,
-    pas une erreur — vérifié empiriquement.
-  - **Statistiques mémoire internes à l'invité** (`virsh dommemstat`,
-    format confirmé via 4 sources concordantes) : pourcentage utilisé
-    réellement par le système d'exploitation invité, avec mise en garde
-    explicite quand la valeur "unused" est à 0 (peut être un vrai zéro
-    ou un pilote de ballon sans collecte périodique activée — les deux
-    sont indiscernables depuis cette seule donnée).
-  - **Utilisation CPU approximative** : delta entre deux échantillons
-    `virsh dominfo` pris avant/après le reste de l'enrichissement de
-    cette VM (pas une pause dédiée — le mot "approximative" dans le
-    texte reflète honnêtement une fenêtre d'échantillonnage courte et
-    variable, pas une mesure précise sur durée fixe comme celle de
-    l'en-tête TUI).
-  - **Interfaces réseau** (`virsh domiflist`, bien plus simple qu'un
-    reparsing XML — donne directement type/source/modèle/MAC en
-    colonnes) : type, source, modèle. Pas de "vitesse" inventée pour les
-    NICs paravirtualisées (virtio n'a pas de débit fixe) — à la place,
-    une note honnête sur ce qu'implique chaque modèle courant.
-  - Coût à connaître : environ 10 appels `virsh`/`lspci` supplémentaires
-    par VM désormais — significatif pour un hôte avec plusieurs VMs,
-    toujours dans l'esprit "scan complet, pas rafraîchissement continu"
-    du reste de l'outil.
+- **virtualization** module: per-VM detail enriched further — CPU pinning
+  to the effective NUMA nodes, configured NUMA policy, passthrough/SR-IOV
+  devices.
+  - **Effective NUMA nodes**: derived data, not directly provided
+    by `virsh` — cross-checks the vCPU pinning (`virsh vcpupin`) with the
+    host's real NUMA topology (`/sys/devices/system/node/*/
+    cpulist`, read directly, without going through the module NUMA's full
+    pipeline — same principle as `live_stats.rs`). Reuses the
+    `parse_cpu_list` already shared between the CPU and NUMA modules rather than
+    duplicating a third one.
+  - **Configured NUMA policy** (`virsh numatune`): mode and nodeset
+    explicitly defined, distinct from the computation above (one is the
+    configured policy, the other is where the vCPUs actually run
+    once pinned). Honestly stays `None` when nothing is
+    configured rather than guessing a default value.
+  - **Passthrough/SR-IOV devices** (`virsh dumpxml`): two distinct XML
+    forms handled separately, confirmed by the official libvirt
+    documentation and real examples — `<hostdev type='pci'>`
+    for generic passthrough (GPU, etc.) and
+    `<interface type='hostdev'>` specifically for network SR-IOV VFs
+    (with the MAC address). Parsed via a small state machine
+    targeted at the output format of `virsh dumpxml` — not a general
+    XML parser — with a trap handled explicitly: the `<mac>` element
+    appears *after* the closing of `<source>` in document order, so it is
+    captured pending until the block closes
+    rather than at the time of reading the PCI address.
+  - PCI addresses accepted in hexadecimal (`0x06`) or decimal (`11`)
+    depending on the XML form encountered — both exist in real
+    examples of the documentation.
 
-### Ajouté
+### Added
 
-- Module **virtualization** : détail par VM encore enrichi — pinning CPU
-  vers les nœuds NUMA effectifs, politique NUMA configurée, périphériques
-  en passthrough/SR-IOV.
-  - **Nœuds NUMA effectifs** : donnée dérivée, pas directement fournie
-    par `virsh` — croise le pinning vCPU (`virsh vcpupin`) avec la
-    topologie NUMA réelle de l'hôte (`/sys/devices/system/node/*/
-    cpulist`, lue directement, sans passer par le pipeline complet du
-    module NUMA — même principe que `live_stats.rs`). Réutilise le
-    `parse_cpu_list` déjà partagé entre les modules CPU et NUMA plutôt
-    que d'en dupliquer un troisième.
-  - **Politique NUMA configurée** (`virsh numatune`) : mode et nodeset
-    explicitement définis, distinct du calcul ci-dessus (l'un est la
-    politique configurée, l'autre est où les vCPUs tournent réellement
-    une fois épinglées). Reste honnêtement `None` quand rien n'est
-    configuré plutôt que de deviner une valeur par défaut.
-  - **Périphériques passthrough/SR-IOV** (`virsh dumpxml`) : deux formes
-    XML distinctes gérées séparément, confirmées par la documentation
-    officielle libvirt et des exemples réels — `<hostdev type='pci'>`
-    pour le passthrough générique (GPU, etc.) et
-    `<interface type='hostdev'>` spécifiquement pour les VFs SR-IOV
-    réseau (avec l'adresse MAC). Parsé via une petite machine à états
-    ciblée sur le format de sortie de `virsh dumpxml` — pas un parseur
-    XML général — avec un piège géré explicitement : l'élément `<mac>`
-    apparaît *après* la fermeture de `<source>` dans l'ordre du
-    document, donc capturé en attente jusqu'à la fermeture du bloc
-    plutôt qu'au moment de lire l'adresse PCI.
-  - Adresses PCI acceptées en hexadécimal (`0x06`) ou décimal (`11`)
-    selon la forme XML rencontrée — les deux existent dans des exemples
-    réels de la documentation.
+- TUI: live header, progress screen at startup, manual refresh
+  — three related requests, one single coherent rework.
+  - **Real-time header**: a second line shows CPU%, Mem%
+    (used/total in GB) and disk space of `/` (`%`), refreshed
+    automatically about once a second as long as the TUI is
+    open — without any user action. Color codes (green/yellow/
+    red according to 70%/90% thresholds). CPU% is computed as a delta between
+    two reads of `/proc/stat` (standard technique on Linux — a
+    single read gives no "instantaneous usage %", only
+    cumulative counters since boot), so it shows "…" until a
+    second sample is available (~1s after opening).
+    New `output/live_stats.rs` module, deliberately separate from the
+    diagnostic `Module` pipeline — these are display gauges,
+    not findings with evidence/explanation/recommendation, and
+    rerunning them entirely at every tick (including the per-disk `smartctl`
+    calls) would be both useless and far too slow for a
+    once-a-second refresh.
+  - **Progress screen**: at launch, a centered gauge shows
+    which module is being scanned and how far along we are (N/total) —
+    important for a scan with a slower module (`smartctl` per
+    disk in Storage, `virsh`/`docker` in Virtualization) which
+    could previously give the impression of a frozen terminal.
+  - **Manual refresh (`r`)**: reruns the full module pipeline
+    without quitting the program, with the same progress screen.
+    The current module selection is preserved if it still exists
+    in the new data. The "findings from Ns ago" counter in the
+    header explicitly distinguishes the freshness of the two types of
+    data: the header gauges are always up to date, the findings
+    shown date from the last scan/refresh.
+  - **Necessary architecture change**: `TuiApp` now owns
+    its `Report` directly (instead of borrowing it) — without
+    that, it is impossible to replace it during a refresh. This
+    changed the signature of several internal methods (they return owned
+    `String`s rather than borrowed `&str`) to avoid a
+    borrow conflict with `ratatui`'s mutable `ListState`s.
+    `core::engine::run_audit()` stays unchanged for the non-interactive
+    `audit` command; a new `run_audit_with_progress()` accepts a
+    progress callback, used only by the TUI.
+  - **Verified with a real pseudo-terminal** (`tmux`, not only the
+    headless `TestBackend` rendering): progress screen captured in the middle of a real
+    scan, header confirmed live over several seconds (CPU% resolves
+    after the second tick, age counter increments), `r` key
+    confirmed triggering a real new scan with preservation of
+    the selection, clean exit with `q`.
 
-### Ajouté
+### Fixed
 
-- TUI : en-tête vivant, écran de progression au démarrage, rafraîchissement
-  manuel — trois demandes liées, une seule refonte cohérente.
-  - **En-tête en temps réel** : une deuxième ligne affiche CPU%, Mem%
-    (utilisée/totale en GB) et espace disque de `/` (`%`), rafraîchie
-    automatiquement environ une fois par seconde tant que le TUI est
-    ouvert — sans action de l'utilisateur. Codes couleur (vert/jaune/
-    rouge selon des seuils 70%/90%). Le CPU% est calculé par delta entre
-    deux lectures de `/proc/stat` (technique standard sous Linux — une
-    seule lecture ne donne pas de "% d'usage instantané", seulement des
-    compteurs cumulés depuis le boot), donc affiche "…" le temps qu'un
-    deuxième échantillon soit disponible (~1s après l'ouverture).
-    Nouveau module `output/live_stats.rs`, délibérément séparé du
-    pipeline des `Module` de diagnostic — ce sont des jauges d'affichage,
-    pas des findings avec preuve/explication/recommandation, et les
-    relancer en entier à chaque tick (y compris les appels `smartctl`
-    par disque) serait à la fois inutile et bien trop lent pour un
-    rafraîchissement à la seconde.
-  - **Écran de progression** : au lancement, une jauge centrée affiche
-    quel module est en cours de scan et où on en est (N/total) —
-    important pour un scan avec un module plus lent (`smartctl` par
-    disque dans Storage, `virsh`/`docker` dans Virtualization) qui
-    pouvait auparavant donner l'impression d'un terminal figé.
-  - **Rafraîchissement manuel (`r`)** : relance le pipeline complet des
-    modules sans quitter le programme, avec le même écran de progression.
-    La sélection de module courante est préservée si elle existe encore
-    dans les nouvelles données. Le compteur "findings from Ns ago" dans
-    l'en-tête distingue explicitement la fraîcheur des deux types de
-    données : les jauges de l'en-tête sont toujours à jour, les findings
-    affichés datent du dernier scan/rafraîchissement.
-  - **Changement d'architecture nécessaire** : `TuiApp` possède
-    maintenant son `Report` directement (au lieu de l'emprunter) — sans
-    ça, impossible de le remplacer lors d'un rafraîchissement. Ça a
-    changé la signature de plusieurs méthodes internes (retournent des
-    `String`s possédées plutôt que des `&str` empruntés) pour éviter un
-    conflit d'emprunt avec les `ListState` mutables de `ratatui`.
-    `core::engine::run_audit()` reste inchangé pour la commande `audit`
-    non-interactive ; un nouveau `run_audit_with_progress()` accepte un
-    callback de progression, utilisé uniquement par le TUI.
-  - **Vérifié avec un vrai pseudo-terminal** (`tmux`, pas seulement le
-    rendu headless `TestBackend`) : écran de progression capturé en plein
-    scan réel, en-tête confirmé vivant sur plusieurs secondes (CPU% se
-    résout après le deuxième tick, compteur d'âge incrémente), touche
-    `r` confirmée déclenchant un vrai nouveau scan avec préservation de
-    la sélection, sortie propre par `q`.
+- **Real bug reported by a user**: on a system with a French
+  locale, `virsh dominfo` came back with `state: unknown` for
+  **all** VMs (including running ones), and the summary
+  displayed "0 currently running" despite active VMs. Cause: `virsh`
+  translates its field labels via gettext (`State:` becomes
+  something else depending on the locale), and the parser looked for the exact
+  English string. Fix: new shared utility
+  `core::command::command()` which forces `LC_ALL=C`/`LANG=C` on **all**
+  subprocess calls of the project (not only `virsh`) — these
+  are not just unset variables, they explicitly override the
+  inheritance of the parent environment (verified: launching
+  `linuxdoctor` itself under `LC_ALL=fr_FR.UTF-8` still produces
+  `virsh`/`docker` error messages in English). Exact reproduction of the
+  mechanism not confirmed in this sandbox (Ubuntu's minimal `libvirt-l10n`
+  package installs no real translation file — verified
+  by comparing `virsh` under the C locale and under a manually generated
+  `fr_FR.UTF-8`), so honestly treated as "most likely cause,
+  fixed by a standard defensive practice" rather than "100%
+  confirmed cause".
 
-### Corrigé
+### Added
 
-- **Bug réel signalé par un utilisateur** : sur un système en locale
-  française, `virsh dominfo` remontait un `state: unknown` pour
-  **toutes** les VMs (y compris celles en fonctionnement), et le résumé
-  affichait "0 currently running" malgré des VMs actives. Cause : `virsh`
-  traduit ses libellés de champs via gettext (`State:` devient autre
-  chose selon la locale), et le parseur cherchait la chaîne anglaise
-  exacte. Correctif : nouvel utilitaire partagé
-  `core::command::command()` qui force `LC_ALL=C`/`LANG=C` sur **tous**
-  les appels de sous-processus du projet (pas seulement `virsh`) — ce
-  ne sont pas juste des variables non définies, elles écrasent
-  explicitement l'héritage de l'environnement parent (vérifié : lancer
-  `linuxdoctor` lui-même sous `LC_ALL=fr_FR.UTF-8` produit toujours des
-  messages d'erreur `virsh`/`docker` en anglais). Reproduction exacte du
-  mécanisme non confirmée dans ce sandbox (le paquet `libvirt-l10n`
-  d'Ubuntu minimal n'installe aucun fichier de traduction réel — vérifié
-  en comparant `virsh` sous locale C et sous `fr_FR.UTF-8` généré
-  manuellement), donc traité honnêtement comme "cause la plus probable,
-  corrigée par une pratique défensive standard" plutôt que "cause
-  confirmée à 100%".
+- **virtualization** module: per-VM detail enriched.
+  - vCPU pinning (`virsh vcpupin`, format confirmed via `virsh help` and
+    real captures from the libvirt/Red Hat documentation, not
+    guessed) — which host CPUs each vCPU may use, grouped for
+    readability ("vCPUs 0-1: host 0-3; vCPUs 2-3: host 4-7").
+  - Storage per VM (`virsh domblklist --details` + `domblkinfo`) — per
+    disk: configured capacity and space actually allocated on
+    the host (the data that matters for a "thin-provisioned" format
+    like qcow2). Empty CD-ROM drives are excluded. Correction made along
+    the way: I had wrongly assumed a `--bytes` flag
+    for `domblkinfo` by analogy with `domblkstat` — verified via
+    `virsh help domblkinfo` that this flag does not exist, fixed before
+    delivering.
 
-### Ajouté
+### Added
 
-- Module **virtualization** : détail par VM enrichi.
-  - Épinglage vCPU (`virsh vcpupin`, format confirmé via `virsh help` et
-    des captures réelles de la documentation libvirt/Red Hat, pas
-    deviné) — quels CPUs hôtes chaque vCPU peut utiliser, regroupé pour
-    la lisibilité ("vCPUs 0-1: host 0-3; vCPUs 2-3: host 4-7").
-  - Stockage par VM (`virsh domblklist --details` + `domblkinfo`) — par
-    disque : capacité configurée et espace réellement alloué sur
-    l'hôte (la donnée qui compte pour un format "thin-provisionné"
-    comme qcow2). Les lecteurs CD-ROM vides sont exclus. Correction en
-    cours de route : j'avais supposé par erreur un drapeau `--bytes`
-    pour `domblkinfo` par analogie avec `domblkstat` — vérifié via
-    `virsh help domblkinfo` que ce drapeau n'existe pas, corrigé avant
-    de livrer.
+- **virtualization** module enriched: host-side inventory, in addition to the
+  guest-side detection (`VIRT001`, unchanged). Important distinction:
+  `VIRT001` answers "what is this machine running in", these new
+  checks answer "what does this machine host".
+  - `VIRT002`/`VIRT003` (VMs, via `virsh`): summary always present
+    (`VIRT002`) + one finding per VM (`VIRT003`, in a dedicated submenu).
+    Three-level state, not a simple boolean: `virsh` absent, `virsh`
+    present but hypervisor unreachable (no `libvirtd`, or no
+    permission — behavior verified empirically: `virsh list --all`
+    exits with code 1 and `"failed to connect to the hypervisor"`), or
+    available. Per VM: state, vCPUs, configured max memory, memory
+    actually used (only if running — otherwise
+    `virsh dominfo` reflects the balloon target, not a real usage).
+  - `VIRT004`/`VIRT005` (containers, via `docker` then `podman` as a fallback)
+    : same summary + per-container detail structure. Uses `.State`
+    (simple word: `running`/`exited`) rather than `.Status` (human text)
+    to determine the state, with live CPU/memory consumption
+    (`docker stats --no-stream`) for running containers.
+  - **Verified against real tools, not only fixtures**:
+    `virsh` and `docker` really installed in this sandbox
+    (`libvirt-clients`, `docker.io` via apt), `dockerd` launched
+    manually, a minimal image built from a static busybox
+    (import without network, the Docker Hub pull being blocked by the
+    network allowlist), two real containers created (one
+    running, one stopped). The compiled `linuxdoctor` binary
+    ran against this real daemon and reported the real live
+    resource statistics. The "tool installed but daemon unreachable" case
+    was also confirmed for real for `virsh` and `docker`, with the exact error
+    messages captured.
+  - Measured cost: +75-110ms on this sandbox (several
+    `virsh`/`docker`/`podman` calls, including connection attempts to a
+    missing socket) — well within the <2s target, but a real cost
+    to know about on a host where the module runs frequently.
 
-### Ajouté
+### Added
 
-- Module **virtualization** enrichi : inventaire côté hôte, en plus de la
-  détection côté invité (`VIRT001`, inchangée). Distinction importante :
-  `VIRT001` répond "dans quoi cette machine tourne-t-elle", ces nouveaux
-  checks répondent "qu'est-ce que cette machine héberge".
-  - `VIRT002`/`VIRT003` (VMs, via `virsh`) : résumé toujours présent
-    (`VIRT002`) + un finding par VM (`VIRT003`, dans un sous-menu dédié).
-    État à trois niveaux, pas un simple booléen : `virsh` absent, `virsh`
-    présent mais hyperviseur injoignable (aucun `libvirtd`, ou pas de
-    permission — comportement vérifié empiriquement : `virsh list --all`
-    sort en code 1 avec `"failed to connect to the hypervisor"`), ou
-    disponible. Par VM : état, vCPUs, mémoire max configurée, mémoire
-    réellement utilisée (seulement si en fonctionnement — sinon
-    `virsh dominfo` reflète la cible du "balloon", pas un usage réel).
-  - `VIRT004`/`VIRT005` (conteneurs, via `docker` puis `podman` en repli)
-    : même structure résumé + détail par conteneur. Utilise `.State`
-    (mot simple : `running`/`exited`) plutôt que `.Status` (texte humain)
-    pour déterminer l'état, avec consommation CPU/mémoire en direct
-    (`docker stats --no-stream`) pour les conteneurs en fonctionnement.
-  - **Vérifié contre de vrais outils, pas seulement des fixtures** :
-    `virsh` et `docker` installés dans ce sandbox pour de vrai
-    (`libvirt-clients`, `docker.io` via apt), `dockerd` lancé
-    manuellement, une image minimale construite depuis un busybox
-    statique (import sans réseau, le pull Docker Hub étant bloqué par la
-    liste blanche réseau), deux vrais conteneurs créés (un en
-    fonctionnement, un arrêté). Le binaire `linuxdoctor` compilé a
-    tourné contre ce vrai démon et remonté les vraies statistiques de
-    ressources en direct. Le cas "outil installé mais démon injoignable"
-    a aussi été confirmé en réel pour `virsh` et `docker`, avec les
-    messages d'erreur exacts capturés.
-  - Coût mesuré : +75-110ms sur ce sandbox (plusieurs appels
-    `virsh`/`docker`/`podman`, dont des tentatives de connexion à un
-    socket absent) — largement dans la cible <2s, mais un coût réel à
-    connaître sur un hôte où le module tourne fréquemment.
+- **virtualization** module: detection of the virtualization
+  technology via `systemd-detect-virt`. Important difference from
+  the systemd/ntp modules: this tool **works without systemd
+  being PID 1** (it probes DMI/CPUID/environment markers
+  directly, no D-Bus bus to PID 1) — verified empirically on
+  this sandbox before coding, so no `is_available()` restriction.
+  Exit-code trap to note: the tool exits with a **non-zero** code
+  precisely when nothing is detected (`none`) — verified in its own
+  documentation — so standard output is captured independently of the
+  exit code, otherwise every bare-metal machine would report a
+  false collection error.
+  - `VIRT001` (always present, Info — being virtualized is neither good nor
+    bad in itself) distinguishes the four cases: bare metal, VM only,
+    container only, or nested (container on VM). Falls back to the `hypervisor` CPUID
+    flag of `/proc/cpuinfo` if the tool is not installed
+    (weaker signal: confirms hardware virtualization without
+    saying which).
+  - Verified under real conditions on this sandbox: `docker` on `kvm`
+    (real nesting, not a fixture) — correctly identified and
+    explained.
 
-### Ajouté
+### Added
 
-- Module **virtualization** : détection de la technologie de
-  virtualisation via `systemd-detect-virt`. Différence importante par
-  rapport aux modules systemd/ntp : cet outil **fonctionne sans que
-  systemd soit PID 1** (il sonde DMI/CPUID/marqueurs d'environnement
-  directement, pas de bus D-Bus vers PID 1) — vérifié empiriquement sur
-  ce sandbox avant de coder, donc pas de restriction `is_available()`.
-  Piège de code de sortie à noter : l'outil sort en code **non-zéro**
-  précisément quand rien n'est détecté (`none`) — vérifié dans sa propre
-  documentation — donc la sortie standard est capturée indépendamment du
-  code de sortie, sinon chaque machine bare-metal remonterait une
-  fausse erreur de collecte.
-  - `VIRT001` (toujours présent, Info — être virtualisé n'est ni bon ni
-    mauvais en soi) distingue les quatre cas : bare metal, VM seule,
-    conteneur seul, ou imbriqué (conteneur sur VM). Repli sur le flag
-    CPUID `hypervisor` de `/proc/cpuinfo` si l'outil n'est pas installé
-    (signal plus faible : confirme une virtualisation matérielle sans
-    dire laquelle).
-  - Vérifié en conditions réelles sur ce sandbox : `docker` sur `kvm`
-    (imbrication réelle, pas un fixture) — correctement identifié et
-    expliqué.
+- **ntp** module: clock synchronization status and mode of the
+  hardware clock (RTC), via `timedatectl show`.
+  - `NTP001` (sync status): reads `NTPSynchronized=`, which comes from the
+    `STA_UNSYNC` flag of the **kernel** itself (`adjtimex(3)`) — authoritative
+    whichever daemon is in charge (systemd-timesyncd, chrony, ntpd),
+    since they all update the same kernel state. Confidence
+    deliberately reduced (`strong_indication`, not
+    `direct_observation`) when this field indicates a problem: a Red Hat
+    support ticket confirms it is a known false negative with
+    certain chrony/ntpd configs (chrony without `rtcsync`, ntpd with
+    `-x`) that do not update this kernel flag — verified before
+    coding, not assumed.
+  - `NTP002` (RTC mode): `LocalRTC=` — an RTC in local time is not
+    a problem in itself (common setting in Windows dual-boot), so it
+    stays Info, presented as context to confirm rather than as
+    a verdict.
+  - Same availability mechanism as the systemd module
+    (`/run/systemd/system`) — `timedatectl` is part of systemd's core,
+    so it depends on the same condition.
 
-### Ajouté
+### Added
 
-- Module **ntp** : statut de synchronisation d'horloge et mode de
-  l'horloge matérielle (RTC), via `timedatectl show`.
-  - `NTP001` (statut de synchro) : lit `NTPSynchronized=`, qui vient du
-    flag `STA_UNSYNC` du **noyau** lui-même (`adjtimex(3)`) — autoritaire
-    quel que soit le démon en charge (systemd-timesyncd, chrony, ntpd),
-    puisqu'ils mettent tous à jour le même état noyau. Confiance
-    délibérément réduite (`strong_indication`, pas
-    `direct_observation`) quand ce champ indique un problème : un ticket
-    de support Red Hat confirme que c'est un faux négatif connu avec
-    certaines configs chrony/ntpd (chrony sans `rtcsync`, ntpd avec
-    `-x`) qui ne mettent pas à jour ce flag noyau — vérifié avant de
-    coder, pas supposé.
-  - `NTP002` (mode RTC) : `LocalRTC=` — RTC en heure locale n'est pas
-    en soi un problème (réglage courant en dual-boot Windows), donc
-    reste en Info, présenté comme contexte à confirmer plutôt que comme
-    un verdict.
-  - Même mécanisme de disponibilité que le module systemd
-    (`/run/systemd/system`) — `timedatectl` fait partie du cœur de
-    systemd, donc dépend de la même condition.
+- **kernel** module enriched: four new checks, always present.
+  - `KERN003` (build info): parses `/proc/version` — build user/host,
+    compiler, build tag. Trap avoided: compiler strings often contain their own nested
+    parentheses (`gcc (Ubuntu 13.2.0-...) 13.2.0`), so the parser counts
+    depth rather than naively looking for the first closing
+    parenthesis — verified both on this sandbox (custom
+    Firecracker kernel) and on an Ubuntu-style `/proc/version` example.
+  - `KERN004` (reboot required): `/var/run/reboot-required`
+    (Debian/Ubuntu convention). On the other distribution families,
+    the absence of the marker is honestly reported as "not
+    confirmed", not as "no reboot needed" — this file
+    does not exist at all elsewhere.
+  - `KERN005` (ASLR status): `kernel.randomize_va_space` — disabled
+    (0) is reported as Warning, partial (1) or full (2) stays Info.
+  - `KERN006` (notable boot parameters): targeted scan of
+    `/proc/cmdline` for `mitigations=off` (Warning — disables the
+    Spectre/Meltdown mitigations), `nomodeset`, single/emergency mode.
+    Not an exhaustive command-line linter, just a few well-chosen
+    signals.
 
-### Ajouté
+### Added
 
-- Module **kernel** enrichi : quatre nouveaux checks, toujours présents.
-  - `KERN003` (infos de build) : parse `/proc/version` — utilisateur/hôte
-    de build, compilateur, tag de build. Piège évité : les chaînes de
-    compilateur contiennent souvent leurs propres parenthèses imbriquées
-    (`gcc (Ubuntu 13.2.0-...) 13.2.0`), donc le parseur compte la
-    profondeur plutôt que de chercher naïvement la première parenthèse
-    fermante — vérifié à la fois sur ce sandbox (noyau Firecracker
-    personnalisé) et sur un exemple `/proc/version` de style Ubuntu.
-  - `KERN004` (reboot requis) : `/var/run/reboot-required`
-    (convention Debian/Ubuntu). Sur les autres familles de distributions,
-    l'absence du marqueur est rapportée honnêtement comme "non
-    confirmé", pas comme "aucun redémarrage nécessaire" — ce fichier
-    n'existe pas du tout ailleurs.
-  - `KERN005` (statut ASLR) : `kernel.randomize_va_space` — désactivé
-    (0) remonte en Warning, partiel (1) ou complet (2) reste Info.
-  - `KERN006` (paramètres de boot notables) : scan ciblé de
-    `/proc/cmdline` pour `mitigations=off` (Warning — désactive les
-    mitigations Spectre/Meltdown), `nomodeset`, mode single/emergency.
-    Pas un linter exhaustif de la ligne de commande, juste quelques
-    signaux bien choisis.
+- **kernel** module: taint status (`/proc/sys/kernel/tainted`, the 20
+  bits transcribed from the official kernel documentation —
+  https://docs.kernel.org/admin-guide/tainted-kernels.html — not
+  assumed) and history of OOM kills (via `dmesg`, degrades
+  cleanly if access is denied — `kernel.dmesg_restrict` often
+  limits this to root). `KERN001` combines all the active bits into a single
+  finding (these are heterogeneous conditions, not a list of
+  similar instances like sockets or filesystems).
+  Severity at the worst active signal (e.g. a Machine Check Exception or a
+  soft lockup outweigh a simple proprietary module loaded, which is
+  common and harmless).
 
-### Ajouté
+### Fixed
 
-- Module **kernel** : statut de taint (`/proc/sys/kernel/tainted`, les 20
-  bits transcrits depuis la documentation officielle du noyau —
-  https://docs.kernel.org/admin-guide/tainted-kernels.html — pas
-  supposés) et historique des kills OOM (via `dmesg`, se dégrade
-  proprement si l'accès est refusé — `kernel.dmesg_restrict` limite
-  souvent ça à root). `KERN001` combine tous les bits actifs en un seul
-  finding (ce sont des conditions hétérogènes, pas une liste
-  d'instances similaires comme des sockets ou des systèmes de fichiers).
-  Sévérité au pire signal actif (ex. une Machine Check Exception ou un
-  soft lockup priment sur un simple module propriétaire chargé, qui est
-  courant et anodin).
+- **network** module: `NET002` treated the RX/TX loss rate as a
+  reliable signal without taking SR-IOV into account. On an interface with
+  active VFs, traffic steered by the hardware to a VF may be
+  counted in the physical function's `rx_dropped` without indicating a
+  real cable/duplex problem — documented phenomenon (reported even
+  by an Intel engineer on i40e). Detection via
+  `/sys/class/net/<iface>/device/sriov_numvfs` (standard kernel sysfs
+  interface, no pattern matching on the interface name): if
+  VFs are active, the severity goes down one level and the confidence
+  explicitly goes to "weak indication", with the context in
+  the explanation and an adapted recommendation (compare with the traffic
+  of the VF interfaces themselves rather than suspecting the cable first).
 
-### Corrigé
+### Added
 
-- Module **network** : `NET002` traitait le taux de perte RX/TX comme un
-  signal fiable sans tenir compte du SR-IOV. Sur une interface avec des
-  VFs actives, le trafic dirigé par le matériel vers une VF peut être
-  compté dans le `rx_dropped` de la fonction physique sans indiquer un
-  vrai problème de câble/duplex — phénomène documenté (rapporté y compris
-  par un ingénieur Intel sur i40e). Détection via
-  `/sys/class/net/<iface>/device/sriov_numvfs` (interface sysfs standard
-  du noyau, pas de pattern-matching sur le nom de l'interface) : si des
-  VFs sont actives, la sévérité descend d'un palier et la confiance
-  passe explicitement en "weak indication", avec le contexte dans
-  l'explication et une recommandation adaptée (comparer avec le trafic
-  des interfaces VF elles-mêmes plutôt que soupçonner le câble en premier).
+- **network** module: per-interface overview, graded error/loss rate
+  (with a minimum sample threshold — below 100 packets, a rate
+  is not statistically significant, so it is reported as Info rather than
+  risking a false alert), default gateway, DNS configuration.
+  No external command: everything comes from `/proc/net/dev`,
+  `/proc/net/route` (with decoding of the kernel's little-endian hexadecimal
+  IPv4 addresses), `/sys/class/net/*` and `/etc/resolv.conf`.
+  `NET001`/`NET002` are grouped by interface for the TUI submenu.
 
-### Ajouté
+### Added
 
-- Module **network** : aperçu par interface, taux d'erreurs/pertes gradué
-  (avec seuil d'échantillon minimum — en dessous de 100 paquets, un taux
-  n'est pas statistiquement significatif, donc rapporté en Info plutôt que
-  de risquer une fausse alerte), passerelle par défaut, configuration DNS.
-  Aucune commande externe : tout vient de `/proc/net/dev`,
-  `/proc/net/route` (avec décodage des adresses IPv4 hexadécimales
-  little-endian du noyau), `/sys/class/net/*` et `/etc/resolv.conf`.
-  `NET001`/`NET002` sont groupés par interface pour le sous-menu TUI.
+- **storage** module: SMART health per physical device, in a dedicated
+  submenu — distinct from the per-mount-point instances
+  (`STOR001`/`STOR002`), since SMART is read per device (`/dev/sda`),
+  not per mount.
+  - `STOR003` (summary, always present): number of candidate devices
+    examined (`/sys/block`, filtered of loop/ram/zram/dm/md/optical) and
+    how many support SMART. Explicitly distinguishes "smartctl not
+    installed", "no device supports SMART" and, if relevant,
+    adds a permissions hint (root is generally needed for
+    raw device access — detected via `/proc/self/status`, no
+    new dependency).
+  - `STOR004` (one per device, in the submenu): parses the JSON of
+    `smartctl -a --json=c` (`smartmontools` ≥ 7.0), handles separately the
+    ATA attributes ("big four": reallocated/pending/
+    uncorrectable sectors) and the NVMe health log (`critical_warning`,
+    `percentage_used`, `media_errors`). Severity graded on the strongest
+    signal found — an overall "PASSED" status does not prevent a
+    rise to ERROR if the individual attributes drift, since SMART's
+    PASSED/FAILED threshold is often more lax than the
+    drift of these attributes taken one by one.
 
-### Ajouté
+### Added
 
-- Module **storage** : santé SMART par périphérique physique, dans un
-  sous-menu dédié — distinct des instances par point de montage
-  (`STOR001`/`STOR002`), puisque SMART se lit par device (`/dev/sda`),
-  pas par montage.
-  - `STOR003` (résumé, toujours présent) : nombre de devices candidats
-    examinés (`/sys/block`, filtré des loop/ram/zram/dm/md/optiques) et
-    combien supportent SMART. Distingue explicitement "smartctl non
-    installé", "aucun device ne supporte SMART" et, si pertinent,
-    ajoute un indice permissions (root généralement nécessaire pour
-    l'accès brut au device — détecté via `/proc/self/status`, pas de
-    nouvelle dépendance).
-  - `STOR004` (un par device, dans le sous-menu) : parse le JSON de
-    `smartctl -a --json=c` (`smartmontools` ≥ 7.0), gère séparément les
-    attributs ATA ("big four" : secteurs réalloués/en attente/
-    non-corrigibles) et le journal santé NVMe (`critical_warning`,
-    `percentage_used`, `media_errors`). Sévérité graduée sur le signal
-    le plus fort trouvé — un statut global "PASSED" n'empêche pas une
-    remontée en ERROR si les attributs individuels dérivent, puisque le
-    seuil PASSED/FAILED de SMART est souvent plus laxiste que la
-    dérive de ces attributs pris un par un.
+- TUI: navigation submenus. Modules whose findings carry
+  2+ distinct `instance` values (CPU sockets, filesystems,
+  NUMA nodes, failed units) now display only their
+  global findings at the module level, with a prompt (`▸ N items —
+  press Enter for detail`) to reach the per-instance detail. `Enter`
+  to go in, `Esc` to go back out; `PgUp`/`PgDn` navigates the
+  active list at each level (modules, then instances once inside).
+  Below 2 instances, everything stays displayed flat as before —
+  going down into a submenu for "a single thing" would have brought
+  only friction.
+  - Generic mechanism: new `Finding.instance: Option<String>` field
+    in the canonical model — the TUI does not know which IDs are "per
+    instance" for which module, it comes entirely from the data. The modules concerned
+    (`cpu` for `CPU004`, `storage` for
+    `STOR001`/`STOR002`, `numa` for `NUMA001`, `systemd` for `SYSD002`)
+    just set `.instance(...)` on the finding builder.
 
-### Ajouté
+### Changed
 
-- TUI : sous-menus de navigation. Les modules dont les findings portent
-  2+ valeurs `instance` distinctes (sockets CPU, systèmes de fichiers,
-  nœuds NUMA, unités en échec) affichent désormais uniquement leurs
-  findings globaux au niveau module, avec une invite (`▸ N items —
-  press Enter for detail`) pour accéder au détail par instance. `Entrée`
-  pour entrer, `Échap` pour ressortir ; `PgUp`/`PgDn` navigue la liste
-  active à chaque niveau (modules, puis instances une fois entré).
-  En dessous de 2 instances, tout reste affiché à plat comme avant —
-  descendre dans un sous-menu pour "une seule chose" n'aurait apporté
-  que de la friction.
-  - Mécanisme générique : nouveau champ `Finding.instance: Option<String>`
-    dans le modèle canonique — le TUI ne connaît pas quels IDs sont "par
-    instance" pour quel module, ça vient entièrement des données. Les
-    modules concernés (`cpu` pour `CPU004`, `storage` pour
-    `STOR001`/`STOR002`, `numa` pour `NUMA001`, `systemd` pour `SYSD002`)
-    posent juste `.instance(...)` sur le finding builder.
+- TUI: navigation reversed — PgUp/PgDn now change module,
+  ↑/↓ (and `j`/`k`, moved along with the arrows) scroll the detail
+  panel. Scrolling also goes from 5 lines per press to 1 line,
+  better suited to arrow keys (PgUp/PgDn no longer have a scrolling
+  role, so there is no need for a big jump).
 
-### Modifié
+### Added
 
-- TUI : navigation inversée — PgUp/PgDn changent maintenant de module,
-  ↑/↓ (et `j`/`k`, déplacés avec les flèches) défilent le panneau de
-  détail. Le défilement passe aussi de 5 lignes par pression à 1 ligne,
-  plus adapté à des touches fléchées (PgUp/PgDn n'ont plus de rôle de
-  défilement, donc plus besoin d'un grand saut).
-
-### Ajouté
-
-- Module **memory** : trois nouveaux checks, toujours présents.
-  - `MEM004` (Memory Usage Overview) : distingue mémoire réellement
-    utilisée (`MemTotal - MemAvailable`) du cache réclamable — répond
-    directement à la confusion classique "pourquoi `free` affiche si peu
-    de mémoire libre".
-  - `MEM005` (Dirty Page / Writeback Pressure) : compare le pourcentage
-    de pages "dirty" aux seuils **réellement configurés** du système
-    (`vm.dirty_ratio`, `vm.dirty_background_ratio` — lus, pas supposés
-    aux valeurs par défaut), avec repli honnête si le tuning par octets
-    (`vm.dirty_bytes`) est utilisé à la place (évite un faux positif sur
-    seuil à zéro).
-  - `MEM006` (Shared Memory Usage) : usage de `Shmem` (tmpfs, `/dev/shm`,
-    segments SysV/POSIX) — non réclamable comme le cache, donc surveillé
-    séparément, avec pistes de résolution concrètes (`du -sh /dev/shm`,
+- **memory** module: three new checks, always present.
+  - `MEM004` (Memory Usage Overview): distinguishes memory really
+    used (`MemTotal - MemAvailable`) from reclaimable cache — answers
+    directly the classic confusion "why does `free` show so little
+    free memory".
+  - `MEM005` (Dirty Page / Writeback Pressure): compares the percentage
+    of "dirty" pages with the system's **actually configured** thresholds
+    (`vm.dirty_ratio`, `vm.dirty_background_ratio` — read, not assumed
+    at the default values), with an honest fallback if byte-based tuning
+    (`vm.dirty_bytes`) is used instead (avoids a false positive on a
+    zero threshold).
+  - `MEM006` (Shared Memory Usage): usage of `Shmem` (tmpfs, `/dev/shm`,
+    SysV/POSIX segments) — not reclaimable like cache, so monitored
+    separately, with concrete leads for resolution (`du -sh /dev/shm`,
     `ipcs -m`, `df -h -t tmpfs`).
-  - `MEM002` enrichi : croise le `vm.swappiness` configuré avec l'usage
-    swap observé — un swappiness bas (≤10) qui swap quand même est un
-    signal plus fort qu'à la valeur par défaut.
+  - `MEM002` enriched: cross-checks the configured `vm.swappiness` with the
+    observed swap usage — a low swappiness (≤10) that swaps anyway is a
+    stronger signal than at the default value.
 
-### Ajouté
+### Added
 
-- Module **numa** : mécanisme de comparaison automatique de la topologie.
-  - `NUMA002` (renommé "Memory Balance Across Nodes") est maintenant
-    **toujours** présent dès 2 nœuds — avant, il ne s'affichait que si un
-    déséquilibre était détecté, ce qui rendait son absence ambiguë (même
-    leçon que `CPU005`).
-  - `NUMA003` (nouveau) : comparaison **structurelle** de la topologie —
-    nombre de CPUs et capacité mémoire par nœud, distincte de l'usage
-    (`NUMA002`). Détecte les nœuds sans mémoire locale (nœuds de calcul
-    purs, ex. associés à un accélérateur), les nœuds sans CPU (nœuds
-    mémoire pure), et les asymétries de capacité (ratio ≥ 2×). Chaque
-    déséquilibre détecté est accompagné d'une recommandation concrète
+- **numa** module: automatic topology comparison mechanism.
+  - `NUMA002` (renamed "Memory Balance Across Nodes") is now
+    **always** present from 2 nodes — before, it only showed if an
+    imbalance was detected, which made its absence ambiguous (same
+    lesson as `CPU005`).
+  - `NUMA003` (new): **structural** comparison of the topology —
+    number of CPUs and memory capacity per node, distinct from usage
+    (`NUMA002`). Detects nodes without local memory (pure compute
+    nodes, e.g. tied to an accelerator), nodes without CPUs (pure
+    memory nodes), and capacity asymmetries (ratio ≥ 2×). Each
+    detected imbalance comes with a concrete recommendation
     (`numactl --hardware`, `--cpunodebind`/`--membind`).
 
-- Module **systemd** : état système global (`systemctl is-system-running`)
-  et un finding par unité en échec (`systemctl --failed`). Deuxième
-  module à utiliser `is_available()` — vérifie `/run/systemd/system`
-  (le marqueur standard utilisé par `sd_booted()` de libsystemd), pas
-  seulement la présence du binaire `systemctl` (qui peut être installé
-  sans que systemd soit le PID 1, comme dans ce sandbox de développement).
-  `SYSD001` est toujours présent, même système sain — même principe que
+- **systemd** module: global system state (`systemctl is-system-running`)
+  and one finding per failed unit (`systemctl --failed`). Second
+  module to use `is_available()` — checks `/run/systemd/system`
+  (the standard marker used by libsystemd's `sd_booted()`), not
+  only the presence of the `systemctl` binary (which can be installed
+  without systemd being PID 1, as in this development sandbox).
+  `SYSD001` is always present, even on a healthy system — same principle as
   `CPU005`.
-- Module **numa** : un finding par nœud NUMA (CPUs, mémoire), détection de
-  déséquilibre mémoire entre nœuds (`NUMA002`). Premier module à utiliser
-  `is_available()` — se désactive proprement sur un système sans NUMA.
-- Module **cpu** : refonte complète pour les machines multi-sockets.
-  `/proc/cpuinfo` est maintenant entièrement parsé (pas seulement la
-  première ligne `model name`) et regroupé par socket physique.
-  - `CPU001` (vue d'ensemble machine) et `CPU004` (détail par socket,
-    un finding par socket) remplacent l'ancien finding agrégé unique.
-  - `CPU004` indique, pour chaque socket, les cœurs disponibles et ceux
-    isolés du planificateur — pas seulement un total machine.
-  - `CPU005` lit maintenant **quatre** mécanismes distincts d'isolation :
+- **numa** module: one finding per NUMA node (CPUs, memory), detection of
+  memory imbalance between nodes (`NUMA002`). First module to use
+  `is_available()` — disables itself cleanly on a system without NUMA.
+- **cpu** module: complete rework for multi-socket machines.
+  `/proc/cpuinfo` is now fully parsed (not only the
+  first `model name` line) and grouped by physical socket.
+  - `CPU001` (machine overview) and `CPU004` (per-socket detail,
+    one finding per socket) replace the old single aggregated finding.
+  - `CPU004` indicates, for each socket, the available cores and those
+    isolated from the scheduler — not only a machine total.
+  - `CPU005` now reads **four** distinct isolation mechanisms:
     `isolcpus=` (`/sys/devices/system/cpu/isolated`), `nohz_full=`
-    (`/sys/devices/system/cpu/nohz_full` — fichier séparé, précédemment
-    mentionné dans le texte mais jamais lu), les partitions cpuset isolées
-    cgroup v2 (`cpuset.cpus.isolated`, trouvées par parcours borné de
-    `/sys/fs/cgroup`), et — ajouté suite à un retour précis sur un cas
-    réel — la restriction de `system.slice` via `AllowedCPUs=`
+    (`/sys/devices/system/cpu/nohz_full` — separate file, previously
+    mentioned in the text but never read), the isolated cgroup v2
+    cpuset partitions (`cpuset.cpus.isolated`, found by a bounded walk of
+    `/sys/fs/cgroup`), and — added following precise feedback on a real
+    case — the restriction of `system.slice` via `AllowedCPUs=`
     (`systemctl set-property --runtime system.slice AllowedCPUs=<cpus>`,
-    une technique de hook libvirt courante pour réserver des cœurs à une
-    VM au démarrage : `cpuset.cpus.effective` de `system.slice` est
-    comparé à l'ensemble des CPUs en ligne, le complément est considéré
-    réservé).
-    `CPU005` est désormais **toujours** présent, même sans isolation
-    détectée, pour ne pas laisser croire que l'outil n'a pas vérifié. Le
-    pinning de vCPU au niveau de l'hyperviseur (`virsh vcpupin`) reste hors
-    de portée : aucune interface noyau ne l'expose côté invité, quel que
-    soit le mécanisme vérifié.
-  - `CPU006` : CPUs "possible" mais non online
-    (`/sys/devices/system/cpu/possible` diffé avec `/proc/cpuinfo`) —
-    pertinent sur une VM où l'hyperviseur annonce plus de vCPUs qu'il
-    n'en active.
-- Module **storage** : usage espace disque (`df -kPT`) et usage inodes
-  (`df -iPT`), un finding par système de fichiers réel (les
-  pseudo-systèmes de fichiers — tmpfs, proc, overlay, etc. — sont exclus),
-  4 paliers de sévérité (< 80 % / 80-89 % / 90-94 % / ≥ 95 %).
-- `ModuleError::Command`, pour les modules qui exécutent une commande
-  externe plutôt que de lire un fichier.
+    a common libvirt hook technique to reserve cores for a
+    VM at startup: the `cpuset.cpus.effective` of `system.slice` is
+    compared with the set of online CPUs, the complement is considered
+    reserved).
+    `CPU005` is now **always** present, even without isolation
+    detected, so as not to suggest that the tool did not check. The
+    vCPU pinning at hypervisor level (`virsh vcpupin`) remains out
+    of scope: no kernel interface exposes it on the guest side, whatever the
+    mechanism checked.
+  - `CPU006`: CPUs that are "possible" but not online
+    (`/sys/devices/system/cpu/possible` diffed against `/proc/cpuinfo`) —
+    relevant on a VM where the hypervisor announces more vCPUs than it
+    activates.
+- **storage** module: disk space usage (`df -kPT`) and inode usage
+  (`df -iPT`), one finding per real filesystem (pseudo-filesystems
+  — tmpfs, proc, overlay, etc. — are excluded),
+  4 severity levels (< 80% / 80-89% / 90-94% / ≥ 95%).
+- `ModuleError::Command`, for modules that run an external command
+  rather than reading a file.
 
-### Corrigé
+### Fixed
 
-- Module **storage** : les montages FUSE d'AppImage (type contenant
-  `.AppImage`, quel que soit le nom de l'application) sont maintenant
-  exclus, comme les autres pseudo-systèmes de fichiers.
-- Module **cpu** : `CPU005` ne lisait que `/sys/devices/system/cpu/isolated`
-  (`isolcpus=`) tout en prétendant couvrir `nohz_full=` dans son texte —
-  ce dernier vit dans un fichier distinct, jamais lu. Les partitions
-  cpuset isolées cgroup v2 n'étaient pas couvertes du tout. Les deux sont
-  maintenant lues ; voir "Ajouté" ci-dessus pour le détail.
+- **storage** module: AppImage FUSE mounts (type containing
+  `.AppImage`, whatever the application name) are now
+  excluded, like the other pseudo-filesystems.
+- **cpu** module: `CPU005` only read `/sys/devices/system/cpu/isolated`
+  (`isolcpus=`) while claiming in its text to cover `nohz_full=` —
+  the latter lives in a separate file, never read. The isolated cgroup v2
+  cpuset partitions were not covered at all. Both are
+  now read; see "Added" above for the detail.
 
-### Modifié
+### Changed
 
-- Ordre d'affichage des modules : memory, cpu, numa, storage (NUMA juste
-  après CPU, les deux étant liés à la topologie processeur).
+- Display order of the modules: memory, cpu, numa, storage (NUMA right
+  after CPU, the two being linked to the processor topology).
 
 ## [0.1.0] - 2026-08-04
 
-### Ajouté
+### Added
 
-- Moteur core : `Context` (lecture `/proc`, `/sys`, `/etc/os-release`), trait
-  `Module`, `engine` avec isolation des erreurs par module.
-- Modèles canoniques : `Severity` (4 niveaux), `Confidence` (%, raison),
+- Core engine: `Context` (reading `/proc`, `/sys`, `/etc/os-release`), `Module`
+  trait, `engine` with error isolation per module.
+- Canonical models: `Severity` (4 levels), `Confidence` (%, reason),
   `Category`, `Finding`.
-- Module **memory** : `vm.swappiness`, pression de swap (3 paliers), mémoire
-  critique.
-- Module **cpu** : informations CPU, pression de charge (3 paliers),
-  surcharge soutenue (fenêtres 1/5/15 min).
-- Trois sorties : terminal (couleurs ANSI), JSON, TUI interactif (ratatui).
-- 35 tests (31 unitaires + 4 d'intégration), tous fixture-driven — aucun
-  test ne dépend de l'état réel du système.
-- `PROJECT_CONTEXT.md` (vision, principes) et `ARCHITECTURE.md` (contrat
-  technique canonique).
+- **memory** module: `vm.swappiness`, swap pressure (3 levels), critical
+  memory.
+- **cpu** module: CPU information, load pressure (3 levels),
+  sustained overload (1/5/15 min windows).
+- Three outputs: terminal (ANSI colors), JSON, interactive TUI (ratatui).
+- 35 tests (31 unit + 4 integration), all fixture-driven — no
+  test depends on the real state of the system.
+- `PROJECT_CONTEXT.md` (vision, principles) and `ARCHITECTURE.md` (canonical
+  technical contract).

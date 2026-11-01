@@ -1040,10 +1040,12 @@ Neither `VERSION` nor `Cargo.toml` ever contain it.
 Both packages also install the manual page (`man linuxdoctor`) and the shell
 completions for bash, zsh and fish. The scripts generate them with the binary
 they have just compiled (see "Manual page and shell completions" above), so
-they always match that version's options.
+they always match that version's options. The documentation goes to
+`/usr/share/doc/linuxdoctor/` (README, changelog, architecture, project context, code of
+conduct, license and the `docs/` images).
 
-Before first use, edit `MAINTAINER` and `URL` at the top of each script —
-they're placeholders. Both scripts check for their required tools (`fpm`,
+`MAINTAINER` and `URL` at the top of each script are set for this repository (a fork
+that publishes its own packages edits them). Both scripts check for their required tools (`fpm`,
 `cargo`, and `dpkg-deb` or `rpmbuild` respectively) and tell you what's
 missing and how to install it if something's not found — check that
 message carefully: on a silent "no version bump happened", the far more
@@ -1095,6 +1097,7 @@ linuxdoctor/
 ├── VERSION                  # single source of truth for the version number
 ├── CHANGELOG.md              # Keep a Changelog format
 ├── CONTRIBUTING.md            # how to report bugs, add a module, code style
+├── CODE_OF_CONDUCT.md         # code of conduct (Contributor Covenant 3.0)
 ├── build-deb.sh                 # .deb packaging (fpm)
 ├── build-rpm.sh                  # .rpm packaging (fpm)
 ├── Cargo.toml
@@ -1207,6 +1210,7 @@ When reporting a problem, include your Linux distribution, kernel version, the c
 ## Documentation
 
 - [Contributing guide](CONTRIBUTING.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
 - [Architecture](ARCHITECTURE.md)
 - [Project context and design principles](PROJECT_CONTEXT.md)
 - [Changelog](CHANGELOG.md)
@@ -1217,5 +1221,8 @@ Bug reports, compatibility reports, suggestions and code contributions are welco
 ## License
 
 LinuxDoctor is distributed under the **GNU General Public License v3.0 only**. See [LICENSE](LICENSE).
+
+The code of conduct ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)) is the Contributor Covenant 3.0,
+adapted for this project; it is distributed under its own license, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
 Developed by Gilles MAGNEVILLE.

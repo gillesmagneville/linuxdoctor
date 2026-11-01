@@ -5,6 +5,8 @@
 Thank you for your interest in this project! This document explains how to
 report a problem, suggest an improvement, or contribute code.
 
+By taking part in this project, you agree to follow its [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Reporting a bug
 
 Open an issue stating:
@@ -122,7 +124,7 @@ output format), update `CHANGELOG.md` in the same pull request, under
 
 The documentation of this project is in English only: the audience is system
 engineers and advanced support staff, who work in English. Please write
-`README.md`, `ARCHITECTURE.md`, `PROJECT_CONTEXT.md`, `CHANGELOG.md` and this
+`README.md`, `ARCHITECTURE.md`, `PROJECT_CONTEXT.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md` and this
 file in English. The same goes for the code and its comments, and for the help text,
 messages and comments of the packaging scripts (`build-deb.sh`, `build-rpm.sh`).
 
@@ -133,4 +135,5 @@ For any question that does not fit the cases above, simply open an issue.
 ## License
 
 By contributing, you agree that your contributions will be released under the
-same license as the project (GPL-3.0-only).
+same license as the project (GPL-3.0-only). The code of conduct is the one exception: it is the
+Contributor Covenant 3.0, distributed under CC BY-SA 4.0.

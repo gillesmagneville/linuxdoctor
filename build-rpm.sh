@@ -11,9 +11,9 @@ set -euo pipefail
 # ============================================================
 
 PACKAGE_NAME="linuxdoctor"
-MAINTAINER="Your Name <you@example.com>"   # <-- to customize
+MAINTAINER="Gilles MAGNEVILLE <gilles@magneville.fr>"
 DESCRIPTION="Fast, explainable Linux health diagnostics"
-URL="https://github.com/gillesmagneville/linuxdoctor"   # <-- to check
+URL="https://github.com/gillesmagneville/linuxdoctor"
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$HOME/linuxdoctor-build/rpm"
@@ -195,7 +195,9 @@ mkdir -p "$BUILD_DIR/usr/bin"
 mkdir -p "$BUILD_DIR/usr/share/doc/$PACKAGE_NAME"
 
 cp "$BINARY" "$BUILD_DIR/usr/bin/linuxdoctor"
-for doc in README.md CHANGELOG.md PROJECT_CONTEXT.md ARCHITECTURE.md LICENSE; do
+# The code of conduct (Contributor Covenant 3.0) is under CC-BY-SA-4.0, hence
+# the license expression given to fpm below.
+for doc in README.md CHANGELOG.md PROJECT_CONTEXT.md ARCHITECTURE.md CODE_OF_CONDUCT.md LICENSE; do
   [ -f "$PROJECT_DIR/$doc" ] && cp "$PROJECT_DIR/$doc" "$BUILD_DIR/usr/share/doc/$PACKAGE_NAME/"
 done
 
@@ -245,7 +247,7 @@ rm -f "$PROJECT_DIR"/*.rpm
 if (cd "$PROJECT_DIR" && fpm -s dir -t rpm \
   -n "$PACKAGE_NAME" \
   -v "$NEW_VERSION" \
-  --license "GPL-3.0-only" \
+  --license "GPL-3.0-only AND CC-BY-SA-4.0" \
   --maintainer "$MAINTAINER" \
   --description "$DESCRIPTION" \
   --url "$URL" \

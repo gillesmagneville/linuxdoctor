@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.11.4] - 2026-11-01
+
+Housekeeping release: the program is the same as 1.11.3 (not a single line of shipped code
+changes). What changes is what surrounds it: the project now has a code of conduct, and the
+packages ship it.
+
+### Added
+
+- **A code of conduct.** `CODE_OF_CONDUCT.md` is the Contributor Covenant 3.0, adapted for this
+  project: a possible violation is reported to the maintainer, Gilles MAGNEVILLE, at
+  gilles@magneville.fr, who acts as the Community Moderator. `README.md` (documentation list,
+  layout, license) and `CONTRIBUTING.md` point to it. Like the rest of the documentation, it is
+  in English only.
+- **Both packages install it.** `build-deb.sh` and `build-rpm.sh` copy `CODE_OF_CONDUCT.md` into
+  `/usr/share/doc/linuxdoctor/`, next to the README and the license.
+
+### Changed
+
+- **License declared by the packages.** The Contributor Covenant is distributed by its authors
+  under CC BY-SA 4.0, not under the GPL, so the code of conduct keeps that license
+  (`SPDX-License-Identifier: CC-BY-SA-4.0` in its first line) and the packages now declare
+  `GPL-3.0-only AND CC-BY-SA-4.0`. The program stays GPL-3.0-only.
+
+### Fixed
+
+- **The packaging scripts no longer carry placeholders.** `build-deb.sh` and `build-rpm.sh` still had
+  `MAINTAINER="Your Name <you@example.com>"` in the repository, so anyone who built a package
+  from a clean checkout got that name in the package. The published 1.11.3 packages were not
+  affected (they were built with the line corrected locally); the correct value,
+  `Gilles MAGNEVILLE <gilles@magneville.fr>`, is now in the scripts themselves, and the
+  "to customize" and "to check" marks next to `MAINTAINER` and `URL` are gone. The README no
+  longer says that these two lines are placeholders to edit before first use.
+
 ## [1.11.3] - 2026-10-30
 
 Bug-fix release: only one thing changes in the program, the network module (`NET002`).

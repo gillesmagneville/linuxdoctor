@@ -1098,6 +1098,7 @@ linuxdoctor/
 ├── CHANGELOG.md              # Keep a Changelog format
 ├── CONTRIBUTING.md            # how to report bugs, add a module, code style
 ├── CODE_OF_CONDUCT.md         # code of conduct (Contributor Covenant 3.0)
+├── SECURITY.md                # security policy: how to report a vulnerability
 ├── build-deb.sh                 # .deb packaging (fpm)
 ├── build-rpm.sh                  # .rpm packaging (fpm)
 ├── Cargo.toml
@@ -1211,6 +1212,7 @@ When reporting a problem, include your Linux distribution, kernel version, the c
 
 - [Contributing guide](CONTRIBUTING.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
+- [Security policy](SECURITY.md)
 - [Architecture](ARCHITECTURE.md)
 - [Project context and design principles](PROJECT_CONTEXT.md)
 - [Changelog](CHANGELOG.md)

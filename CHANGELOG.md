@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A security policy.** `SECURITY.md` explains how to report a vulnerability privately (GitHub
+  private vulnerability reporting, or email), which versions receive fixes, what to expect and what
+  the policy covers. It is a file of the repository: the packages do not ship it. `README.md` and
+  `CONTRIBUTING.md` point to it.
+
 ## [1.11.4] - 2026-11-01
 
 Housekeeping release: the program is the same as 1.11.3 (not a single line of shipped code
